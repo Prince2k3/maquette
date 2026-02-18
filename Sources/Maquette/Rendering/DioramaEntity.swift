@@ -19,6 +19,9 @@ public class DioramaEntity: Entity {
     /// The 3D Tiles sub-entity (used with photorealistic pipeline).
     public private(set) var tiles3D: Tiles3DEntity?
 
+    /// The water plane sub-entity (visible when terrain has sea-level areas).
+    public private(set) var waterPlane: Entity?
+
     /// The mask/pedestal sub-entity.
     public private(set) var mask: Entity?
 
@@ -42,6 +45,13 @@ public class DioramaEntity: Entity {
     public func setTiles3D(_ entity: Tiles3DEntity) {
         self.tiles3D?.removeFromParent()
         self.tiles3D = entity
+        addChild(entity)
+    }
+
+    /// Sets the water plane component of the diorama.
+    public func setWaterPlane(_ entity: Entity) {
+        self.waterPlane?.removeFromParent()
+        self.waterPlane = entity
         addChild(entity)
     }
 

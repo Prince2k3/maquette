@@ -113,7 +113,9 @@ public enum DioramaMask {
 
         let entity = ModelEntity(mesh: mesh, materials: [material])
         entity.name = "BasePlate"
-        entity.position.y = -0.025
+        let rimHeight: Float = 0.02
+        let plateHeight: Float = 0.005
+        entity.position.y = -(rimHeight + plateHeight / 2.0)
         return entity
     }
 

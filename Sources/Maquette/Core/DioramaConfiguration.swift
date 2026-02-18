@@ -50,10 +50,11 @@ public struct DioramaConfiguration: Sendable {
     public var physicalDiameter: Float
     /// Explicit zoom level for tile fetching. `nil` means auto-calculate from radius.
     public var zoomLevel: Int?
-    /// Multiplier applied to elevation values. Default `2.0`.
+    /// Multiplier applied to elevation values. Default `1.0` (true-to-scale).
     ///
-    /// Typical values: `1.5`–`2.0` for mountainous regions (>500m relief),
-    /// `2.0`–`3.0` for moderate terrain, `3.0`–`5.0` for flat areas.
+    /// At `1.0`, the terrain relief matches real-world geographic proportions relative
+    /// to the diorama diameter. Increase for more dramatic relief: `1.5`–`2.0` for
+    /// mountainous regions, `2.0`–`3.0` for moderate terrain, `3.0`–`5.0` for flat areas.
     public var elevationExaggeration: Float
     /// Color used for the pedestal rim.
     public var baseColor: Color
@@ -82,7 +83,7 @@ public struct DioramaConfiguration: Sendable {
         shape: DioramaShape = .circular,
         physicalDiameter: Float = 0.8,
         zoomLevel: Int? = nil,
-        elevationExaggeration: Float = 2.0,
+        elevationExaggeration: Float = 1.0,
         baseColor: Color = Color(red: 0.1, green: 0.1, blue: 0.3),
         cameraElevation: Float? = nil,
         cameraDistance: Float? = nil,

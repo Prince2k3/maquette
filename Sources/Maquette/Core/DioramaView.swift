@@ -25,7 +25,7 @@ import SwiftUI
 ///         elevation: .realistic,
 ///         shape: .circular,
 ///         physicalDiameter: 0.8,
-///         elevationExaggeration: 2.0
+///         elevationExaggeration: 1.0
 ///     )
 /// )
 /// ```

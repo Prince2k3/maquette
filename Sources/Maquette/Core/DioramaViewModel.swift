@@ -144,13 +144,29 @@ public final class DioramaViewModel {
             satelliteImages.append((x: tile.x, y: tile.y, data: sData))
         }
 
-        // Generate terrain mesh
+        // Determine clip radius based on diorama shape
+        let clipRadius: Float? = switch configuration.shape {
+        case .circular:
+            configuration.physicalDiameter / 2.0
+        case .rectangular:
+            nil
+        }
+
+        let exaggeration = configuration.elevation == .realistic ? configuration.elevationExaggeration : Float(0)
+        let geographicScale = configuration.physicalDiameter / Float(configuration.radiusMeters * 2.0)
+        let elevationScale = geographicScale * exaggeration
+
+        // Compute global min elevation for water plane detection
+        let globalMinElev = terrainGrids.map(\.grid.minElevation).min() ?? 0
+
+        // Generate terrain mesh with clipping and skirt walls
         let terrainMesh = try TerrainMeshGenerator.generateMesh(
             from: terrainGrids.map(\.grid),
             tilePositions: terrainGrids.map { (x: $0.x, y: $0.y) },
-            exaggeration: configuration.elevation == .realistic ? configuration.elevationExaggeration : 0,
+            exaggeration: exaggeration,
             physicalDiameter: configuration.physicalDiameter,
-            radiusMeters: configuration.radiusMeters
+            radiusMeters: configuration.radiusMeters,
+            clipRadius: clipRadius
         )
 
         // Create satellite material — composite multiple tiles if needed
@@ -179,6 +195,17 @@ public final class DioramaViewModel {
 
         let terrainEntity = TerrainEntity(mesh: terrainMesh, material: terrainMaterial)
         rootEntity.setTerrain(terrainEntity)
+
+        // Add water plane if terrain has sea-level areas
+        if globalMinElev <= 0 && exaggeration > 0 {
+            let waterY = (0.0 - globalMinElev) * elevationScale
+            let waterEntity = WaterPlaneEntity.generate(
+                shape: configuration.shape,
+                physicalDiameter: configuration.physicalDiameter,
+                waterY: waterY
+            )
+            rootEntity.setWaterPlane(waterEntity)
+        }
     }
 
     // MARK: - Photorealistic 3D Tiles Pipeline

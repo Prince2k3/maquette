@@ -16,6 +16,7 @@ struct IOSDioramaView<Annotations: View>: View {
     @State private var cameraController = CameraController()
     @State private var lastDragTranslation: CGSize = .zero
     @State private var lastMagnification: CGFloat = 1.0
+    @State private var viewSize: CGSize = CGSize(width: 400, height: 400)
 
     init(configuration: DioramaConfiguration, annotations: ((DioramaProxy) -> Annotations)?) {
         self.configuration = configuration
@@ -25,7 +26,17 @@ struct IOSDioramaView<Annotations: View>: View {
 
     var body: some View {
         ZStack {
-            realityContent
+            GeometryReader { geometry in
+                realityContent
+                    .onAppear {
+                        viewSize = geometry.size
+                        updateEntityScale()
+                    }
+                    .onChange(of: geometry.size) { _, newSize in
+                        viewSize = newSize
+                        updateEntityScale()
+                    }
+            }
 
             if case .loading = viewModel.loadingState {
                 ProgressView("Loading terrain...")
@@ -56,6 +67,14 @@ struct IOSDioramaView<Annotations: View>: View {
             }
             await viewModel.load()
         }
+    }
+
+    private func updateEntityScale() {
+        guard let entity = viewModel.dioramaEntity else { return }
+        // Scale entity so the diorama fills roughly 70% of the smaller view dimension
+        let referenceSize: CGFloat = 400.0 // Baseline view size the default physicalDiameter is designed for
+        let scaleFactor = Float(min(viewSize.width, viewSize.height) / referenceSize)
+        entity.scale = SIMD3<Float>(repeating: scaleFactor)
     }
 
     @ViewBuilder
@@ -95,6 +114,7 @@ struct IOSDioramaView<Annotations: View>: View {
             if let entity = viewModel.dioramaEntity,
                !content.entities.contains(where: { $0.name == "Maquette" }) {
                 content.add(entity)
+                updateEntityScale()
             }
         }
         .gesture(

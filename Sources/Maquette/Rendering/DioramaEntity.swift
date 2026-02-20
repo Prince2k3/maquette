@@ -28,6 +28,12 @@ public class DioramaEntity: Entity {
     /// Annotation anchor entities keyed by identifier.
     public private(set) var annotationAnchors: [String: Entity] = [:]
 
+    /// Marker entities keyed by identifier.
+    public private(set) var markerEntities: [String: MarkerEntity] = [:]
+
+    /// Polyline entities keyed by identifier.
+    public private(set) var polylineEntities: [String: ModelEntity] = [:]
+
     /// Creates an empty diorama entity. Populate using the `set*` methods.
     public required init() {
         super.init()
@@ -81,5 +87,46 @@ public class DioramaEntity: Entity {
             anchor.removeFromParent()
         }
         annotationAnchors.removeAll()
+    }
+
+    // MARK: - Markers & Polylines
+
+    /// Adds a marker entity at the specified 3D position.
+    ///
+    /// - Parameters:
+    ///   - marker: The marker entity to add.
+    ///   - identifier: Unique identifier for this marker.
+    ///   - position: 3D position in the diorama's local coordinate space.
+    public func addMarker(_ marker: MarkerEntity, identifier: String, position: SIMD3<Float>) {
+        markerEntities[identifier]?.removeFromParent()
+        marker.name = "Marker_\(identifier)"
+        marker.position = position
+        markerEntities[identifier] = marker
+        addChild(marker)
+    }
+
+    /// Adds a polyline entity.
+    ///
+    /// - Parameters:
+    ///   - polyline: The model entity representing the polyline ribbon mesh.
+    ///   - identifier: Unique identifier for this polyline.
+    public func addPolyline(_ polyline: ModelEntity, identifier: String) {
+        polylineEntities[identifier]?.removeFromParent()
+        polyline.name = "Polyline_\(identifier)"
+        polylineEntities[identifier] = polyline
+        addChild(polyline)
+    }
+
+    /// Removes all marker and polyline overlay entities.
+    public func clearOverlays() {
+        for (_, marker) in markerEntities {
+            marker.removeFromParent()
+        }
+        markerEntities.removeAll()
+
+        for (_, polyline) in polylineEntities {
+            polyline.removeFromParent()
+        }
+        polylineEntities.removeAll()
     }
 }

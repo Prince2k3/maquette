@@ -8,9 +8,9 @@ import RealityKit
 /// - Single finger drag → rotate orbit camera
 /// - Pinch → zoom
 /// - Two-finger pan → translate
-struct IOSDioramaView<Annotations: View>: View {
+struct IOSDioramaView: View {
     let configuration: DioramaConfiguration
-    let annotations: ((DioramaProxy) -> Annotations)?
+    let content: DioramaContentGroup?
 
     @State private var viewModel: DioramaViewModel
     @State private var cameraController = CameraController()
@@ -18,9 +18,9 @@ struct IOSDioramaView<Annotations: View>: View {
     @State private var lastMagnification: CGFloat = 1.0
     @State private var viewSize: CGSize = CGSize(width: 400, height: 400)
 
-    init(configuration: DioramaConfiguration, annotations: ((DioramaProxy) -> Annotations)?) {
+    init(configuration: DioramaConfiguration, content: DioramaContentGroup?) {
         self.configuration = configuration
-        self.annotations = annotations
+        self.content = content
         self._viewModel = State(initialValue: DioramaViewModel(configuration: configuration))
     }
 
@@ -66,6 +66,7 @@ struct IOSDioramaView<Annotations: View>: View {
                 cameraController.distance = distance
             }
             await viewModel.load()
+            viewModel.applyContent(content)
         }
     }
 

@@ -16,6 +16,24 @@ import SwiftUI
 /// )
 /// ```
 ///
+/// **With markers and polylines:**
+/// ```swift
+/// DioramaView(configuration: config) {
+///     DioramaMarker(
+///         coordinate: CLLocationCoordinate2D(latitude: 36.1069, longitude: -112.1129),
+///         tint: .red,
+///         systemImage: "mappin",
+///         title: "Grand Canyon"
+///     )
+///
+///     DioramaPolyline(
+///         coordinates: [coord1, coord2, coord3],
+///         color: .blue,
+///         lineWidth: 0.003
+///     )
+/// }
+/// ```
+///
 /// **Full configuration:**
 /// ```swift
 /// DioramaView(
@@ -29,67 +47,38 @@ import SwiftUI
 ///     )
 /// )
 /// ```
-///
-/// **MapTiler high-resolution satellite:**
-/// ```swift
-/// DioramaView(
-///     configuration: DioramaConfiguration(
-///         center: CLLocationCoordinate2D(latitude: 36.1069, longitude: -112.1129),
-///         radiusMeters: 5000,
-///         imagerySource: .mapTilerSatellite(apiKey: "your-key")
-///     )
-/// )
-/// ```
-///
-/// **Google Photorealistic 3D Tiles:**
-/// ```swift
-/// DioramaView(
-///     configuration: DioramaConfiguration(
-///         center: CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060),
-///         radiusMeters: 1500,
-///         imagerySource: .photorealistic(
-///             provider: GoogleTiles3DProvider(apiKey: "your-google-key")
-///         )
-///     )
-/// )
-/// ```
-public struct DioramaView<Annotations: View>: View {
+public struct DioramaView: View {
     let configuration: DioramaConfiguration
-    let annotations: ((DioramaProxy) -> Annotations)?
+    let content: DioramaContentGroup?
 
-    /// Creates a diorama view with full configuration and optional annotations.
+    /// Creates a diorama view with full configuration and content (markers, polylines).
     public init(
         configuration: DioramaConfiguration,
-        @ViewBuilder annotations: @escaping (DioramaProxy) -> Annotations
+        @DioramaContentBuilder content: () -> DioramaContentGroup
     ) {
         self.configuration = configuration
-        self.annotations = annotations
+        self.content = content()
+    }
+
+    /// Creates a diorama view with full configuration and no content.
+    public init(configuration: DioramaConfiguration) {
+        self.configuration = configuration
+        self.content = nil
     }
 
     /// Creates a diorama view with a center coordinate and radius.
-    public init(
-        center: CLLocationCoordinate2D,
-        radius: Double
-    ) where Annotations == EmptyView {
+    public init(center: CLLocationCoordinate2D, radius: Double) {
         self.configuration = DioramaConfiguration(center: center, radiusMeters: radius)
-        self.annotations = nil
-    }
-
-    /// Creates a diorama view with full configuration and no annotations.
-    public init(
-        configuration: DioramaConfiguration
-    ) where Annotations == EmptyView {
-        self.configuration = configuration
-        self.annotations = nil
+        self.content = nil
     }
 
     public var body: some View {
         #if os(visionOS)
-        VisionOSDioramaView(configuration: configuration, annotations: annotations)
+        VisionOSDioramaView(configuration: configuration, content: content)
         #elseif os(iOS)
-        IOSDioramaView(configuration: configuration, annotations: annotations)
+        IOSDioramaView(configuration: configuration, content: content)
         #elseif os(macOS)
-        MacOSDioramaView(configuration: configuration, annotations: annotations)
+        MacOSDioramaView(configuration: configuration, content: content)
         #endif
     }
 }

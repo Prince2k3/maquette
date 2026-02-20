@@ -100,6 +100,22 @@ public enum DioramaMaterials {
         return material
     }
 
+    /// Creates an unlit material with the given SwiftUI color.
+    ///
+    /// Used for markers and polyline overlays that should not be affected by scene lighting.
+    @MainActor
+    public static func unlitMaterial(color: Color) -> UnlitMaterial {
+        #if canImport(UIKit)
+        var material = UnlitMaterial()
+        material.color.tint = UIColor(color)
+        return material
+        #elseif canImport(AppKit)
+        var material = UnlitMaterial()
+        material.color.tint = NSColor(color)
+        return material
+        #endif
+    }
+
     // MARK: - Private
 
     private static func cgImage(from imageData: Data) -> CGImage? {

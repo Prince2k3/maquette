@@ -4,36 +4,23 @@ import RealityKit
 
 /// visionOS presentation of the diorama using volumetric RealityView.
 ///
-/// Adapts to volume size changes (user resize, Window Zoom accessibility setting) using
-/// the `GeometryReader3D` + `content.convert` pattern documented by Apple engineering.
-/// A dedicated scaling entity wraps the diorama so that `content.convert` can compute
-/// the correct points-to-meters ratio on every layout pass.
-///
 /// No virtual camera is needed — the user physically moves around the diorama.
 /// Gestures: pinch-drag to rotate, pinch-spread to zoom.
-struct VisionOSDioramaView<Annotations: View>: View {
+struct VisionOSDioramaView: View {
     let configuration: DioramaConfiguration
-    let annotations: ((DioramaProxy) -> Annotations)?
+    let content: DioramaContentGroup?
 
     @State private var viewModel: DioramaViewModel
 
-    /// Persistent scaling wrapper entity — lives across make/update cycles.
-    /// The diorama entity is added as a child of this; scaling is applied here
-    /// so the diorama's own transform stays clean for rotation/interaction.
-    @State private var scalingEntity = Entity()
-
-    init(configuration: DioramaConfiguration, annotations: ((DioramaProxy) -> Annotations)?) {
+    init(configuration: DioramaConfiguration, content: DioramaContentGroup?) {
         self.configuration = configuration
-        self.annotations = annotations
+        self.content = content
         self._viewModel = State(initialValue: DioramaViewModel(configuration: configuration))
     }
 
     var body: some View {
-        GeometryReader3D { proxy in
-            RealityView { content in
-                // Add the scaling wrapper to the scene once
-                content.add(scalingEntity)
-
+        GeometryReader3D { geometry in
+            RealityView { content, attachments in
                 // Key light
                 let sunLight = DirectionalLight()
                 sunLight.name = "SunLight"
@@ -42,74 +29,56 @@ struct VisionOSDioramaView<Annotations: View>: View {
                 sunLight.shadow = .init()
                 sunLight.look(at: .zero, from: SIMD3<Float>(-0.5, 1.0, -0.3), relativeTo: nil)
                 content.add(sunLight)
-
-                // Apply initial scale
-                applyVolumeScale(content: content, proxy: proxy)
-            } update: { content in
-                // Add the diorama as a child of the scaling entity once loaded
+            } update: { realityViewContent, attachments in
                 if let entity = viewModel.dioramaEntity,
-                   !scalingEntity.children.contains(where: { $0.name == "Maquette" }) {
-                    scalingEntity.addChild(entity)
-                }
+                   !realityViewContent.entities.contains(where: { $0.name == "Maquette" }) {
+                    // Get volume bounds in scene coordinates
+                    let volumeBounds = realityViewContent.convert(
+                        geometry.frame(in: .local), from: .local, to: .scene
+                    )
+                    let volumeWidth = volumeBounds.max.x - volumeBounds.min.x
+                    let volumeDepth = volumeBounds.max.z - volumeBounds.min.z
 
-                // Re-apply scale — this runs on every layout change because
-                // GeometryReader3D re-evaluates its body (and thus recreates or
-                // updates the RealityView) when the volume size changes.
-                applyVolumeScale(content: content, proxy: proxy)
+                    // Scale entity to fill the volume snugly
+                    let dioramaDiameter = configuration.physicalDiameter
+                    let fitScale = min(volumeWidth, volumeDepth) / dioramaDiameter
+                    entity.scale = SIMD3<Float>(repeating: fitScale)
+
+                    // Position at the bottom of the volume with padding
+                    // 40pt ≈ 0.014m in scene coordinates (1pt ≈ 0.000352m at standard density)
+                    let bottomPadding: Float = 0.014
+                    entity.position.y = volumeBounds.min.y + bottomPadding
+
+                    realityViewContent.add(entity)
+                }
+            } attachments: {
             }
-        }
-        .task {
-            await viewModel.load()
-        }
-        .gesture(
-            DragGesture()
-                .targetedToAnyEntity()
-                .onChanged { value in
-                    if let entity = viewModel.dioramaEntity {
-                        let delta = Float(value.translation.width) * 0.01
-                        let rotation = simd_quatf(angle: delta, axis: SIMD3<Float>(0, 1, 0))
-                        entity.orientation = rotation * entity.orientation
+            .task {
+                await viewModel.load()
+                viewModel.applyContent(content)
+            }
+            .gesture(
+                DragGesture()
+                    .targetedToAnyEntity()
+                    .onChanged { value in
+                        if let entity = viewModel.dioramaEntity {
+                            let delta = Float(value.translation.width) * 0.01
+                            let rotation = simd_quatf(angle: delta, axis: SIMD3<Float>(0, 1, 0))
+                            entity.orientation = rotation * entity.orientation
+                        }
                     }
-                }
-        )
-        .gesture(
-            MagnifyGesture()
-                .targetedToAnyEntity()
-                .onChanged { value in
-                    if let entity = viewModel.dioramaEntity {
-                        let newScale = Float(value.magnification)
-                        entity.scale = SIMD3<Float>(repeating: max(0.3, min(newScale, 3.0)))
+            )
+            .gesture(
+                MagnifyGesture()
+                    .targetedToAnyEntity()
+                    .onChanged { value in
+                        if let entity = viewModel.dioramaEntity {
+                            let newScale = Float(value.magnification)
+                            entity.scale = SIMD3<Float>(repeating: max(0.3, min(newScale, 3.0)))
+                        }
                     }
-                }
-        )
-    }
-
-    /// Computes the volume's physical size in meters via `content.convert` and
-    /// applies a uniform scale to `scalingEntity` so the diorama fits inside.
-    private func applyVolumeScale(content: RealityViewContent, proxy: GeometryProxy3D) {
-        let sceneBounds = content.convert(
-            proxy.frame(in: .local),
-            from: .local,
-            to: .scene
-        )
-        let extents = sceneBounds.extents
-
-        guard extents.x > 0, extents.y > 0, extents.z > 0 else { return }
-
-        // The diorama's unscaled physical extent
-        let rimThickness: Float = 0.015
-        let dioramaWidth = configuration.physicalDiameter + rimThickness * 2
-        let dioramaHeight = configuration.physicalDiameter * 0.5
-        let dioramaDepth = dioramaWidth
-
-        // Uniform scale to fit within the volume with padding
-        let padding: Float = 0.9
-        let scaleX = extents.x / dioramaWidth
-        let scaleY = extents.y / dioramaHeight
-        let scaleZ = extents.z / dioramaDepth
-        let fitScale = min(scaleX, min(scaleY, scaleZ)) * padding
-
-        scalingEntity.scale = SIMD3<Float>(repeating: fitScale)
+            )
+        }
     }
 }
 #endif

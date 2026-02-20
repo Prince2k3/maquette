@@ -27,6 +27,9 @@ public final class DioramaViewModel {
     /// The active configuration.
     public var configuration: DioramaConfiguration
 
+    /// Elevation sampler for terrain height queries, available after terrain loading completes.
+    public private(set) var elevationSampler: ElevationSampler?
+
     private let tileCache = TileCache()
     private let logger = Logger(subsystem: "com.maquette", category: "DioramaViewModel")
 
@@ -78,6 +81,7 @@ public final class DioramaViewModel {
     public func reset() {
         loadingState = .idle
         dioramaEntity = nil
+        elevationSampler = nil
     }
 
     // MARK: - Terrain Mesh Pipeline
@@ -206,6 +210,18 @@ public final class DioramaViewModel {
             )
             rootEntity.setWaterPlane(waterEntity)
         }
+
+        // Retain elevation data for marker/polyline positioning
+        elevationSampler = ElevationSampler(
+            grids: terrainGrids.map(\.grid),
+            tilePositions: terrainGrids.map { (x: $0.x, y: $0.y) },
+            zoom: zoom,
+            center: configuration.center,
+            radiusMeters: configuration.radiusMeters,
+            physicalDiameter: configuration.physicalDiameter,
+            exaggeration: exaggeration,
+            globalMinElev: globalMinElev
+        )
     }
 
     // MARK: - Photorealistic 3D Tiles Pipeline
@@ -218,5 +234,55 @@ public final class DioramaViewModel {
             radiusMeters: configuration.radiusMeters
         )
         rootEntity.setTiles3D(tiles3DEntity)
+    }
+
+    // MARK: - Content Application
+
+    /// Materializes diorama content (markers, polylines) as 3D entities on the loaded diorama.
+    ///
+    /// Call this after `load()` completes. Each marker becomes a `MarkerEntity` positioned at the
+    /// correct terrain height. Each polyline becomes a flat ribbon mesh following the terrain surface.
+    ///
+    /// - Parameter content: The content group to apply, or `nil` to skip.
+    public func applyContent(_ content: DioramaContentGroup?) {
+        guard let content, let rootEntity = dioramaEntity as? DioramaEntity else { return }
+
+        let proxy = DioramaProxy(
+            configuration: configuration,
+            elevationSampler: elevationSampler
+        )
+
+        rootEntity.clearOverlays()
+
+        // Small Y offset to prevent z-fighting with the terrain surface
+        let polylineYOffset = configuration.physicalDiameter * 0.002
+
+        for item in content.items {
+            switch item {
+            case .marker(let marker):
+                guard let position = proxy.position(for: marker.coordinate) else { continue }
+                let markerEntity = MarkerEntity(
+                    tint: marker.tint,
+                    physicalDiameter: configuration.physicalDiameter
+                )
+                rootEntity.addMarker(markerEntity, identifier: marker.title, position: position)
+
+            case .polyline(let polyline):
+                let points: [SIMD3<Float>] = polyline.coordinates.compactMap {
+                    proxy.position(for: $0)
+                }
+                guard points.count >= 2 else { continue }
+
+                guard let mesh = try? PolylineMeshGenerator.generateMesh(
+                    from: points,
+                    width: polyline.lineWidth,
+                    yOffset: polylineYOffset
+                ) else { continue }
+
+                let material = DioramaMaterials.unlitMaterial(color: polyline.color)
+                let polylineEntity = ModelEntity(mesh: mesh, materials: [material])
+                rootEntity.addPolyline(polylineEntity, identifier: polyline.id)
+            }
+        }
     }
 }

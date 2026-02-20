@@ -9,18 +9,18 @@ import RealityKit
 /// - Click + drag → rotate orbit camera
 /// - Scroll wheel / trackpad scroll → zoom
 /// - Right-click drag → pan
-struct MacOSDioramaView<Annotations: View>: View {
+struct MacOSDioramaView: View {
     let configuration: DioramaConfiguration
-    let annotations: ((DioramaProxy) -> Annotations)?
+    let content: DioramaContentGroup?
 
     @State private var viewModel: DioramaViewModel
     @State private var cameraController = CameraController()
     @State private var lastDragTranslation: CGSize = .zero
     @State private var viewSize: CGSize = CGSize(width: 400, height: 400)
 
-    init(configuration: DioramaConfiguration, annotations: ((DioramaProxy) -> Annotations)?) {
+    init(configuration: DioramaConfiguration, content: DioramaContentGroup?) {
         self.configuration = configuration
-        self.annotations = annotations
+        self.content = content
         self._viewModel = State(initialValue: DioramaViewModel(configuration: configuration))
     }
 
@@ -66,6 +66,7 @@ struct MacOSDioramaView<Annotations: View>: View {
                 cameraController.distance = distance
             }
             await viewModel.load()
+            viewModel.applyContent(content)
         }
     }
 

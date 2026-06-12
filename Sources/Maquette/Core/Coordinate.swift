@@ -126,35 +126,36 @@ public struct ECEFConverter: Sendable {
         return SIMD3<Float>(Float(enu.x), Float(enu.z), Float(-enu.y))
     }
 
-    /// Converts a 4x4 ECEF transform matrix to local coordinates.
-    public func ecefTransformToLocal(_ transform: simd_float4x4) -> simd_float4x4 {
-        // Extract translation from the ECEF transform
-        let ecefPosition = SIMD3<Double>(
-            Double(transform.columns.3.x),
-            Double(transform.columns.3.y),
-            Double(transform.columns.3.z)
-        )
+    /// Converts a 4x4 ECEF transform matrix to local RealityKit coordinates.
+    ///
+    /// Accepts `simd_double4x4` to preserve full precision of ECEF positions
+    /// (which are ~6,000,000 m and would lose significant precision as Float32).
+    public func ecefTransformToLocal(_ transform: simd_double4x4) -> simd_float4x4 {
+        // Extract translation in Double precision and convert to local
+        let ecefPosition = SIMD3<Double>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
         let localPosition = ecefToLocal(ecefPosition)
 
-        // For rotation, apply ENU rotation to the upper-3x3
-        let rotation3x3 = simd_float3x3(
-            SIMD3<Float>(transform.columns.0.x, transform.columns.0.y, transform.columns.0.z),
-            SIMD3<Float>(transform.columns.1.x, transform.columns.1.y, transform.columns.1.z),
-            SIMD3<Float>(transform.columns.2.x, transform.columns.2.y, transform.columns.2.z)
+        // Extract 3x3 rotation/scale in Double precision
+        let rotation3x3 = simd_double3x3(
+            SIMD3<Double>(transform.columns.0.x, transform.columns.0.y, transform.columns.0.z),
+            SIMD3<Double>(transform.columns.1.x, transform.columns.1.y, transform.columns.1.z),
+            SIMD3<Double>(transform.columns.2.x, transform.columns.2.y, transform.columns.2.z)
         )
 
-        let enuFloat = simd_float3x3(
-            SIMD3<Float>(Float(ecefToENU.columns.0.x), Float(ecefToENU.columns.0.y), Float(ecefToENU.columns.0.z)),
-            SIMD3<Float>(Float(ecefToENU.columns.1.x), Float(ecefToENU.columns.1.y), Float(ecefToENU.columns.1.z)),
-            SIMD3<Float>(Float(ecefToENU.columns.2.x), Float(ecefToENU.columns.2.y), Float(ecefToENU.columns.2.z))
-        )
+        // Rotate basis vectors from ECEF into ENU space
+        let enuRotation = ecefToENU * rotation3x3
 
-        let localRotation = enuFloat * rotation3x3
+        // Apply ENU → RealityKit axis permutation to each column:
+        // ENU (East, North, Up) → RK (East, Up, -North)
+        // For each column vector (e, n, u) → (e, u, -n)
+        let c0 = enuRotation.columns.0
+        let c1 = enuRotation.columns.1
+        let c2 = enuRotation.columns.2
 
         return simd_float4x4(
-            SIMD4<Float>(localRotation.columns.0, 0),
-            SIMD4<Float>(localRotation.columns.1, 0),
-            SIMD4<Float>(localRotation.columns.2, 0),
+            SIMD4<Float>(Float(c0.x), Float(c0.z), Float(-c0.y), 0),
+            SIMD4<Float>(Float(c1.x), Float(c1.z), Float(-c1.y), 0),
+            SIMD4<Float>(Float(c2.x), Float(c2.z), Float(-c2.y), 0),
             SIMD4<Float>(localPosition, 1)
         )
     }

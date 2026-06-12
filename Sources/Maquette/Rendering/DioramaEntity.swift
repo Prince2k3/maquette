@@ -1,4 +1,5 @@
 import Foundation
+import os
 import RealityKit
 import SwiftUI
 
@@ -33,6 +34,9 @@ public class DioramaEntity: Entity {
 
     /// Polyline entities keyed by identifier.
     public private(set) var polylineEntities: [String: ModelEntity] = [:]
+
+    /// The route preview entity, if active.
+    public private(set) var routePreview: RoutePreviewEntity?
 
     /// Creates an empty diorama entity. Populate using the `set*` methods.
     public required init() {
@@ -128,5 +132,92 @@ public class DioramaEntity: Entity {
             polyline.removeFromParent()
         }
         polylineEntities.removeAll()
+
+        clearRoutePreview()
+    }
+
+    // MARK: - Route Preview
+
+    /// Sets the route preview entity.
+    public func setRoutePreview(_ entity: RoutePreviewEntity) {
+        self.routePreview?.removeFromParent()
+        self.routePreview = entity
+        addChild(entity)
+    }
+
+    /// Removes the route preview entity.
+    public func clearRoutePreview() {
+        routePreview?.removeFromParent()
+        routePreview = nil
+    }
+
+    // MARK: - Content Application
+
+    private static let logger = Logger(subsystem: "com.maquette", category: "DioramaEntity")
+
+    /// Materializes diorama content (markers, polylines, route previews) as 3D entities.
+    ///
+    /// Each marker becomes a `MarkerEntity` positioned at the correct terrain height.
+    /// Each polyline becomes a flat ribbon mesh following the terrain surface.
+    ///
+    /// - Parameters:
+    ///   - content: The content group to materialize.
+    ///   - proxy: Coordinate converter for geographic → 3D position mapping.
+    ///   - physicalDiameter: The diorama's physical diameter for sizing and offset calculations.
+    public func applyContent(
+        _ content: DioramaContentGroup,
+        using proxy: DioramaProxy,
+        physicalDiameter: Float
+    ) {
+        clearOverlays()
+
+        // Small Y offset to prevent z-fighting with the terrain surface
+        let polylineYOffset = physicalDiameter * 0.002
+
+        for item in content.items {
+            switch item {
+            case .marker(let marker):
+                guard let position = proxy.position(for: marker.coordinate) else { continue }
+                let markerEntity = MarkerEntity(
+                    tint: marker.tint,
+                    physicalDiameter: physicalDiameter
+                )
+                addMarker(markerEntity, identifier: marker.title, position: position)
+
+            case .polyline(let polyline):
+                let points: [SIMD3<Float>] = polyline.coordinates.compactMap {
+                    proxy.position(for: $0)
+                }
+                guard points.count >= 2 else { continue }
+
+                guard let mesh = try? PolylineMeshGenerator.generateMesh(
+                    from: points,
+                    width: polyline.lineWidth,
+                    yOffset: polylineYOffset
+                ) else { continue }
+
+                let material = DioramaMaterials.unlitMaterial(color: polyline.color)
+                let polylineEntity = ModelEntity(mesh: mesh, materials: [material])
+                addPolyline(polylineEntity, identifier: polyline.id)
+
+            case .routePreview(let preview):
+                let points: [SIMD3<Float>] = preview.coordinates.compactMap {
+                    proxy.position(for: $0)
+                }
+                guard points.count >= 2 else { continue }
+
+                do {
+                    let entity = try RoutePreviewEntity(
+                        routePoints: points,
+                        style: preview.style,
+                        physicalDiameter: physicalDiameter,
+                        yOffset: polylineYOffset
+                    )
+                    setRoutePreview(entity)
+                } catch {
+                    Self.logger.error("Failed to create route preview entity: \(error)")
+                }
+            }
+        }
     }
 }

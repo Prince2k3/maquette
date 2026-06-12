@@ -15,18 +15,29 @@ public struct GLBParser: Sendable {
         public let textureImages: [CGImage]
         /// Transform matrix from the root node (identity if none specified).
         public let transform: simd_float4x4
+        /// Double-precision transform for ECEF accuracy when used as a fallback.
+        public let transformDouble: simd_double4x4
+        /// CESIUM_RTC center or b3dm RTC_CENTER (ECEF position, Double precision).
+        /// When present, mesh vertices are small offsets from this center.
+        public let rtcCenter: SIMD3<Double>?
     }
 
     // MARK: - GLB Constants
 
     private static let glbMagic: UInt32 = 0x46546C67  // "glTF"
+    private static let b3dmMagic: UInt32 = 0x6D643362  // "b3dm"
+    private static let i3dmMagic: UInt32 = 0x6D643369  // "i3dm"
     private static let jsonChunkType: UInt32 = 0x4E4F534A  // "JSON"
     private static let binChunkType: UInt32 = 0x004E4942   // "BIN\0"
 
     // MARK: - Public API
 
-    /// Parses a GLB binary blob into mesh + texture data.
-    /// - Parameter data: Raw GLB file data.
+    /// Parses a GLB or b3dm binary blob into mesh + texture data.
+    ///
+    /// Automatically detects b3dm (Batched 3D Model) format and extracts the
+    /// embedded GLB body before parsing.
+    ///
+    /// - Parameter data: Raw GLB or b3dm file data.
     /// - Returns: Parsed tile with mesh descriptors and textures.
     /// - Throws: `DioramaError.glbParsingFailed` or `DioramaError.unsupportedTileFormat` for Draco.
     public static func parse(_ data: Data) throws -> ParsedTile {
@@ -35,8 +46,63 @@ public struct GLBParser: Sendable {
         }
 
         // Read header
-        let magic = data.readUInt32(at: 0)
+        var magic = data.readUInt32(at: 0)
         let version = data.readUInt32(at: 4)
+
+        // b3dm/i3dm: extract embedded GLB body
+        let glbData: Data
+        if magic == b3dmMagic || magic == i3dmMagic {
+            // Extract RTC_CENTER from b3dm feature table (if present)
+            let b3dmRTC = extractRTCCenterFromBatchedFormat(data)
+            glbData = try extractGLBFromBatchedFormat(data)
+            guard glbData.count >= 12 else {
+                throw DioramaError.glbParsingFailed(reason: "Embedded GLB too small")
+            }
+            magic = glbData.readUInt32(at: 0)
+            var parsed = try parseGLB(glbData, magic: magic, version: glbData.readUInt32(at: 4))
+            // b3dm RTC_CENTER takes precedence if CESIUM_RTC wasn't found in the GLB
+            if parsed.rtcCenter == nil, let rtc = b3dmRTC {
+                parsed = ParsedTile(
+                    meshDescriptors: parsed.meshDescriptors,
+                    textureImages: parsed.textureImages,
+                    transform: parsed.transform,
+                    transformDouble: parsed.transformDouble,
+                    rtcCenter: rtc
+                )
+            }
+            return parsed
+        }
+
+        return try parseGLB(data, magic: magic, version: version)
+    }
+
+    /// Extracts the GLB body from a b3dm or i3dm container.
+    ///
+    /// b3dm layout: [28-byte header][Feature Table JSON][Feature Table Binary][Batch Table JSON][Batch Table Binary][GLB body]
+    private static func extractGLBFromBatchedFormat(_ data: Data) throws -> Data {
+        guard data.count >= 28 else {
+            throw DioramaError.glbParsingFailed(reason: "b3dm header too small")
+        }
+
+        let featureTableJSONByteLength = Int(data.readUInt32(at: 12))
+        let featureTableBinaryByteLength = Int(data.readUInt32(at: 16))
+        let batchTableJSONByteLength = Int(data.readUInt32(at: 20))
+        let batchTableBinaryByteLength = Int(data.readUInt32(at: 24))
+
+        let glbOffset = 28
+            + featureTableJSONByteLength
+            + featureTableBinaryByteLength
+            + batchTableJSONByteLength
+            + batchTableBinaryByteLength
+
+        guard glbOffset < data.count else {
+            throw DioramaError.glbParsingFailed(reason: "b3dm GLB offset (\(glbOffset)) exceeds data size (\(data.count))")
+        }
+
+        return Data(data[glbOffset...])
+    }
+
+    private static func parseGLB(_ data: Data, magic: UInt32, version: UInt32) throws -> ParsedTile {
 
         guard magic == glbMagic else {
             throw DioramaError.glbParsingFailed(reason: "Invalid GLB magic: \(String(magic, radix: 16))")
@@ -122,27 +188,117 @@ public struct GLBParser: Sendable {
             }
         }
 
-        // Extract root transform
-        let transform: simd_float4x4
+        // Extract root node transform (both Float and Double precision)
+        let transformDouble: simd_double4x4
         if let scenes = gltf.scenes, let scene = scenes.first,
            let nodes = scene.nodes, let firstNodeIndex = nodes.first,
-           let allNodes = gltf.nodes, firstNodeIndex < allNodes.count,
-           let matrix = allNodes[firstNodeIndex].matrix, matrix.count == 16 {
-            transform = simd_float4x4(
-                SIMD4<Float>(Float(matrix[0]), Float(matrix[1]), Float(matrix[2]), Float(matrix[3])),
-                SIMD4<Float>(Float(matrix[4]), Float(matrix[5]), Float(matrix[6]), Float(matrix[7])),
-                SIMD4<Float>(Float(matrix[8]), Float(matrix[9]), Float(matrix[10]), Float(matrix[11])),
-                SIMD4<Float>(Float(matrix[12]), Float(matrix[13]), Float(matrix[14]), Float(matrix[15]))
-            )
+           let allNodes = gltf.nodes, firstNodeIndex < allNodes.count {
+            let node = allNodes[firstNodeIndex]
+            if let matrix = node.matrix, matrix.count == 16 {
+                // Explicit matrix
+                transformDouble = simd_double4x4(
+                    SIMD4<Double>(matrix[0], matrix[1], matrix[2], matrix[3]),
+                    SIMD4<Double>(matrix[4], matrix[5], matrix[6], matrix[7]),
+                    SIMD4<Double>(matrix[8], matrix[9], matrix[10], matrix[11]),
+                    SIMD4<Double>(matrix[12], matrix[13], matrix[14], matrix[15])
+                )
+            } else if node.translation != nil || node.rotation != nil || node.scale != nil {
+                // Build from TRS (Translation × Rotation × Scale)
+                transformDouble = buildTRSTransform(
+                    translation: node.translation,
+                    rotation: node.rotation,
+                    scale: node.scale
+                )
+            } else {
+                transformDouble = .init(diagonal: .one)
+            }
         } else {
-            transform = .init(diagonal: .one)
+            transformDouble = .init(diagonal: .one)
+        }
+
+        // Float-precision copy for legacy callers
+        let transform = simd_float4x4(
+            SIMD4<Float>(Float(transformDouble.columns.0.x), Float(transformDouble.columns.0.y), Float(transformDouble.columns.0.z), Float(transformDouble.columns.0.w)),
+            SIMD4<Float>(Float(transformDouble.columns.1.x), Float(transformDouble.columns.1.y), Float(transformDouble.columns.1.z), Float(transformDouble.columns.1.w)),
+            SIMD4<Float>(Float(transformDouble.columns.2.x), Float(transformDouble.columns.2.y), Float(transformDouble.columns.2.z), Float(transformDouble.columns.2.w)),
+            SIMD4<Float>(Float(transformDouble.columns.3.x), Float(transformDouble.columns.3.y), Float(transformDouble.columns.3.z), Float(transformDouble.columns.3.w))
+        )
+
+        // Extract CESIUM_RTC center (ECEF position for RTC-relative vertices)
+        let rtcCenter: SIMD3<Double>?
+        if let center = gltf.extensions?.CESIUM_RTC?.center, center.count >= 3 {
+            rtcCenter = SIMD3<Double>(center[0], center[1], center[2])
+        } else {
+            rtcCenter = nil
         }
 
         return ParsedTile(
             meshDescriptors: meshDescriptors,
             textureImages: textureImages,
-            transform: transform
+            transform: transform,
+            transformDouble: transformDouble,
+            rtcCenter: rtcCenter
         )
+    }
+
+    // MARK: - Transform Helpers
+
+    /// Builds a 4x4 transform matrix from glTF TRS (Translation × Rotation × Scale).
+    ///
+    /// Per the glTF 2.0 spec, when a node has no `matrix` property, the transform
+    /// is composed from `translation`, `rotation` (quaternion), and `scale`.
+    private static func buildTRSTransform(
+        translation: [Double]?,
+        rotation: [Double]?,
+        scale: [Double]?
+    ) -> simd_double4x4 {
+        let t = translation ?? [0, 0, 0]
+        let r = rotation ?? [0, 0, 0, 1]
+        let s = scale ?? [1, 1, 1]
+
+        // Translation matrix
+        var T = simd_double4x4(diagonal: .one)
+        T.columns.3 = SIMD4<Double>(t[0], t[1], t[2], 1)
+
+        // Rotation matrix from quaternion [x, y, z, w]
+        let qx = r[0], qy = r[1], qz = r[2], qw = r[3]
+        let x2 = qx + qx, y2 = qy + qy, z2 = qz + qz
+        let xx = qx * x2, xy = qx * y2, xz = qx * z2
+        let yy = qy * y2, yz = qy * z2, zz = qz * z2
+        let wx = qw * x2, wy = qw * y2, wz = qw * z2
+
+        let R = simd_double4x4(
+            SIMD4<Double>(1 - (yy + zz), xy + wz, xz - wy, 0),
+            SIMD4<Double>(xy - wz, 1 - (xx + zz), yz + wx, 0),
+            SIMD4<Double>(xz + wy, yz - wx, 1 - (xx + yy), 0),
+            SIMD4<Double>(0, 0, 0, 1)
+        )
+
+        // Scale matrix
+        var S = simd_double4x4(diagonal: .one)
+        S.columns.0.x = s[0]
+        S.columns.1.y = s[1]
+        S.columns.2.z = s[2]
+
+        return T * R * S
+    }
+
+    /// Extracts `RTC_CENTER` from a b3dm feature table header.
+    ///
+    /// b3dm layout: `[28-byte header][Feature Table JSON][...]`
+    /// The feature table JSON may contain `"RTC_CENTER": [x, y, z]` for
+    /// relative-to-center positioning.
+    private static func extractRTCCenterFromBatchedFormat(_ data: Data) -> SIMD3<Double>? {
+        guard data.count >= 28 else { return nil }
+        let featureTableJSONByteLength = Int(data.readUInt32(at: 12))
+        guard featureTableJSONByteLength > 0,
+              28 + featureTableJSONByteLength <= data.count else { return nil }
+
+        let ftJSON = data[28..<(28 + featureTableJSONByteLength)]
+        struct FeatureTable: Codable { let RTC_CENTER: [Double]? }  // swiftlint:disable:this nesting
+        guard let ft = try? JSONDecoder().decode(FeatureTable.self, from: Data(ftJSON)),
+              let center = ft.RTC_CENTER, center.count >= 3 else { return nil }
+        return SIMD3<Double>(center[0], center[1], center[2])
     }
 
     // MARK: - Private Extraction
@@ -303,6 +459,17 @@ struct GLTFRoot: Codable {
     let textures: [GLTFTexture]?
     let images: [GLTFImage]?
     let extensionsRequired: [String]?
+    let extensions: GLTFExtensions?
+}
+
+/// Top-level glTF extensions.
+struct GLTFExtensions: Codable {
+    // swiftlint:disable:next identifier_name
+    let CESIUM_RTC: CesiumRTCExtension?
+
+    struct CesiumRTCExtension: Codable {
+        let center: [Double]
+    }
 }
 
 struct GLTFAsset: Codable {
@@ -317,6 +484,9 @@ struct GLTFScene: Codable {
 struct GLTFNode: Codable {
     let mesh: Int?
     let matrix: [Double]?
+    let translation: [Double]?
+    let rotation: [Double]?  // quaternion [x, y, z, w]
+    let scale: [Double]?
     let children: [Int]?
     let name: String?
 }

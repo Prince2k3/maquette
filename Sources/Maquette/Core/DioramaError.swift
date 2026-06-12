@@ -1,7 +1,7 @@
 import Foundation
 
 /// Errors that can occur during diorama construction and rendering.
-public enum DioramaError: Error, Sendable {
+public enum DioramaError: LocalizedError, Sendable {
     /// A network request failed.
     case networkFailure(underlying: any Error)
     /// The requested tile was not found.
@@ -26,4 +26,33 @@ public enum DioramaError: Error, Sendable {
     case tilesetParsingFailed(reason: String)
     /// ECEF coordinate conversion failed.
     case coordinateConversionFailed
+
+    public var errorDescription: String? {
+        switch self {
+        case .networkFailure(let underlying):
+            "Network request failed: \(underlying.localizedDescription)"
+        case .tileNotFound(let x, let y, let zoom):
+            "Tile not found at (\(x), \(y)) zoom \(zoom)"
+        case .elevationDecodingFailed:
+            "Failed to decode elevation data from terrain tile"
+        case .meshGenerationFailed(let reason):
+            "Mesh generation failed: \(reason)"
+        case .invalidConfiguration(let reason):
+            "Invalid configuration: \(reason)"
+        case .authenticationFailed(let provider):
+            "Authentication failed for \(provider) — check your API key"
+        case .rateLimited(let provider, let retryAfter):
+            "Rate limited by \(provider)" + (retryAfter.map { ", retry after \($0)s" } ?? "")
+        case .sessionExpired:
+            "Provider session expired — try reloading"
+        case .glbParsingFailed(let reason):
+            "GLB parsing failed: \(reason)"
+        case .unsupportedTileFormat(let reason):
+            "Unsupported tile format: \(reason)"
+        case .tilesetParsingFailed(let reason):
+            "Tileset parsing failed: \(reason)"
+        case .coordinateConversionFailed:
+            "ECEF coordinate conversion failed"
+        }
+    }
 }

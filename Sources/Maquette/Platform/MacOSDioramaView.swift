@@ -13,51 +13,33 @@ struct MacOSDioramaView: View {
     let configuration: DioramaConfiguration
     let content: DioramaContentGroup?
 
-    @State private var viewModel: DioramaViewModel
+    @State private var store: DioramaStore
     @State private var cameraController = CameraController()
     @State private var lastDragTranslation: CGSize = .zero
     @State private var viewSize: CGSize = CGSize(width: 400, height: 400)
+    @State private var lastAnimationDate: Date?
+
+    @Environment(\.routePreviewController) private var routePreviewController
 
     init(configuration: DioramaConfiguration, content: DioramaContentGroup?) {
         self.configuration = configuration
         self.content = content
-        self._viewModel = State(initialValue: DioramaViewModel(configuration: configuration))
+        self._store = State(initialValue: DioramaStore(configuration: configuration))
     }
 
     var body: some View {
-        ZStack {
-            GeometryReader { geometry in
-                realityContent
-                    .onAppear {
-                        viewSize = geometry.size
-                        updateEntityScale()
-                    }
-                    .onChange(of: geometry.size) { _, newSize in
-                        viewSize = newSize
-                        updateEntityScale()
-                    }
-            }
-
-            if case .loading = viewModel.loadingState {
-                ProgressView("Loading terrain...")
-                    .padding()
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-            }
-
-            if case .failed(let error) = viewModel.loadingState {
-                VStack {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.largeTitle)
-                    Text("Failed to load diorama")
-                        .font(.headline)
-                    Text(error.localizedDescription)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        GeometryReader { geometry in
+            realityContent
+                .onAppear {
+                    viewSize = geometry.size
+                    updateEntityScale()
                 }
-                .padding()
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-            }
+                .onChange(of: geometry.size) { _, newSize in
+                    viewSize = newSize
+                    updateEntityScale()
+                }
         }
+        .dioramaLoadingOverlay(state: store.loadingState)
         .task {
             if let elevation = configuration.cameraElevation {
                 cameraController.elevation = elevation
@@ -65,28 +47,56 @@ struct MacOSDioramaView: View {
             if let distance = configuration.cameraDistance {
                 cameraController.distance = distance
             }
-            await viewModel.load()
-            viewModel.applyContent(content)
+            await store.load()
+            store.applyContent(content)
+        }
+        .onChange(of: routePreviewController?.playbackState) { _, newState in
+            RouteAnimationHelper.handlePlaybackStateChange(
+                newState,
+                cameraController: cameraController,
+                routeEntity: store.routePreviewEntity,
+                lastAnimationDate: &lastAnimationDate
+            )
         }
     }
 
     private func updateEntityScale() {
-        guard let entity = viewModel.dioramaEntity else { return }
-        // Scale entity so the diorama fills roughly 70% of the smaller view dimension
-        let referenceSize: CGFloat = 400.0 // Baseline view size the default physicalDiameter is designed for
+        guard let entity = store.dioramaEntity else { return }
+        let referenceSize: CGFloat = 400.0
         let scaleFactor = Float(min(viewSize.width, viewSize.height) / referenceSize)
         entity.scale = SIMD3<Float>(repeating: scaleFactor)
     }
 
     @ViewBuilder
     private var realityContent: some View {
+        let needsAnimation = routePreviewController?.playbackState == .playing
+            || cameraController.routeFollowPhase == .exiting
+        TimelineView(.animation(paused: !needsAnimation)) { timeline in
+            realityView()
+                .onChange(of: timeline.date) { _, newDate in
+                    advanceAnimation(at: newDate)
+                }
+        }
+    }
+
+    private func advanceAnimation(at date: Date) {
+        guard let controller = routePreviewController else { return }
+        RouteAnimationHelper.advanceAnimation(
+            at: date,
+            controller: controller,
+            routeEntity: store.routePreviewEntity,
+            cameraController: cameraController,
+            lastAnimationDate: &lastAnimationDate
+        )
+    }
+
+    private func realityView() -> some View {
         RealityView { content in
             let camera = PerspectiveCamera()
             camera.name = "OrbitCamera"
             camera.camera.fieldOfViewInDegrees = 60
             content.add(camera)
 
-            // Key light — directional from above-left to cast shadows across terrain
             let sunLight = DirectionalLight()
             sunLight.name = "SunLight"
             sunLight.light.intensity = 1200
@@ -95,7 +105,6 @@ struct MacOSDioramaView: View {
             sunLight.look(at: .zero, from: SIMD3<Float>(-0.5, 1.0, -0.3), relativeTo: nil)
             content.add(sunLight)
 
-            // Fill light — softer from the opposite side to prevent pure-black shadows
             let fillLight = PointLight()
             fillLight.name = "FillLight"
             fillLight.light.intensity = 300
@@ -104,7 +113,7 @@ struct MacOSDioramaView: View {
             fillLight.position = SIMD3<Float>(0.5, 0.8, 0.5)
             content.add(fillLight)
 
-            if let entity = viewModel.dioramaEntity {
+            if let entity = store.dioramaEntity {
                 content.add(entity)
             }
         } update: { content in
@@ -112,10 +121,19 @@ struct MacOSDioramaView: View {
                 camera.transform = cameraController.cameraTransform
             }
 
-            if let entity = viewModel.dioramaEntity,
+            if let entity = store.dioramaEntity,
                !content.entities.contains(where: { $0.name == "Maquette" }) {
                 content.add(entity)
                 updateEntityScale()
+            }
+
+            // Drive 3D Tiles LOD updates from camera position changes
+            if let tiles3D = (store.dioramaEntity as? DioramaEntity)?.tiles3D {
+                tiles3D.requestLODUpdate(
+                    cameraPosition: cameraController.cameraPosition,
+                    screenHeight: Float(viewSize.height),
+                    fov: 60 * .pi / 180
+                )
             }
         }
         .gesture(

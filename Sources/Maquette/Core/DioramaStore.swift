@@ -14,10 +14,10 @@ public enum DioramaLoadingState: Sendable {
     case failed(DioramaError)
 }
 
-/// View model responsible for orchestrating tile fetching, mesh generation, and entity assembly.
+/// Domain store responsible for orchestrating tile fetching, mesh generation, and entity assembly.
 @Observable
 @MainActor
-public final class DioramaViewModel {
+public final class DioramaStore {
     /// Current loading state.
     public private(set) var loadingState: DioramaLoadingState = .idle
 
@@ -30,10 +30,13 @@ public final class DioramaViewModel {
     /// Elevation sampler for terrain height queries, available after terrain loading completes.
     public private(set) var elevationSampler: ElevationSampler?
 
-    private let tileCache = TileCache()
-    private let logger = Logger(subsystem: "com.maquette", category: "DioramaViewModel")
+    /// The active route preview entity, if one was applied via content.
+    public private(set) var routePreviewEntity: RoutePreviewEntity?
 
-    /// Creates a view model with the given configuration.
+    private let tileCache = TileCache()
+    private let logger = Logger(subsystem: "com.maquette", category: "DioramaStore")
+
+    /// Creates a store with the given configuration.
     public init(configuration: DioramaConfiguration) {
         self.configuration = configuration
     }
@@ -77,11 +80,12 @@ public final class DioramaViewModel {
         }
     }
 
-    /// Resets the view model to its initial state, discarding the loaded entity.
+    /// Resets the store to its initial state, discarding the loaded entity.
     public func reset() {
         loadingState = .idle
         dioramaEntity = nil
         elevationSampler = nil
+        routePreviewEntity = nil
     }
 
     // MARK: - Terrain Mesh Pipeline
@@ -231,7 +235,8 @@ public final class DioramaViewModel {
         let tiles3DEntity = try await Tiles3DEntity(
             provider: provider,
             center: configuration.center,
-            radiusMeters: configuration.radiusMeters
+            radiusMeters: configuration.radiusMeters,
+            physicalDiameter: configuration.physicalDiameter
         )
         rootEntity.setTiles3D(tiles3DEntity)
     }
@@ -252,37 +257,11 @@ public final class DioramaViewModel {
             elevationSampler: elevationSampler
         )
 
-        rootEntity.clearOverlays()
-
-        // Small Y offset to prevent z-fighting with the terrain surface
-        let polylineYOffset = configuration.physicalDiameter * 0.002
-
-        for item in content.items {
-            switch item {
-            case .marker(let marker):
-                guard let position = proxy.position(for: marker.coordinate) else { continue }
-                let markerEntity = MarkerEntity(
-                    tint: marker.tint,
-                    physicalDiameter: configuration.physicalDiameter
-                )
-                rootEntity.addMarker(markerEntity, identifier: marker.title, position: position)
-
-            case .polyline(let polyline):
-                let points: [SIMD3<Float>] = polyline.coordinates.compactMap {
-                    proxy.position(for: $0)
-                }
-                guard points.count >= 2 else { continue }
-
-                guard let mesh = try? PolylineMeshGenerator.generateMesh(
-                    from: points,
-                    width: polyline.lineWidth,
-                    yOffset: polylineYOffset
-                ) else { continue }
-
-                let material = DioramaMaterials.unlitMaterial(color: polyline.color)
-                let polylineEntity = ModelEntity(mesh: mesh, materials: [material])
-                rootEntity.addPolyline(polylineEntity, identifier: polyline.id)
-            }
-        }
+        rootEntity.applyContent(
+            content,
+            using: proxy,
+            physicalDiameter: configuration.physicalDiameter
+        )
+        routePreviewEntity = rootEntity.routePreview
     }
 }

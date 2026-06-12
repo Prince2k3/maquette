@@ -84,19 +84,18 @@ struct ECEFConverterTests {
         let origin = CLLocationCoordinate2D(latitude: 0, longitude: 0)
         let converter = ECEFConverter(origin: origin)
 
-        let identity = simd_float4x4(diagonal: SIMD4<Float>(1, 1, 1, 1))
-        var transform = identity
-        transform.columns.3 = SIMD4<Float>(
-            Float(converter.originECEF.x),
-            Float(converter.originECEF.y),
-            Float(converter.originECEF.z),
+        var transform = simd_double4x4(diagonal: SIMD4<Double>(1, 1, 1, 1))
+        transform.columns.3 = SIMD4<Double>(
+            converter.originECEF.x,
+            converter.originECEF.y,
+            converter.originECEF.z,
             1
         )
 
         let local = converter.ecefTransformToLocal(transform)
         // Translation should be near zero since it's at the origin
-        #expect(abs(local.columns.3.x) < 1.0)
-        #expect(abs(local.columns.3.y) < 1.0)
-        #expect(abs(local.columns.3.z) < 1.0)
+        #expect(abs(local.columns.3.x) < 0.01)
+        #expect(abs(local.columns.3.y) < 0.01)
+        #expect(abs(local.columns.3.z) < 0.01)
     }
 }

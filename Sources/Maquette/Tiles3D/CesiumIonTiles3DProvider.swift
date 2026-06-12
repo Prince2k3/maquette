@@ -9,7 +9,7 @@ import os
 /// ```swift
 /// let provider = CesiumIonTiles3DProvider(
 ///     accessToken: "your-cesium-token",
-///     assetId: 2275207  // Cesium OSM Buildings
+///     assetId: 2275207  // Google Photorealistic 3D Tiles
 /// )
 /// ```
 public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
@@ -22,13 +22,22 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
     /// Thread-safe endpoint token storage.
     private final class EndpointState: @unchecked Sendable {
         private let lock = NSLock()
-        private var _endpointURL: String?
+        private var _tilesetBaseURL: URL?
+        private var _tilesetQuery: String?
         private var _endpointToken: String?
+        private var _isExternal: Bool = false
 
-        var endpointURL: String? {
+        var tilesetBaseURL: URL? {
             lock.lock()
             defer { lock.unlock() }
-            return _endpointURL
+            return _tilesetBaseURL
+        }
+
+        /// Query string from the tileset URL (e.g., "key=ABC&session=XYZ").
+        var tilesetQuery: String? {
+            lock.lock()
+            defer { lock.unlock() }
+            return _tilesetQuery
         }
 
         var endpointToken: String? {
@@ -37,19 +46,47 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
             return _endpointToken
         }
 
-        func set(url: String?, token: String?) {
+        var isExternal: Bool {
             lock.lock()
             defer { lock.unlock() }
-            _endpointURL = url
+            return _isExternal
+        }
+
+        func set(tilesetBaseURL: URL?, query: String?, token: String?, isExternal: Bool = false) {
+            lock.lock()
+            defer { lock.unlock() }
+            _tilesetBaseURL = tilesetBaseURL
+            _tilesetQuery = query
             _endpointToken = token
+            _isExternal = isExternal
         }
     }
 
     /// Cesium ion endpoint response.
+    ///
+    /// Regular ion assets return `{ "url": "...", "accessToken": "...", "type": "..." }`.
+    /// External assets (e.g., Google Photorealistic 3D Tiles) return
+    /// `{ "externalType": "3DTILES", "options": { "url": "..." } }` with no bearer token.
     private struct EndpointResponse: Codable {
-        let url: String
-        let accessToken: String
         let type: String?
+        let url: String?
+        let accessToken: String?
+        let externalType: String?
+        let options: EndpointOptions?
+
+        struct EndpointOptions: Codable {
+            let url: String?
+        }
+
+        /// Resolved asset URL — checks `options.url` (external) then `url` (regular).
+        var resolvedURL: String? {
+            options?.url ?? url
+        }
+
+        /// Whether this is an external asset (no bearer token needed).
+        var isExternal: Bool {
+            externalType != nil
+        }
     }
 
     /// Creates a Cesium ion 3D Tiles provider.
@@ -85,7 +122,10 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
             let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init)
             throw DioramaError.rateLimited(provider: "Cesium", retryAfter: retryAfter)
         default:
-            throw DioramaError.networkFailure(underlying: URLError(.badServerResponse))
+            throw DioramaError.networkFailure(
+                underlying: URLError(.badServerResponse,
+                    userInfo: [NSLocalizedDescriptionKey: "Cesium endpoint returned HTTP \(httpResponse.statusCode)"])
+            )
         }
 
         let endpoint: EndpointResponse
@@ -95,24 +135,42 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
             throw DioramaError.tilesetParsingFailed(reason: "Failed to decode Cesium endpoint: \(error)")
         }
 
-        endpointState.set(url: endpoint.url, token: endpoint.accessToken)
-        logger.debug("Cesium endpoint acquired: \(endpoint.url)")
+        guard let assetURL = endpoint.resolvedURL else {
+            throw DioramaError.tilesetParsingFailed(reason: "Cesium endpoint response missing asset URL")
+        }
 
-        // Step 2: Fetch tileset.json using the endpoint token
-        let tilesetURLString = "\(endpoint.url)/tileset.json"
-        guard let tilesetURL = URL(string: tilesetURLString) else {
+        logger.debug("Cesium endpoint acquired (external=\(endpoint.isExternal)): \(assetURL)")
+
+        // Step 2: Fetch tileset.json.
+        // Some assets return a URL whose path already points to a .json file
+        // (possibly with query parameters). Only append /tileset.json when the
+        // URL path doesn't already reference a JSON file.
+        let tilesetURL: URL
+        if let parsed = URL(string: assetURL),
+           parsed.path.hasSuffix(".json") {
+            tilesetURL = parsed
+        } else if let parsed = URL(string: "\(assetURL)/tileset.json") {
+            tilesetURL = parsed
+        } else {
             throw DioramaError.tilesetParsingFailed(reason: "Invalid tileset URL from Cesium endpoint")
         }
 
         var request = URLRequest(url: tilesetURL)
-        request.setValue("Bearer \(endpoint.accessToken)", forHTTPHeaderField: "Authorization")
+        // External assets (e.g., Google 3D Tiles) don't use a bearer token.
+        if let token = endpoint.accessToken, !endpoint.isExternal {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         request.setValue("Maquette/1.0", forHTTPHeaderField: "User-Agent")
 
         let (tilesetData, tilesetResponse) = try await httpClient.data(for: request)
 
         guard let tilesetHTTPResponse = tilesetResponse as? HTTPURLResponse,
               (200...299).contains(tilesetHTTPResponse.statusCode) else {
-            throw DioramaError.networkFailure(underlying: URLError(.badServerResponse))
+            let statusCode = (tilesetResponse as? HTTPURLResponse)?.statusCode ?? -1
+            throw DioramaError.networkFailure(
+                underlying: URLError(.badServerResponse,
+                    userInfo: [NSLocalizedDescriptionKey: "Tileset fetch failed with HTTP \(statusCode) from \(tilesetURL.host ?? "unknown host")"])
+            )
         }
 
         let tileset: TilesetJSON
@@ -122,29 +180,76 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
             throw DioramaError.tilesetParsingFailed(reason: error.localizedDescription)
         }
 
+        // Store tileset base URL (parent directory) and query string for resolving
+        // relative tile URIs. The query must be re-appended because URL(string:relativeTo:)
+        // drops the base URL's query per RFC 3986 — losing API keys, session tokens, etc.
+        //
+        // Google 3D Tiles embeds the session token in content URIs within the tileset JSON,
+        // not in the tileset URL itself (which only has `key=`). Extract the session from
+        // content URIs and merge it into the stored query so all requests include it.
+        let tilesetBase = tilesetURL.deletingLastPathComponent()
+        var storedQuery = tilesetURL.query ?? ""
+        if let sessionValue = Self.extractSessionFromTileset(tileset) {
+            if storedQuery.isEmpty {
+                storedQuery = "session=\(sessionValue)"
+            } else if !storedQuery.contains("session=") {
+                storedQuery += "&session=\(sessionValue)"
+            }
+        }
+        endpointState.set(
+            tilesetBaseURL: tilesetBase,
+            query: storedQuery.isEmpty ? nil : storedQuery,
+            token: endpoint.accessToken,
+            isExternal: endpoint.isExternal
+        )
+
         return tileset
     }
 
     public func fetchTileContent(uri: String) async throws -> Data {
-        guard let baseURL = endpointState.endpointURL,
-              let token = endpointState.endpointToken else {
+        guard let baseURL = endpointState.tilesetBaseURL else {
             throw DioramaError.sessionExpired
         }
 
-        // Resolve URI relative to endpoint base URL
-        let resolvedURL: String
-        if uri.hasPrefix("http://") || uri.hasPrefix("https://") {
-            resolvedURL = uri
-        } else {
-            resolvedURL = "\(baseURL)/\(uri)"
+        let isExternal = endpointState.isExternal
+        if !isExternal && endpointState.endpointToken == nil {
+            throw DioramaError.sessionExpired
         }
 
-        guard let url = URL(string: resolvedURL) else {
-            throw DioramaError.glbParsingFailed(reason: "Invalid tile content URL: \(resolvedURL)")
+        // Resolve URI relative to the tileset base directory, re-appending the
+        // tileset's query parameters (API key, session token, etc.) that standard
+        // URL resolution drops per RFC 3986.
+        let url: URL
+        if uri.hasPrefix("http://") || uri.hasPrefix("https://"),
+           let absolute = URL(string: uri) {
+            url = absolute
+        } else if let resolved = URL(string: uri, relativeTo: baseURL)?.absoluteURL {
+            // Re-append the tileset's query parameters using URLComponents
+            // for robust handling of existing vs missing query strings.
+            if let query = endpointState.tilesetQuery,
+               var components = URLComponents(url: resolved, resolvingAgainstBaseURL: true) {
+                let existingItems = components.queryItems ?? []
+                // Parse stored query into individual items
+                let storedComponents = URLComponents(string: "?\(query)")
+                let additionalItems = storedComponents?.queryItems ?? []
+                // Deduplicate: only add params not already present
+                let existingKeys = Set(existingItems.map(\.name))
+                let newItems = additionalItems.filter { !existingKeys.contains($0.name) }
+                components.queryItems = existingItems + newItems
+                url = components.url ?? resolved
+            } else {
+                url = resolved
+            }
+        } else {
+            throw DioramaError.networkFailure(underlying: URLError(.badURL))
         }
+
+        print("[Tiles3D] fetch: \(url.absoluteString)")
 
         var request = URLRequest(url: url)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let token = endpointState.endpointToken, !isExternal {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         request.setValue("Maquette/1.0", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await httpClient.data(for: request)
@@ -157,15 +262,37 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
         case 200...299:
             return data
         case 401, 403:
-            endpointState.set(url: nil, token: nil)
+            endpointState.set(tilesetBaseURL: nil, query: nil, token: nil)
             throw DioramaError.sessionExpired
         case 429:
             let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init)
             throw DioramaError.rateLimited(provider: "Cesium", retryAfter: retryAfter)
         default:
-            throw DioramaError.networkFailure(underlying: URLError(.badServerResponse))
+            throw DioramaError.networkFailure(
+                underlying: URLError(.badServerResponse,
+                    userInfo: [NSLocalizedDescriptionKey: "Tile fetch failed with HTTP \(httpResponse.statusCode)"])
+            )
         }
     }
 
     public var attribution: String { "Cesium" }
+
+    /// Extracts the `session` query parameter from the first content URI in a tileset.
+    ///
+    /// Google 3D Tiles embeds the session token in content URIs within the tileset JSON
+    /// rather than in the tileset URL itself. This walks the tile tree to find it.
+    private static func extractSessionFromTileset(_ tileset: TilesetJSON) -> String? {
+        func findSession(in tile: TileJSON) -> String? {
+            if let uri = tile.content?.uri,
+               let components = URLComponents(string: uri),
+               let session = components.queryItems?.first(where: { $0.name == "session" })?.value {
+                return session
+            }
+            for child in tile.children ?? [] {
+                if let session = findSession(in: child) { return session }
+            }
+            return nil
+        }
+        return findSession(in: tileset.root)
+    }
 }

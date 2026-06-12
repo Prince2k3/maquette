@@ -11,28 +11,40 @@ public enum BoundingVolume: Sendable {
     /// Bounding sphere with center and radius.
     case sphere(center: SIMD3<Float>, radius: Float)
 
-    /// Creates a bounding volume from parsed JSON, applying a transform and ECEF conversion.
-    public init?(from json: BoundingVolumeJSON, transform: simd_float4x4, ecefConverter: ECEFConverter) {
+    /// Creates a bounding volume from parsed JSON, applying the accumulated tile transform and ECEF conversion.
+    ///
+    /// Per the 3D Tiles spec, bounding volumes are defined in the tile's local coordinate system.
+    /// The accumulated `transform` converts them to ECEF (tileset coordinate system).
+    /// Region volumes are in geographic coordinates and are not affected by the transform.
+    public init?(from json: BoundingVolumeJSON, transform: simd_double4x4, ecefConverter: ECEFConverter) {
         if let region = json.region, region.count >= 6 {
+            // Region is in geographic coordinates — not affected by tile transform
             self = .region(
                 west: region[0], south: region[1],
                 east: region[2], north: region[3],
                 minHeight: region[4], maxHeight: region[5]
             )
         } else if let box = json.box, box.count >= 12 {
-            let center = SIMD3<Double>(box[0], box[1], box[2])
-            let localCenter = ecefConverter.ecefToLocal(center)
+            // Transform tile-local center to ECEF using accumulated transform (Double precision)
+            let localCenter = SIMD4<Double>(box[0], box[1], box[2], 1.0)
+            let ecefCenter4 = transform * localCenter
+            let ecefCenter = SIMD3<Double>(ecefCenter4.x, ecefCenter4.y, ecefCenter4.z)
+            let enuCenter = ecefConverter.ecefToLocal(ecefCenter)
 
+            // Half-axes: only their magnitudes matter for culling (rotation preserves length)
             let xAxis = SIMD3<Float>(Float(box[3]), Float(box[4]), Float(box[5]))
             let yAxis = SIMD3<Float>(Float(box[6]), Float(box[7]), Float(box[8]))
             let zAxis = SIMD3<Float>(Float(box[9]), Float(box[10]), Float(box[11]))
 
-            self = .box(center: localCenter, halfAxes: simd_float3x3(xAxis, yAxis, zAxis))
+            self = .box(center: enuCenter, halfAxes: simd_float3x3(xAxis, yAxis, zAxis))
         } else if let sphere = json.sphere, sphere.count >= 4 {
-            let center = SIMD3<Double>(sphere[0], sphere[1], sphere[2])
-            let localCenter = ecefConverter.ecefToLocal(center)
+            // Transform tile-local center to ECEF
+            let localCenter = SIMD4<Double>(sphere[0], sphere[1], sphere[2], 1.0)
+            let ecefCenter4 = transform * localCenter
+            let ecefCenter = SIMD3<Double>(ecefCenter4.x, ecefCenter4.y, ecefCenter4.z)
+            let enuCenter = ecefConverter.ecefToLocal(ecefCenter)
 
-            self = .sphere(center: localCenter, radius: Float(sphere[3]))
+            self = .sphere(center: enuCenter, radius: Float(sphere[3]))
         } else {
             return nil
         }

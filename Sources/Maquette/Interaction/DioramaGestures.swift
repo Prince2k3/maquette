@@ -35,13 +35,6 @@ extension View {
 
 // MARK: - Environment Key
 
-private struct EnabledDioramaGesturesKey: EnvironmentKey {
-    static let defaultValue: Set<DioramaGestureType> = [.rotate, .zoom, .pan]
-}
-
 extension EnvironmentValues {
-    var enabledDioramaGestures: Set<DioramaGestureType> {
-        get { self[EnabledDioramaGesturesKey.self] }
-        set { self[EnabledDioramaGesturesKey.self] = newValue }
-    }
+    @Entry var enabledDioramaGestures: Set<DioramaGestureType> = [.rotate, .zoom, .pan]
 }

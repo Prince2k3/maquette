@@ -10,10 +10,11 @@ public protocol DioramaContent {
     var items: [DioramaContentItem] { get }
 }
 
-/// A concrete content item — either a marker or a polyline.
+/// A concrete content item — either a marker, polyline, or route preview.
 public enum DioramaContentItem: Sendable {
     case marker(DioramaMarker)
     case polyline(DioramaPolyline)
+    case routePreview(DioramaRoutePreview)
 }
 
 // MARK: - Marker

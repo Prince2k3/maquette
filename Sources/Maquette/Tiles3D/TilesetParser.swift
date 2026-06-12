@@ -35,9 +35,36 @@ public struct TileJSON: Codable, Sendable {
 }
 
 /// Tile content reference (URI to GLB or other tile data).
+///
+/// Supports both `uri` (3D Tiles 1.1) and `url` (3D Tiles 1.0) keys.
 public struct TileContentJSON: Codable, Sendable {
     /// URI to the tile's content (relative or absolute).
     public let uri: String
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // 3D Tiles 1.1 uses "uri", 1.0 uses "url"
+        if let uri = try container.decodeIfPresent(String.self, forKey: .uri) {
+            self.uri = uri
+        } else if let url = try container.decodeIfPresent(String.self, forKey: .url) {
+            self.uri = url
+        } else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.uri,
+                .init(codingPath: decoder.codingPath, debugDescription: "Neither 'uri' nor 'url' found in tile content")
+            )
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(uri, forKey: .uri)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case uri
+        case url
+    }
 }
 
 /// Bounding volume representation from tileset.json.

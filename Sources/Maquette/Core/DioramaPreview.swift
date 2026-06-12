@@ -3,30 +3,55 @@ import SwiftUI
 
 // MARK: - Previews
 
-#Preview("Grand Canyon — South Kaibab to Ooh Aah Point") {
-    DioramaView(
-        configuration: DioramaConfiguration(
-            center: CLLocationCoordinate2D(latitude: 36.0538, longitude: -112.0840),
-            radiusMeters: 3000
-        )
-    ) {
-        // South Kaibab Trailhead
-        DioramaMarker(
-            coordinate: coordinates.first ?? .init(),
-            tint: .green,
-            systemImage: "figure.hiking",
-            title: "South Kaibab Trailhead"
-        )
+#Preview("Grand Canyon — South Kaibab Route Preview") {
+    RoutePreviewDemoView()
+        .frame(minWidth: 400, minHeight: 400)
+}
 
-        // Trail path: South Kaibab Trailhead → Ooh Aah Point
-        DioramaPolyline(
-            coordinates: coordinates,
-            color: .orange,
-            lineWidth: 0.003,
-            id: "south-kaibab-trail"
-        )
+/// Demo wrapper for route preview in SwiftUI previews.
+private struct RoutePreviewDemoView: View {
+    @State private var controller = RoutePreviewController()
+
+    var body: some View {
+        VStack {
+            DioramaView(
+                configuration: DioramaConfiguration(
+                    center: CLLocationCoordinate2D(latitude: 36.0538, longitude: -112.0840),
+                    radiusMeters: 3000
+                )
+            ) {
+                DioramaMarker(
+                    coordinate: coordinates.first ?? .init(),
+                    tint: .green,
+                    systemImage: "figure.hiking",
+                    title: "South Kaibab Trailhead"
+                )
+
+                DioramaRoutePreview(
+                    coordinates: coordinates,
+                    style: RoutePreviewStyle(
+                        highlightColor: .yellow,
+                        dimmedColor: Color.orange.opacity(0.3)
+                    )
+                )
+            }
+            .routePreviewController(controller)
+
+            HStack {
+                Button(controller.playbackState == .playing ? "Pause" : "Play") {
+                    controller.togglePlayPause()
+                }
+                Button("Stop") {
+                    controller.stop()
+                }
+                Slider(value: Binding(
+                    get: { Double(controller.progress) },
+                    set: { controller.seek(to: Float($0)) }
+                ), in: 0...1)
+            }
+            .padding()
+        }
     }
-    .frame(minWidth: 400, minHeight: 400)
 }
 
 #Preview("Half Dome — Yosemite") {
@@ -110,22 +135,22 @@ import SwiftUI
 // }
 
 // Uncomment and add your Cesium ion access token to test Cesium 3D tiles:
-//
-// #Preview("Cesium Ion 3D Tiles — Grand Canyon") {
-//     DioramaView(
-//         configuration: DioramaConfiguration(
-//             center: CLLocationCoordinate2D(latitude: 36.1069, longitude: -112.1129),
-//             radiusMeters: 5000,
-//             imagerySource: .photorealistic(
-//                 provider: CesiumIonTiles3DProvider(
-//                     accessToken: "YOUR_CESIUM_TOKEN",
-//                     assetId: 2275207
-//                 )
-//             )
-//         )
-//     )
-//     .frame(minWidth: 400, minHeight: 400)
-// }
+// 37.7749° N, 122.4194° W
+ #Preview("Cesium Ion 3D Tiles — Grand Canyon") {
+     DioramaView(
+         configuration: DioramaConfiguration(
+             center: CLLocationCoordinate2D(latitude: 37.773972, longitude: -122.431297),
+             radiusMeters: 5000,
+             imagerySource: .photorealistic(
+                 provider: CesiumIonTiles3DProvider(
+                     accessToken: "***REMOVED-CESIUM-ION-TOKEN***",
+                     assetId: 2275207
+                 )
+             )
+         )
+     )
+     .frame(minWidth: 400, minHeight: 400)
+ }
 
 let coordinates: [CLLocationCoordinate2D] = [
     .init(latitude: 36.05293, longitude: -112.08394),

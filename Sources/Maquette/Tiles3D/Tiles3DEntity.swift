@@ -76,25 +76,29 @@ public class Tiles3DEntity: Entity {
         logger.info("3D Tiles entity initialized (scale=\(self.geographicScale), clipped=\(prism != nil)): \(provider.attribution)")
     }
 
-    /// Repositions the tray to sit just beneath the lowest geometry loaded so far.
+    /// Repositions the tray to sit just beneath the model that is actually on screen.
     ///
-    /// The tray only ever moves down. Letting it rise again as tiles are evicted would make it
-    /// bob while the camera moves.
+    /// Two things make the naive measurement wrong. Measuring every child includes the tray
+    /// itself, so it chases its own underside downward by a thickness on every update. And
+    /// measuring tiles that are loaded but hidden includes superseded coarse ancestors, which
+    /// span far more ground — and therefore reach far lower — than the detail that replaced them.
+    /// Only the visible tiles describe where the model's underside really is.
     private func updateBase() {
         guard case .tray(let color, let thickness, let inset) = style.base else { return }
 
-        // Measure the tiles alone. Measuring everything would include the tray, whose own
-        // underside then becomes the new low point — so it chases itself downward by its own
-        // thickness on every update and ends up kilometres below the model.
         var candidate = Float.greatestFiniteMagnitude
-        for child in children where child.name != Self.baseName {
+        for child in children where child.isEnabled && child.name != Self.baseName {
             let bounds = child.visualBounds(relativeTo: self)
             guard bounds.min.y.isFinite else { continue }
             candidate = min(candidate, bounds.min.y)
         }
 
         guard candidate < .greatestFiniteMagnitude else { return }
-        if let lowest = lowestLoadedY, candidate >= lowest { return }
+
+        // Tracked in both directions, since refinement can raise the underside as well as lower
+        // it, but only rebuilt on a meaningful move so the tray does not jitter every update.
+        let threshold = max(thickness, .ulpOfOne) / max(geographicScale, .ulpOfOne) * 0.25
+        if let placed = lowestLoadedY, abs(candidate - placed) < threshold { return }
         lowestLoadedY = candidate
 
         base?.removeFromParent()

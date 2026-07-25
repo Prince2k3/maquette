@@ -359,6 +359,132 @@ struct TerrainSolidGeneratorTests {
     }
 }
 
+@Suite("Concave Boundary Clipping Tests")
+struct ConcaveBoundaryClippingTests {
+    /// An L shape covering three quadrants of a unit square, with a reflex vertex at the origin.
+    private var lShape: DioramaBoundary {
+        DioramaBoundary(vertices: [
+            SIMD2(-0.5, -0.5), SIMD2(0.5, -0.5), SIMD2(0.5, 0),
+            SIMD2(0, 0), SIMD2(0, 0.5), SIMD2(-0.5, 0.5),
+        ])
+    }
+
+    /// Cell corners wound to match `DioramaBoundary`'s convention.
+    private func cell(from lo: SIMD2<Float>, to hi: SIMD2<Float>) -> [(SIMD2<Float>, SIMD2<Float>)] {
+        let corners = [
+            SIMD2(lo.x, lo.y), SIMD2(lo.x, hi.y), SIMD2(hi.x, hi.y), SIMD2(hi.x, lo.y),
+        ]
+        return (0..<4).map { (corners[$0], corners[($0 + 1) % 4]) }
+    }
+
+    @Test("A cell straddling a reflex vertex keeps the full interior")
+    func reflexVertexKeepsInterior() {
+        // This cell surrounds the L's reflex corner, so three of its four quadrants are inside.
+        // Intersecting the two boundary edges' half-planes would discard one of those quadrants,
+        // which is what punched a notch into the surface at every concave corner.
+        let clipped = TerrainSolidGenerator.clip(
+            polygon: lShape.vertices,
+            against: cell(from: SIMD2(-0.05, -0.05), to: SIMD2(0.05, 0.05))
+        )
+
+        let area = TerrainSolidGenerator.polygonArea(clipped)
+        #expect(abs(area - 0.0075) < 0.0001,
+                "Expected three quarters of the cell (0.0075), got \(area)")
+    }
+
+    @Test("A cell fully inside a concave boundary is untouched")
+    func interiorCellSurvivesIntact() {
+        let clipped = TerrainSolidGenerator.clip(
+            polygon: lShape.vertices,
+            against: cell(from: SIMD2(-0.4, -0.4), to: SIMD2(-0.3, -0.3))
+        )
+        #expect(abs(TerrainSolidGenerator.polygonArea(clipped) - 0.01) < 0.0001)
+    }
+
+    @Test("A cell in the concave notch is discarded")
+    func notchCellIsEmpty() {
+        let clipped = TerrainSolidGenerator.clip(
+            polygon: lShape.vertices,
+            against: cell(from: SIMD2(0.2, 0.2), to: SIMD2(0.3, 0.3))
+        )
+        #expect(TerrainSolidGenerator.polygonArea(clipped) < 0.00001)
+    }
+
+    @Test("Ear clipping covers a concave polygon exactly")
+    func triangulationCoversConcavePolygon() {
+        let polygon = lShape.vertices
+        let triangles = TerrainSolidGenerator.triangulate(polygon, minimumArea: 0)
+
+        #expect(triangles.count == polygon.count - 2)
+
+        // A fan from one vertex would span the notch and overshoot the true area.
+        var total: Float = 0
+        for triangle in triangles {
+            let a = polygon[triangle.0]
+            let b = polygon[triangle.1]
+            let c = polygon[triangle.2]
+            let ab = b - a
+            let ac = c - a
+            total += abs(ab.x * ac.y - ab.y * ac.x) / 2
+        }
+        #expect(abs(total - 0.75) < 0.0001, "Triangles should cover the L's 0.75 area, got \(total)")
+    }
+
+    @Test("Ear clipping preserves winding")
+    func triangulationPreservesWinding() {
+        let polygon = lShape.vertices
+        for triangle in TerrainSolidGenerator.triangulate(polygon, minimumArea: 0) {
+            let a = SIMD3(polygon[triangle.0].x, 0, polygon[triangle.0].y)
+            let b = SIMD3(polygon[triangle.1].x, 0, polygon[triangle.1].y)
+            let c = SIMD3(polygon[triangle.2].x, 0, polygon[triangle.2].y)
+            #expect(simd_cross(b - a, c - a).y > 0, "Triangle faces down")
+        }
+    }
+
+    @Test("A star chunk covers its true area")
+    func starChunkArea() {
+        // A five-pointed star, the shape that surfaced the reflex-vertex notches on screen.
+        let outerRadius: Float = 0.45
+        let innerRadius: Float = 0.19
+        let points: [SIMD2<Float>] = (0..<10).map { index in
+            let radius = index.isMultiple(of: 2) ? outerRadius : innerRadius
+            let angle = Float(index) / 10 * 2 * .pi - .pi / 2
+            return SIMD2(radius * cos(angle), radius * sin(angle))
+        }
+
+        let heightField = TerrainHeightField(
+            grids: [ElevationGrid(width: 8, height: 8, values: [Float](repeating: 300, count: 64))],
+            tilePositions: [(x: 0, y: 0)],
+            extent: SIMD2(1, 1),
+            elevationScale: 0.001
+        )
+
+        let geometry = TerrainSolidGenerator.buildGeometry(
+            heightField: heightField,
+            boundary: DioramaBoundary(vertices: points),
+            baseDepth: 0.1,
+            includesWalls: true,
+            includesBottom: true,
+            resolution: 160
+        )
+
+        var area: Float = 0
+        for i in stride(from: 0, to: geometry.top.indices.count, by: 3) {
+            let a = geometry.top.positions[Int(geometry.top.indices[i])]
+            let b = geometry.top.positions[Int(geometry.top.indices[i + 1])]
+            let c = geometry.top.positions[Int(geometry.top.indices[i + 2])]
+            let ab = SIMD2(b.x - a.x, b.z - a.z)
+            let ac = SIMD2(c.x - a.x, c.z - a.z)
+            area += abs(ab.x * ac.y - ab.y * ac.x) / 2
+        }
+
+        // Ten triangles from the center, each spanning 36 degrees.
+        let expected = 5 * outerRadius * innerRadius * sin(Float.pi / 5)
+        #expect(abs(area - expected) / expected < 0.01,
+                "Star surface area \(area) should match the analytic \(expected)")
+    }
+}
+
 @Suite("Chunk Base Depth Tests")
 struct ChunkBaseDepthTests {
     @Test("Proportional depth scales with the chunk's extent")

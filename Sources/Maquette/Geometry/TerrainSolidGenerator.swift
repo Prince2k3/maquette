@@ -235,10 +235,23 @@ public enum TerrainSolidGenerator {
                     continue
                 }
 
-                // The boundary crosses this cell — clip it to the outline.
+                // The boundary crosses this cell, so intersect the two.
+                //
+                // Clip the *boundary* against the *cell* rather than the other way round.
+                // Sutherland-Hodgman is exact whenever the clip region is convex, and a cell always
+                // is; the boundary need not be. Clipping the cell against the boundary's edge
+                // half-planes would instead intersect those half-planes, and at a reflex vertex the
+                // interior spans more than 180°, so that intersection cuts away a wedge that
+                // belongs to the chunk — leaving a notch at every concave corner.
+                let cellEdges = [
+                    (corners[0], corners[1]),
+                    (corners[1], corners[2]),
+                    (corners[2], corners[3]),
+                    (corners[3], corners[0]),
+                ]
                 let weldDistance = min(cellSize.x, cellSize.y) * 1e-4
                 let clipped = removingDuplicatePoints(
-                    clip(polygon: corners, against: nearbyEdges, boundary: boundary),
+                    clip(polygon: boundary.vertices, against: cellEdges),
                     weldDistance: weldDistance
                 )
                 guard clipped.count >= 3, polygonArea(clipped) > cellSize.x * cellSize.y * 1e-5 else { continue }
@@ -263,17 +276,22 @@ public enum TerrainSolidGenerator {
                     }
                 }
 
-                // The clip result is convex, so a fan from the first vertex is a valid
-                // triangulation. Collinear runs still yield zero-area triangles, so drop those.
+                // A cell containing a reflex vertex clips to a concave polygon, which a fan from
+                // one vertex would triangulate incorrectly — it would span the notch.
                 let minTriangleArea = cellSize.x * cellSize.y * 1e-6
-                for i in 1..<(clipped.count - 1) {
-                    let edge1 = clipped[i] - clipped[0]
-                    let edge2 = clipped[i + 1] - clipped[0]
-                    guard abs(edge1.x * edge2.y - edge1.y * edge2.x) / 2 > minTriangleArea else { continue }
-
-                    geometry.top.addTriangle(topIndices[0], topIndices[i], topIndices[i + 1])
+                for triangle in triangulate(clipped, minimumArea: minTriangleArea) {
+                    geometry.top.addTriangle(
+                        topIndices[triangle.0],
+                        topIndices[triangle.1],
+                        topIndices[triangle.2]
+                    )
                     if emitsBottom {
-                        geometry.bottom.addTriangle(bottomIndices[0], bottomIndices[i + 1], bottomIndices[i])
+                        // Reversed winding so the face looks down.
+                        geometry.bottom.addTriangle(
+                            bottomIndices[triangle.0],
+                            bottomIndices[triangle.2],
+                            bottomIndices[triangle.1]
+                        )
                     }
                 }
 
@@ -418,20 +436,22 @@ public enum TerrainSolidGenerator {
 
     // MARK: - Clipping
 
-    /// Clips a convex polygon against the inside half-planes of the given boundary edges.
+    /// Clips a polygon against a convex region described by its edges.
     ///
-    /// Exact for convex boundaries. For concave boundaries, restricting the clip to edges that
-    /// reach the cell keeps any error bounded by the cell size.
+    /// Sutherland-Hodgman is exact for any subject polygon — convex or concave — provided the clip
+    /// region is convex, so callers pass the grid cell as the clip region and the chunk boundary as
+    /// the subject.
+    ///
+    /// Edges must be wound to `DioramaBoundary`'s convention, where a point is inside when it lies
+    /// to the right of every edge direction.
     static func clip(
         polygon: [SIMD2<Float>],
-        against edgeIndices: [Int],
-        boundary: DioramaBoundary
+        against edges: [(SIMD2<Float>, SIMD2<Float>)]
     ) -> [SIMD2<Float>] {
         var output = polygon
 
-        for edgeIndex in edgeIndices {
+        for (a, b) in edges {
             guard output.count >= 3 else { return [] }
-            let (a, b) = boundary.edge(edgeIndex)
             let direction = b - a
 
             // Positive means outside, given the boundary's normalized winding.
@@ -466,6 +486,110 @@ public enum TerrainSolidGenerator {
         }
 
         return output.count >= 3 ? output : []
+    }
+
+    /// Triangulates a simple polygon by ear clipping, returning index triples that preserve the
+    /// polygon's winding.
+    ///
+    /// Handles concave polygons, which arise whenever a cell contains a reflex vertex of the chunk
+    /// boundary. Triangles below `minimumArea` are dropped rather than emitted as slivers.
+    static func triangulate(
+        _ polygon: [SIMD2<Float>],
+        minimumArea: Float
+    ) -> [(Int, Int, Int)] {
+        guard polygon.count >= 3 else { return [] }
+        if polygon.count == 3 {
+            return signedArea(polygon) != 0 && polygonArea(polygon) > minimumArea ? [(0, 1, 2)] : []
+        }
+
+        // A vertex is convex when its turn matches the polygon's own orientation.
+        let orientation = signedArea(polygon)
+        guard orientation != 0 else { return [] }
+
+        var remaining = Array(polygon.indices)
+        var triangles: [(Int, Int, Int)] = []
+        triangles.reserveCapacity(polygon.count - 2)
+
+        func isEar(at position: Int) -> Bool {
+            let count = remaining.count
+            let previousIndex = remaining[(position + count - 1) % count]
+            let currentIndex = remaining[position]
+            let nextIndex = remaining[(position + 1) % count]
+
+            let previous = polygon[previousIndex]
+            let current = polygon[currentIndex]
+            let next = polygon[nextIndex]
+
+            let turn = cross(current - previous, next - current)
+            guard turn * orientation > 0 else { return false }
+
+            // No other remaining vertex may fall inside the candidate ear.
+            for index in remaining
+            where index != previousIndex && index != currentIndex && index != nextIndex {
+                if pointInTriangle(polygon[index], previous, current, next) { return false }
+            }
+            return true
+        }
+
+        while remaining.count > 3 {
+            var clippedEar = false
+
+            for position in remaining.indices where isEar(at: position) {
+                let count = remaining.count
+                let previousIndex = remaining[(position + count - 1) % count]
+                let currentIndex = remaining[position]
+                let nextIndex = remaining[(position + 1) % count]
+
+                triangles.append((previousIndex, currentIndex, nextIndex))
+                remaining.remove(at: position)
+                clippedEar = true
+                break
+            }
+
+            // Numerically degenerate input can leave no valid ear; stop rather than spin.
+            guard clippedEar else { break }
+        }
+
+        if remaining.count == 3 {
+            triangles.append((remaining[0], remaining[1], remaining[2]))
+        }
+
+        return triangles.filter { triangle in
+            let a = polygon[triangle.0]
+            let b = polygon[triangle.1]
+            let c = polygon[triangle.2]
+            return abs(cross(b - a, c - a)) / 2 > minimumArea
+        }
+    }
+
+    /// Two-dimensional cross product of the (x, z) plane treated as standard 2D.
+    private static func cross(_ u: SIMD2<Float>, _ v: SIMD2<Float>) -> Float {
+        u.x * v.y - u.y * v.x
+    }
+
+    private static func signedArea(_ polygon: [SIMD2<Float>]) -> Float {
+        var total: Float = 0
+        for i in 0..<polygon.count {
+            let a = polygon[i]
+            let b = polygon[(i + 1) % polygon.count]
+            total += a.x * b.y - b.x * a.y
+        }
+        return total / 2
+    }
+
+    /// Orientation-independent point-in-triangle test, inclusive of the edges.
+    private static func pointInTriangle(
+        _ point: SIMD2<Float>,
+        _ a: SIMD2<Float>,
+        _ b: SIMD2<Float>,
+        _ c: SIMD2<Float>
+    ) -> Bool {
+        let d1 = cross(b - a, point - a)
+        let d2 = cross(c - b, point - b)
+        let d3 = cross(a - c, point - c)
+        let hasNegative = d1 < 0 || d2 < 0 || d3 < 0
+        let hasPositive = d1 > 0 || d2 > 0 || d3 > 0
+        return !(hasNegative && hasPositive)
     }
 
     /// Removes consecutive coincident points, including across the closing edge.

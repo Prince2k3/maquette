@@ -55,6 +55,44 @@ public actor TileCache {
         return data
     }
 
+    /// Returns cached data for an arbitrary URI, or `nil` if it has not been stored.
+    ///
+    /// Separate from `cachedOrFetch` because callers that pay per request need to know whether a
+    /// fetch is about to happen. A cache hit costs nothing and should not count against a budget.
+    public func cached(uri: String) -> Data? {
+        let key = Self.key(for: uri)
+
+        if let entry = memoryCache[key] {
+            touchKey(key)
+            return entry.data
+        }
+        if let diskData = readFromDisk(key: key) {
+            storeInMemory(key: key, data: diskData)
+            return diskData
+        }
+        return nil
+    }
+
+    /// Stores data fetched for an arbitrary URI.
+    public func store(uri: String, data: Data) {
+        let key = Self.key(for: uri)
+        storeInMemory(key: key, data: data)
+        writeToDisk(key: key, data: data)
+    }
+
+    /// A filesystem-safe key for a URI.
+    ///
+    /// Tile URIs are long, carry query parameters, and contain characters that cannot appear in a
+    /// filename, so they are hashed rather than escaped.
+    private static func key(for uri: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in uri.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01B3
+        }
+        return "uri-\(String(hash, radix: 36))"
+    }
+
     /// Removes all cached data from memory and disk.
     public func clearAll() {
         memoryCache.removeAll()

@@ -4,6 +4,12 @@ import Testing
 
 @Suite("Google Tiles 3D Provider Tests")
 struct GoogleTiles3DProviderTests {
+    /// A cache in a throwaway location, so one test's root does not satisfy another's fetch.
+    private func isolatedCache() -> RootTilesetCache {
+        RootTilesetCache(directory: FileManager.default.temporaryDirectory
+            .appendingPathComponent("MaquetteRootCacheTests/\(UUID().uuidString)", isDirectory: true))
+    }
+
 
     private func sampleTilesetJSON() -> Data {
         """
@@ -25,7 +31,7 @@ struct GoogleTiles3DProviderTests {
         let mock = MockHTTPClient(responses: [
             "tile.googleapis.com": .init(data: sampleTilesetJSON(), statusCode: 200)
         ])
-        let provider = GoogleTiles3DProvider(apiKey: "test-key", httpClient: mock)
+        let provider = GoogleTiles3DProvider(apiKey: "test-key", httpClient: mock, rootCache: isolatedCache())
 
         let tileset = try await provider.fetchTileset()
         #expect(tileset.asset.version == "1.1")
@@ -58,7 +64,7 @@ struct GoogleTiles3DProviderTests {
         let mock = MockHTTPClient(responses: [
             "tile.googleapis.com": .init(statusCode: 429)
         ])
-        let provider = GoogleTiles3DProvider(apiKey: "test-key", httpClient: mock)
+        let provider = GoogleTiles3DProvider(apiKey: "test-key", httpClient: mock, rootCache: isolatedCache())
 
         do {
             _ = try await provider.fetchTileset()

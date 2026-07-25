@@ -16,6 +16,9 @@ targets:
     platform: iOS
     sources:
       - path: MaquetteDemo
+        # The template is documentation, not code — the real file is gitignored.
+        excludes:
+          - "Secrets.example.swift"
     dependencies:
       - package: Maquette
         product: Maquette

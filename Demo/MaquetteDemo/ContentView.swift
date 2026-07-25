@@ -119,16 +119,14 @@ enum DemoPresets {
         }(),
 
         {
-            // Photogrammetry cut to the outline, resting on a tray. Uses the Cesium ion token
-            // already committed in DioramaPreview.
+            // Photogrammetry cut to the outline, resting on a tray. Straight to Google rather
+            // than proxied through Cesium ion. Google bills only the root tileset request, and the
+            // provider caches that, so relaunching the demo does not keep costing events.
             var configuration = DioramaConfiguration(
                 center: CLLocationCoordinate2D(latitude: 37.773972, longitude: -122.431297),
                 radiusMeters: 5000,
                 presentation: .photorealistic(
-                    provider: CesiumIonTiles3DProvider(
-                        accessToken: "***REMOVED-CESIUM-ION-TOKEN***",
-                        assetId: 2275207
-                    ),
+                    provider: GoogleTiles3DProvider(apiKey: Secrets.googleMapsAPIKey),
                     style: .standard
                 )
             )

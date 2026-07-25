@@ -14,6 +14,8 @@ public final class Tiles3DLODManager {
     private let ecefConverter: ECEFConverter
     private let center: CLLocationCoordinate2D
     private let radiusMeters: Double
+    /// Outline to cut tile geometry to as it loads, or `nil` to leave tiles whole.
+    private let clipPrism: BoundaryPrism?
     private let logger = Logger(subsystem: "com.maquette", category: "Tiles3DLODManager")
 
     private var rootTileset: TilesetJSON?
@@ -32,18 +34,25 @@ public final class Tiles3DLODManager {
     /// Number of frames before an unseen tile is evicted.
     public var evictionFrameThreshold: Int = 60
 
-    init(provider: any Tiles3DProvider, ecefConverter: ECEFConverter, center: CLLocationCoordinate2D, radiusMeters: Double) {
+    init(
+        provider: any Tiles3DProvider,
+        ecefConverter: ECEFConverter,
+        center: CLLocationCoordinate2D,
+        radiusMeters: Double,
+        clipPrism: BoundaryPrism? = nil
+    ) {
         self.provider = provider
         self.ecefConverter = ecefConverter
         self.center = center
         self.radiusMeters = radiusMeters
+        self.clipPrism = clipPrism
     }
 
     /// Loads the root tileset and prepares for tile management.
     func start() async throws {
         let tileset = try await provider.fetchTileset()
         self.rootTileset = tileset
-        self.tileLoader = Tile3DLoader(provider: provider, ecefConverter: ecefConverter)
+        self.tileLoader = Tile3DLoader(provider: provider, ecefConverter: ecefConverter, clipPrism: clipPrism)
         logger.info("Loaded root tileset (version: \(tileset.asset.version), geometricError: \(tileset.geometricError))")
 
         // Log root tile structure for diagnostics

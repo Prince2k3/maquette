@@ -20,32 +20,89 @@ public class Tiles3DEntity: Entity {
     private var lastLODUpdateTime: Date?
     private var isLODUpdating = false
 
+    /// The outline the model is cut to, and what it rests on.
+    private let style: Tiles3DStyle
+    private let boundary: DioramaBoundary
+    /// The tray beneath the model, if the style asks for one.
+    public private(set) var base: Entity?
+    /// Lowest point seen across loaded tiles, in this entity's local space.
+    ///
+    /// Photogrammetry has no known floor until geometry arrives, and level-of-detail refinement
+    /// can reveal lower ground later, so the tray settles downward as tiles load rather than
+    /// being positioned once up front.
+    private var lowestLoadedY: Float?
+
     /// Creates a 3D Tiles entity from a provider.
     /// - Parameters:
     ///   - provider: The 3D Tiles data source.
     ///   - center: Geographic center of the diorama.
     ///   - radiusMeters: Radius of the diorama in meters.
     ///   - physicalDiameter: The diorama's physical diameter in meters.
+    ///   - boundary: The outline to cut the model to, in diorama meters.
+    ///   - style: How the model is bounded and what it rests on.
     public init(
         provider: any Tiles3DProvider,
         center: CLLocationCoordinate2D,
         radiusMeters: Double,
-        physicalDiameter: Float
+        physicalDiameter: Float,
+        boundary: DioramaBoundary,
+        style: Tiles3DStyle = .standard
     ) async throws {
         let ecefConverter = ECEFConverter(origin: center)
+        let geographicScale = physicalDiameter / Float(radiusMeters * 2.0)
+
+        // Tile geometry is in real-world meters while the outline is in diorama meters, and the
+        // conversion rides on this entity's scale, so the prism is built in the geometry's space.
+        let prism = style.clipsToBoundary
+            ? BoundaryPrism(boundary: boundary, scale: geographicScale)
+            : nil
+
         self.lodManager = Tiles3DLODManager(
             provider: provider,
             ecefConverter: ecefConverter,
             center: center,
-            radiusMeters: radiusMeters
+            radiusMeters: radiusMeters,
+            clipPrism: prism
         )
-        self.geographicScale = physicalDiameter / Float(radiusMeters * 2.0)
+        self.lodManager.screenSpaceErrorThreshold = style.detailThreshold
+        self.geographicScale = geographicScale
+        self.style = style
+        self.boundary = boundary
         super.init()
         self.name = "Tiles3D"
         self.scale = SIMD3<Float>(repeating: geographicScale)
 
         try await lodManager.start()
-        logger.info("3D Tiles entity initialized (scale=\(self.geographicScale)): \(provider.attribution)")
+        logger.info("3D Tiles entity initialized (scale=\(self.geographicScale), clipped=\(prism != nil)): \(provider.attribution)")
+    }
+
+    /// Repositions the tray to sit just beneath the lowest geometry loaded so far.
+    ///
+    /// The tray only ever moves down. Letting it rise again as tiles are evicted would make it
+    /// bob while the camera moves.
+    private func updateBase() {
+        guard case .tray(let color, let thickness, let inset) = style.base else { return }
+
+        let bounds = visualBounds(relativeTo: self)
+        guard bounds.min.y.isFinite else { return }
+
+        let candidate = bounds.min.y
+        if let lowest = lowestLoadedY, candidate >= lowest { return }
+        lowestLoadedY = candidate
+
+        base?.removeFromParent()
+        // Geometry here is pre-scale, but `DioramaBase` works in diorama meters, so the tray is
+        // built in diorama space and divided back into this entity's space.
+        let trayTop = candidate * geographicScale
+        guard let entity = try? DioramaBase.generate(
+            style: .plinth(color: color, height: thickness, inset: inset),
+            boundary: boundary,
+            chunkBottomY: trayTop
+        ) else { return }
+
+        entity.scale = SIMD3<Float>(repeating: 1 / max(geographicScale, .ulpOfOne))
+        addChild(entity)
+        base = entity
     }
 
     @MainActor
@@ -89,6 +146,7 @@ public class Tiles3DEntity: Entity {
                 screenHeight: screenHeight,
                 fov: fov
             )
+            self.updateBase()
             self.isLODUpdating = false
         }
     }

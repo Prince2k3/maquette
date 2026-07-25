@@ -7,6 +7,14 @@ import os
 public struct Tile3DLoader: Sendable {
     let provider: any Tiles3DProvider
     let ecefConverter: ECEFConverter
+    /// Outline to cut tile geometry to as it loads, or `nil` to keep tiles whole.
+    let clipPrism: BoundaryPrism?
+
+    init(provider: any Tiles3DProvider, ecefConverter: ECEFConverter, clipPrism: BoundaryPrism? = nil) {
+        self.provider = provider
+        self.ecefConverter = ecefConverter
+        self.clipPrism = clipPrism
+    }
 
     private let logger = Logger(subsystem: "com.maquette", category: "Tile3DLoader")
 
@@ -42,9 +50,6 @@ public struct Tile3DLoader: Sendable {
             return nil
         }
 
-        // Use all mesh primitives, not just the first
-        let mesh = try MeshResource.generate(from: parsed.meshDescriptors)
-
         // Create material from texture if available
         let material: RealityKit.Material
         if let textureImage = parsed.textureImages.first {
@@ -60,8 +65,6 @@ public struct Tile3DLoader: Sendable {
             simpleMaterial.roughness = .float(0.9)
             material = simpleMaterial
         }
-
-        let entity = ModelEntity(mesh: mesh, materials: [material])
 
         // Compose the full ECEF transform:
         //   accumulated tile tree transform × GLB root node transform
@@ -110,7 +113,38 @@ public struct Tile3DLoader: Sendable {
 
         logger.debug("Transform \(uri.suffix(30)): ecef=(\(String(format: "%.1f", ecefTransform.columns.3.x)), \(String(format: "%.1f", ecefTransform.columns.3.y)), \(String(format: "%.1f", ecefTransform.columns.3.z))) local=(\(String(format: "%.3f", localTransform.columns.3.x)), \(String(format: "%.3f", localTransform.columns.3.y)), \(String(format: "%.3f", localTransform.columns.3.z)))")
 
-        entity.transform = Transform(matrix: localTransform)
+        // Clipping bakes the placement into the vertices, because a prism that stands vertical in
+        // diorama space would be tilted in the tile's own rotated space. The entity then carries
+        // no transform of its own.
+        let descriptors: [MeshDescriptor]
+        let entityTransform: simd_float4x4
+        if let clipPrism {
+            descriptors = Tiles3DClipper.clip(
+                descriptors: parsed.meshDescriptors,
+                placement: localTransform,
+                to: clipPrism
+            )
+            guard !descriptors.isEmpty else {
+                // Worth logging the geometry's position against the prism: a tileset whose tiles
+                // are coarser than the diorama's radius will clip away entirely, which looks like
+                // a rendering failure but is really a radius that is too small for the source.
+                let translation = localTransform.columns.3
+                logger.debug("""
+                    Tile clipped away: \(uri.suffix(24)) \
+                    local=(\(translation.x), \(translation.y), \(translation.z)) \
+                    prism=[\(clipPrism.lowerBound.x)...\(clipPrism.upperBound.x)]
+                    """)
+                return nil
+            }
+            entityTransform = matrix_identity_float4x4
+        } else {
+            descriptors = parsed.meshDescriptors
+            entityTransform = localTransform
+        }
+
+        let mesh = try MeshResource.generate(from: descriptors)
+        let entity = ModelEntity(mesh: mesh, materials: [material])
+        entity.transform = Transform(matrix: entityTransform)
 
         return entity
     }

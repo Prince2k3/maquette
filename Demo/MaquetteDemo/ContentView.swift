@@ -119,6 +119,29 @@ enum DemoPresets {
         }(),
 
         {
+            // Photogrammetry cut to the outline, resting on a tray. Uses the Cesium ion token
+            // already committed in DioramaPreview.
+            var configuration = DioramaConfiguration(
+                center: CLLocationCoordinate2D(latitude: 37.773972, longitude: -122.431297),
+                radiusMeters: 5000,
+                presentation: .photorealistic(
+                    provider: CesiumIonTiles3DProvider(
+                        accessToken: "***REMOVED-CESIUM-ION-TOKEN***",
+                        assetId: 2275207
+                    ),
+                    style: .standard
+                )
+            )
+            camera(&configuration)
+            return DemoPreset(
+                id: "photoreal",
+                title: "Photo",
+                caption: "3D Tiles cut to the outline, on a tray",
+                configuration: configuration
+            )
+        }(),
+
+        {
             // Fetches a region 80% wider than the chunk, so the terrain has room to slide.
             var configuration = DioramaConfiguration(
                 center: CLLocationCoordinate2D(latitude: 36.0544, longitude: -112.1401),

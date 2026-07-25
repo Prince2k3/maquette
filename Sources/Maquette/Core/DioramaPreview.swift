@@ -205,11 +205,12 @@ private struct RoutePreviewDemoView: View {
          configuration: DioramaConfiguration(
              center: CLLocationCoordinate2D(latitude: 37.773972, longitude: -122.431297),
              radiusMeters: 5000,
-             imagerySource: .photorealistic(
+             presentation: .photorealistic(
                  provider: CesiumIonTiles3DProvider(
                      accessToken: "***REMOVED-CESIUM-ION-TOKEN***",
                      assetId: 2275207
-                 )
+                 ),
+                 style: .standard
              )
          )
      )

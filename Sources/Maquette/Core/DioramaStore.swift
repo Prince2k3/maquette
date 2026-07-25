@@ -49,23 +49,13 @@ public final class DioramaStore {
         do {
             let rootEntity = DioramaEntity()
 
-            // Branch based on imagery source
-            switch configuration.imagerySource {
-            case .photorealistic(let provider):
-                try await loadPhotorealisticPipeline(provider: provider, into: rootEntity)
-
-            case .esriSatellite, .mapTilerSatellite:
+            // The two presentations are separate pipelines, not two sources for one.
+            switch configuration.presentation {
+            case .terrainChunk:
                 try await loadTerrainPipeline(into: rootEntity)
-            }
 
-            // Generate the optional display base (applies to all rendering paths)
-            let chunkBottomY = -(rootEntity.terrain?.baseDepth ?? 0)
-            if let baseEntity = try? DioramaBase.generate(
-                style: configuration.chunk.base,
-                boundary: configuration.boundary,
-                chunkBottomY: chunkBottomY
-            ) {
-                rootEntity.setBase(baseEntity)
+            case .photorealistic(let provider, let style):
+                try await loadPhotorealisticPipeline(provider: provider, style: style, into: rootEntity)
             }
 
             dioramaEntity = rootEntity
@@ -124,8 +114,6 @@ public final class DioramaStore {
             SatelliteTileProvider()
         case .mapTilerSatellite(let apiKey):
             MapTilerSatelliteProvider(apiKey: apiKey)
-        case .photorealistic:
-            fatalError("Photorealistic imagery should use loadPhotorealisticPipeline")
         }
 
         let useMapTilerTerrain: Bool = if case .mapTiler = configuration.elevationSource { true } else { false }
@@ -244,6 +232,15 @@ public final class DioramaStore {
             }
         }
 
+        // The chunk's own display base, positioned against its underside.
+        if let baseEntity = try? DioramaBase.generate(
+            style: chunkStyle.base,
+            boundary: boundary,
+            chunkBottomY: -baseDepth
+        ) {
+            rootEntity.setBase(baseEntity)
+        }
+
         // Retain elevation data for marker/polyline positioning. The sampler covers the whole
         // fetched region, so markers outside the chunk are still placeable once panned into view.
         elevationSampler = ElevationSampler(
@@ -262,12 +259,18 @@ public final class DioramaStore {
     // MARK: - Photorealistic 3D Tiles Pipeline
 
     /// Loads OGC 3D Tiles content (Google Photorealistic, Cesium ion).
-    private func loadPhotorealisticPipeline(provider: any Tiles3DProvider, into rootEntity: DioramaEntity) async throws {
+    private func loadPhotorealisticPipeline(
+        provider: any Tiles3DProvider,
+        style: Tiles3DStyle,
+        into rootEntity: DioramaEntity
+    ) async throws {
         let tiles3DEntity = try await Tiles3DEntity(
             provider: provider,
             center: configuration.center,
             radiusMeters: configuration.radiusMeters,
-            physicalDiameter: configuration.physicalDiameter
+            physicalDiameter: configuration.physicalDiameter,
+            boundary: configuration.boundary,
+            style: style
         )
         rootEntity.setTiles3D(tiles3DEntity)
     }

@@ -382,38 +382,38 @@ struct ConcaveBoundaryClippingTests {
         // This cell surrounds the L's reflex corner, so three of its four quadrants are inside.
         // Intersecting the two boundary edges' half-planes would discard one of those quadrants,
         // which is what punched a notch into the surface at every concave corner.
-        let clipped = TerrainSolidGenerator.clip(
+        let clipped = PolygonClipping.clip(
             polygon: lShape.vertices,
             against: cell(from: SIMD2(-0.05, -0.05), to: SIMD2(0.05, 0.05))
         )
 
-        let area = TerrainSolidGenerator.polygonArea(clipped)
+        let area = PolygonClipping.area(clipped)
         #expect(abs(area - 0.0075) < 0.0001,
                 "Expected three quarters of the cell (0.0075), got \(area)")
     }
 
     @Test("A cell fully inside a concave boundary is untouched")
     func interiorCellSurvivesIntact() {
-        let clipped = TerrainSolidGenerator.clip(
+        let clipped = PolygonClipping.clip(
             polygon: lShape.vertices,
             against: cell(from: SIMD2(-0.4, -0.4), to: SIMD2(-0.3, -0.3))
         )
-        #expect(abs(TerrainSolidGenerator.polygonArea(clipped) - 0.01) < 0.0001)
+        #expect(abs(PolygonClipping.area(clipped) - 0.01) < 0.0001)
     }
 
     @Test("A cell in the concave notch is discarded")
     func notchCellIsEmpty() {
-        let clipped = TerrainSolidGenerator.clip(
+        let clipped = PolygonClipping.clip(
             polygon: lShape.vertices,
             against: cell(from: SIMD2(0.2, 0.2), to: SIMD2(0.3, 0.3))
         )
-        #expect(TerrainSolidGenerator.polygonArea(clipped) < 0.00001)
+        #expect(PolygonClipping.area(clipped) < 0.00001)
     }
 
     @Test("Ear clipping covers a concave polygon exactly")
     func triangulationCoversConcavePolygon() {
         let polygon = lShape.vertices
-        let triangles = TerrainSolidGenerator.triangulate(polygon, minimumArea: 0)
+        let triangles = PolygonClipping.triangulate(polygon, minimumArea: 0)
 
         #expect(triangles.count == polygon.count - 2)
 
@@ -433,7 +433,7 @@ struct ConcaveBoundaryClippingTests {
     @Test("Ear clipping preserves winding")
     func triangulationPreservesWinding() {
         let polygon = lShape.vertices
-        for triangle in TerrainSolidGenerator.triangulate(polygon, minimumArea: 0) {
+        for triangle in PolygonClipping.triangulate(polygon, minimumArea: 0) {
             let a = SIMD3(polygon[triangle.0].x, 0, polygon[triangle.0].y)
             let b = SIMD3(polygon[triangle.1].x, 0, polygon[triangle.1].y)
             let c = SIMD3(polygon[triangle.2].x, 0, polygon[triangle.2].y)

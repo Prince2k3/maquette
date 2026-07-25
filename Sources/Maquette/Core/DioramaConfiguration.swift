@@ -11,14 +11,31 @@ public enum ElevationStyle: Sendable {
     case flat
 }
 
-/// Source for satellite/aerial imagery tiles.
+/// Source for satellite/aerial imagery tiles used to texture a terrain chunk.
 public enum ImagerySource: Sendable {
     /// ESRI World Imagery (free, no API key required).
     case esriSatellite
     /// MapTiler high-resolution satellite (requires API key).
     case mapTilerSatellite(apiKey: String)
-    /// OGC 3D Tiles photorealistic mesh (Google or Cesium). Bypasses the terrain mesh pipeline.
-    case photorealistic(provider: any Tiles3DProvider)
+}
+
+/// What the diorama is made of.
+///
+/// The two cases are genuinely different systems rather than two sources for one pipeline. A
+/// terrain chunk is generated once from a heightfield and extruded into a solid; a photorealistic
+/// model is arbitrary geometry streamed continuously and cut to the outline. Options that apply to
+/// one are meaningless for the other, which is why each carries its own style.
+public enum DioramaPresentation: Sendable {
+    /// A terrain chunk built from elevation and imagery tiles.
+    ///
+    /// Uses the configuration's `elevation`, `elevationExaggeration`, `imagerySource`,
+    /// `elevationSource`, `chunk`, and `panRange`.
+    case terrainChunk
+
+    /// A photorealistic model streamed from OGC 3D Tiles (Google or Cesium ion).
+    ///
+    /// Terrain-chunk options are ignored; `style` carries everything that applies here.
+    case photorealistic(provider: any Tiles3DProvider, style: Tiles3DStyle = .standard)
 }
 
 /// Source for elevation/terrain data.
@@ -95,9 +112,15 @@ public struct DioramaConfiguration: Sendable {
 
     // MARK: - Data Sources
 
+    /// What the diorama is made of. Defaults to a terrain chunk.
+    public var presentation: DioramaPresentation
     /// Source for satellite/aerial imagery. Defaults to ESRI World Imagery (free).
+    ///
+    /// Terrain chunks only.
     public var imagerySource: ImagerySource
     /// Source for elevation/terrain data. Defaults to Mapzen Terrarium (free).
+    ///
+    /// Terrain chunks only.
     public var elevationSource: ElevationSource
 
     /// Creates a diorama configuration.
@@ -114,6 +137,7 @@ public struct DioramaConfiguration: Sendable {
         cameraElevation: Float? = nil,
         cameraDistance: Float? = nil,
         allowsARPlacement: Bool = false,
+        presentation: DioramaPresentation = .terrainChunk,
         imagerySource: ImagerySource = .esriSatellite,
         elevationSource: ElevationSource = .mapzen
     ) {
@@ -129,6 +153,7 @@ public struct DioramaConfiguration: Sendable {
         self.cameraElevation = cameraElevation
         self.cameraDistance = cameraDistance
         self.allowsARPlacement = allowsARPlacement
+        self.presentation = presentation
         self.imagerySource = imagerySource
         self.elevationSource = elevationSource
     }

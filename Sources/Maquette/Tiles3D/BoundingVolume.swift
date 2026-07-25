@@ -31,12 +31,30 @@ public enum BoundingVolume: Sendable {
             let ecefCenter = SIMD3<Double>(ecefCenter4.x, ecefCenter4.y, ecefCenter4.z)
             let enuCenter = ecefConverter.ecefToLocal(ecefCenter)
 
-            // Half-axes: only their magnitudes matter for culling (rotation preserves length)
-            let xAxis = SIMD3<Float>(Float(box[3]), Float(box[4]), Float(box[5]))
-            let yAxis = SIMD3<Float>(Float(box[6]), Float(box[7]), Float(box[8]))
-            let zAxis = SIMD3<Float>(Float(box[9]), Float(box[10]), Float(box[11]))
+            // Half-axes are rotated into the local frame rather than kept at their raw
+            // orientation. Magnitudes alone are enough for a sphere approximation, but not for
+            // measuring the distance to the box itself, which is what level-of-detail needs.
+            let rotation = simd_double3x3(
+                SIMD3<Double>(transform.columns.0.x, transform.columns.0.y, transform.columns.0.z),
+                SIMD3<Double>(transform.columns.1.x, transform.columns.1.y, transform.columns.1.z),
+                SIMD3<Double>(transform.columns.2.x, transform.columns.2.y, transform.columns.2.z)
+            )
+            let toLocal = ecefConverter.ecefToENU * rotation
 
-            self = .box(center: enuCenter, halfAxes: simd_float3x3(xAxis, yAxis, zAxis))
+            func localAxis(_ a: Double, _ b: Double, _ c: Double) -> SIMD3<Float> {
+                let enu = toLocal * SIMD3<Double>(a, b, c)
+                // ENU (East, North, Up) → RealityKit (East, Up, -North), matching `ecefToLocal`.
+                return SIMD3<Float>(Float(enu.x), Float(enu.z), Float(-enu.y))
+            }
+
+            self = .box(
+                center: enuCenter,
+                halfAxes: simd_float3x3(
+                    localAxis(box[3], box[4], box[5]),
+                    localAxis(box[6], box[7], box[8]),
+                    localAxis(box[9], box[10], box[11])
+                )
+            )
         } else if let sphere = json.sphere, sphere.count >= 4 {
             // Transform tile-local center to ECEF
             let localCenter = SIMD4<Double>(sphere[0], sphere[1], sphere[2], 1.0)
@@ -85,14 +103,9 @@ public enum BoundingVolume: Sendable {
             let lonOverlap = west <= centerLonRad + radiusRad && east >= centerLonRad - radiusRad
             return latOverlap && lonOverlap
 
-        case .box(let boxCenter, let halfAxes):
-            let extent = simd_length(halfAxes.columns.0) + simd_length(halfAxes.columns.1) + simd_length(halfAxes.columns.2)
-            let dist = simd_length(boxCenter)
-            return dist - extent < Float(radiusMeters)
-
-        case .sphere(let sphereCenter, let radius):
-            let dist = simd_length(sphereCenter)
-            return dist - radius < Float(radiusMeters)
+        case .box, .sphere:
+            // The diorama sits at the local origin, so the region is a sphere about it.
+            return distance(to: .zero) < Float(radiusMeters)
         }
     }
 
@@ -103,15 +116,40 @@ public enum BoundingVolume: Sendable {
         screenHeight: Float,
         fov: Float
     ) -> Double {
-        let center: SIMD3<Float> = switch self {
-        case .region: .zero
-        case .box(let c, _): c
-        case .sphere(let c, _): c
-        }
-
-        let distance = max(Double(simd_length(cameraPosition - center)), 0.001)
+        // The spec measures error against the distance to the volume, not to its middle. Using the
+        // centre overstates how far away a large tile is — its near face can be right in front of
+        // the camera — so the error comes out too small and the tile is never refined.
+        let distance = max(Double(self.distance(to: cameraPosition)), 0.001)
         let halfFovTan = tan(Double(fov) / 2.0)
 
         return (geometricError * Double(screenHeight)) / (distance * 2.0 * halfFovTan)
+    }
+
+    /// Distance from a point to the nearest point of this volume. Zero when the point is inside.
+    public func distance(to point: SIMD3<Float>) -> Float {
+        switch self {
+        case .region:
+            // Region volumes carry no local-space position, so the origin stands in for them.
+            return simd_length(point)
+
+        case .sphere(let center, let radius):
+            return max(simd_length(point - center) - radius, 0)
+
+        case .box(let center, let halfAxes):
+            // Project into the box's own frame, clamp to its extent, and measure what is left
+            // over. The axes are orthogonal, so projecting onto each normalized axis is enough.
+            let offset = point - center
+            var outside = SIMD3<Float>.zero
+
+            for index in 0..<3 {
+                let axis = halfAxes[index]
+                let length = simd_length(axis)
+                guard length > .ulpOfOne else { continue }
+                let projection = simd_dot(offset, axis / length)
+                outside[index] = max(abs(projection) - length, 0)
+            }
+
+            return simd_length(outside)
+        }
     }
 }

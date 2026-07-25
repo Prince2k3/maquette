@@ -83,10 +83,17 @@ public class Tiles3DEntity: Entity {
     private func updateBase() {
         guard case .tray(let color, let thickness, let inset) = style.base else { return }
 
-        let bounds = visualBounds(relativeTo: self)
-        guard bounds.min.y.isFinite else { return }
+        // Measure the tiles alone. Measuring everything would include the tray, whose own
+        // underside then becomes the new low point — so it chases itself downward by its own
+        // thickness on every update and ends up kilometres below the model.
+        var candidate = Float.greatestFiniteMagnitude
+        for child in children where child.name != Self.baseName {
+            let bounds = child.visualBounds(relativeTo: self)
+            guard bounds.min.y.isFinite else { continue }
+            candidate = min(candidate, bounds.min.y)
+        }
 
-        let candidate = bounds.min.y
+        guard candidate < .greatestFiniteMagnitude else { return }
         if let lowest = lowestLoadedY, candidate >= lowest { return }
         lowestLoadedY = candidate
 
@@ -100,10 +107,14 @@ public class Tiles3DEntity: Entity {
             chunkBottomY: trayTop
         ) else { return }
 
+        entity.name = Self.baseName
         entity.scale = SIMD3<Float>(repeating: 1 / max(geographicScale, .ulpOfOne))
         addChild(entity)
         base = entity
     }
+
+    /// Name used to keep the tray out of its own measurement.
+    private static let baseName = "Tiles3DBase"
 
     @MainActor
     required init() {

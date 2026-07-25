@@ -123,38 +123,18 @@ public final class Tiles3DLODManager {
         screenHeight: Float,
         fov: Float
     ) async {
-        guard let rootTileset else { return }
+        guard rootTileset != nil else { return }
 
         // Each pass can only descend as far as what is already resolved: a sub-tileset has to be
         // fetched before its children are even visible to the traversal. So a pass reaches one
         // level deeper than the last, and the update drives itself until coverage stops improving
         // rather than waiting for the view to ask again.
-        for pass in 0..<maxPassesPerUpdate {
-            var visibleURIs = Set<String>()
-            var requests: [ContentRequest] = []
-            var stats = TraversalStats()
-
-            _ = traverseTile(
-                rootTileset.root,
-                parentTransform: simd_double4x4(diagonal: .one),
+        for _ in 0..<maxPassesPerUpdate {
+            let requests = selectVisibleTiles(
                 cameraPosition: cameraPosition,
                 screenHeight: screenHeight,
-                fov: fov,
-                visibleURIs: &visibleURIs,
-                requests: &requests,
-                stats: &stats,
-                depth: 0
+                fov: fov
             )
-
-            applyVisibility(visibleURIs)
-            evict(keeping: visibleURIs)
-
-            if !hasLoggedFirstTraversal || requests.isEmpty {
-                logger.debug("LOD pass \(pass): visited=\(stats.visited) culled=\(stats.culled) refined=\(stats.refined) rendered=\(stats.rendered) requested=\(requests.count) noContent=\(stats.noContent) barren=\(self.barrenTiles.count) subtilesets=\(self.subTilesets.count) depth=\(stats.maxDepth) loaded=\(self.loadedEntities.count)")
-                hasLoggedFirstTraversal = true
-            }
-
-            // Everything the traversal wanted is already present.
             if requests.isEmpty { return }
 
             let loadedBefore = loadedEntities.count
@@ -164,9 +144,54 @@ public final class Tiles3DLODManager {
             // Nothing arrived, so another pass would ask for exactly the same things.
             if loadedEntities.count == loadedBefore,
                subTilesets.count + barrenTiles.count == resolvedBefore {
-                return
+                break
             }
         }
+
+        // Tiles are added hidden and only shown once a traversal picks them, so whatever the last
+        // fetch brought in needs one more selection. Without it the newest geometry stays
+        // invisible until something else happens to trigger an update — which looks like the view
+        // filling in while the camera moves and emptying again when it stops.
+        _ = selectVisibleTiles(
+            cameraPosition: cameraPosition,
+            screenHeight: screenHeight,
+            fov: fov
+        )
+    }
+
+    /// Runs one traversal, shows what it selected, and returns the content it still needs.
+    private func selectVisibleTiles(
+        cameraPosition: SIMD3<Float>,
+        screenHeight: Float,
+        fov: Float
+    ) -> [ContentRequest] {
+        guard let rootTileset else { return [] }
+
+        var visibleURIs = Set<String>()
+        var requests: [ContentRequest] = []
+        var stats = TraversalStats()
+
+        _ = traverseTile(
+            rootTileset.root,
+            parentTransform: simd_double4x4(diagonal: .one),
+            cameraPosition: cameraPosition,
+            screenHeight: screenHeight,
+            fov: fov,
+            visibleURIs: &visibleURIs,
+            requests: &requests,
+            stats: &stats,
+            depth: 0
+        )
+
+        applyVisibility(visibleURIs)
+        evict(keeping: visibleURIs)
+
+        if !hasLoggedFirstTraversal || requests.isEmpty {
+            logger.debug("LOD: visited=\(stats.visited) culled=\(stats.culled) refined=\(stats.refined) rendered=\(stats.rendered) requested=\(requests.count) noContent=\(stats.noContent) barren=\(self.barrenTiles.count) subtilesets=\(self.subTilesets.count) depth=\(stats.maxDepth) loaded=\(self.loadedEntities.count)")
+            hasLoggedFirstTraversal = true
+        }
+
+        return requests
     }
 
     // MARK: - Tile Tree Traversal

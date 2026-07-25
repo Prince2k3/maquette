@@ -22,6 +22,12 @@ public class TerrainEntity: Entity {
     public private(set) var baseDepth: Float = 0
     /// Highest point of the terrain surface in diorama-space Y.
     public private(set) var maxSurfaceY: Float = 0
+    /// How far the terrain has slid beneath the chunk's outline, in diorama meters.
+    public private(set) var panOffset: SIMD2<Float> = .zero
+
+    /// Retained geometry and the terrain it samples, kept only when the chunk can pan.
+    private var geometry: TerrainSolidGenerator.Geometry?
+    private var heightField: TerrainHeightField?
 
     /// Creates a terrain chunk entity from generated mesh parts.
     ///
@@ -30,16 +36,24 @@ public class TerrainEntity: Entity {
     ///   - surfaceMaterial: Material for the terrain surface, typically satellite imagery.
     ///   - wallMaterial: Material for the cut walls. Pass `nil` to omit the walls.
     ///   - bottomMaterial: Material for the bottom face. Pass `nil` to omit the bottom.
+    ///   - pannableTerrain: The terrain to re-sample when the chunk pans. Pass `nil` for a fixed
+    ///     chunk, which avoids retaining a CPU-side copy of the geometry.
     public init(
         parts: TerrainSolidParts,
         surfaceMaterial: RealityKit.Material,
         wallMaterial: RealityKit.Material?,
-        bottomMaterial: RealityKit.Material?
+        bottomMaterial: RealityKit.Material?,
+        pannableTerrain: TerrainHeightField? = nil
     ) {
         super.init()
         self.name = "TerrainChunk"
         self.baseDepth = parts.baseDepth
         self.maxSurfaceY = parts.maxSurfaceY
+
+        if let pannableTerrain {
+            self.geometry = parts.geometry
+            self.heightField = pannableTerrain
+        }
 
         let surfaceModel = ModelEntity(mesh: parts.top, materials: [surfaceMaterial])
         surfaceModel.name = "TerrainSurface"
@@ -59,6 +73,31 @@ public class TerrainEntity: Entity {
             addChild(bottomModel)
             self.bottom = bottomModel
         }
+    }
+
+    /// Whether this chunk retains what it needs to pan.
+    public var canPan: Bool { geometry != nil && heightField != nil }
+
+    /// Slides the terrain beneath the chunk's fixed outline.
+    ///
+    /// Only heights, shading, and imagery change — the chunk keeps its shape and position, so the
+    /// clipped topology built at generation is reused rather than rebuilt.
+    ///
+    /// - Parameter offset: The new offset in diorama meters. Callers are expected to have clamped
+    ///   it to the fetched region; sampling past the edge clamps to the terrain's border.
+    public func setPanOffset(_ offset: SIMD2<Float>) {
+        guard var geometry, let heightField, offset != panOffset else { return }
+
+        TerrainSolidGenerator.resample(&geometry, heightField: heightField, panOffset: offset)
+
+        guard let meshes = try? TerrainSolidGenerator.rebuildMeshes(from: geometry) else { return }
+        surface?.model?.mesh = meshes.top
+        if let wallMesh = meshes.walls {
+            walls?.model?.mesh = wallMesh
+        }
+
+        self.geometry = geometry
+        self.panOffset = offset
     }
 
     /// Creates a terrain entity from a mesh and a pre-built material.

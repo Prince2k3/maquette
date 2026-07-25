@@ -54,6 +54,12 @@ public struct ElevationSampler: Sendable {
     /// The terrain surface this sampler reads from — the same surface the chunk mesh is built on.
     private let heightField: TerrainHeightField
 
+    /// How far the terrain has slid beneath the chunk's outline, in diorama meters.
+    ///
+    /// A coordinate keeps its place on the ground, so when the ground moves the coordinate's
+    /// diorama position moves with it.
+    public var panOffset: SIMD2<Float> = .zero
+
     /// Returns a 3D position in diorama-space for the given geographic coordinate.
     ///
     /// X/Z come from the tile mosaic layout and Y is read from the shared `TerrainHeightField`,
@@ -65,7 +71,13 @@ public struct ElevationSampler: Sendable {
     /// - Returns: A 3D position in diorama-space meters, or `nil` if outside bounds.
     public func position(for coordinate: CLLocationCoordinate2D) -> SIMD3<Float>? {
         guard let point = horizontalPosition(for: coordinate) else { return nil }
-        return SIMD3(point.x, heightField.surfaceY(atX: point.x, z: point.y), point.y)
+        // The terrain is sampled where the coordinate actually sits; the chunk shows that point
+        // shifted by however far the ground has been panned.
+        return SIMD3(
+            point.x - panOffset.x,
+            heightField.surfaceY(atX: point.x, z: point.y),
+            point.y - panOffset.y
+        )
     }
 
     /// Maps a geographic coordinate onto the diorama's horizontal plane.

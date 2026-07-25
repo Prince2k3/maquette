@@ -117,13 +117,33 @@ enum DemoPresets {
                 configuration: configuration
             )
         }(),
+
+        {
+            // Fetches a region 80% wider than the chunk, so the terrain has room to slide.
+            var configuration = DioramaConfiguration(
+                center: CLLocationCoordinate2D(latitude: 36.0544, longitude: -112.1401),
+                radiusMeters: 5000,
+                elevationExaggeration: 1.6,
+                chunk: .canyon,
+                panRange: 0.8
+            )
+            camera(&configuration)
+            return DemoPreset(
+                id: "pan",
+                title: "Pan",
+                caption: "Drag in Pan mode to slide the terrain",
+                configuration: configuration
+            )
+        }(),
     ]
 }
 
 struct ContentView: View {
     @State private var selection = 0
+    @State private var panMode = false
 
     private var preset: DemoPreset { DemoPresets.all[selection] }
+    private var supportsPanning: Bool { preset.configuration.panRange > 0 }
 
     var body: some View {
         ZStack {
@@ -134,12 +154,18 @@ struct ContentView: View {
 
                 DioramaView(configuration: preset.configuration)
                     .id(preset.id)
+                    // Terrain panning claims the drag only when orbiting is switched off.
+                    .dioramaGestures(panMode && supportsPanning ? [.pan, .zoom] : [.rotate, .zoom])
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+                if supportsPanning {
+                    modeToggle
+                }
                 presetPicker
             }
         }
         .preferredColorScheme(.dark)
+        .onChange(of: selection) { _, _ in panMode = false }
     }
 
     private var header: some View {
@@ -152,6 +178,16 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
+    }
+
+    private var modeToggle: some View {
+        Picker("Drag mode", selection: $panMode) {
+            Text("Orbit").tag(false)
+            Text("Pan").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 40)
+        .padding(.bottom, 4)
     }
 
     private var presetPicker: some View {

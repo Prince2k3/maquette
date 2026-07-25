@@ -76,6 +76,13 @@ public struct DioramaConfiguration: Sendable {
     /// Appearance of the terrain chunk: how much earth sits beneath the surface, how the cut
     /// walls read, and what the chunk rests on.
     public var chunk: TerrainChunkStyle
+    /// How far the terrain can slide beneath the chunk's fixed outline, as a fraction of the
+    /// chunk's horizontal extent. `0` disables panning.
+    ///
+    /// Panning fetches a correspondingly larger region up front, so the terrain has somewhere to
+    /// pan from: `0.5` fetches half again as much ground in each direction and costs roughly
+    /// twice the tiles. The chunk itself does not grow.
+    public var panRange: Float
 
     // MARK: - Platform-Specific Hints
 
@@ -103,6 +110,7 @@ public struct DioramaConfiguration: Sendable {
         zoomLevel: Int? = nil,
         elevationExaggeration: Float = 1.0,
         chunk: TerrainChunkStyle = .standard,
+        panRange: Float = 0,
         cameraElevation: Float? = nil,
         cameraDistance: Float? = nil,
         allowsARPlacement: Bool = false,
@@ -117,6 +125,7 @@ public struct DioramaConfiguration: Sendable {
         self.zoomLevel = zoomLevel
         self.elevationExaggeration = elevationExaggeration
         self.chunk = chunk
+        self.panRange = max(0, panRange)
         self.cameraElevation = cameraElevation
         self.cameraDistance = cameraDistance
         self.allowsARPlacement = allowsARPlacement
@@ -155,8 +164,27 @@ public extension DioramaConfiguration {
     }
 
     /// Converts real-world meters into diorama-space meters.
+    ///
+    /// Unaffected by `panRange`: a larger pan region is fetched at a proportionally larger
+    /// geographic radius, so the scale stays the same and the chunk keeps its true proportions.
     var geographicScale: Float {
         physicalDiameter / Float(radiusMeters * 2.0)
+    }
+
+    /// Geographic radius of terrain to fetch, widened to give panning somewhere to pan from.
+    var terrainFetchRadiusMeters: Double {
+        radiusMeters * Double(1 + panRange)
+    }
+
+    /// Physical size of the fetched terrain region, which is the chunk's extent plus pan margin.
+    var terrainRegionExtent: SIMD2<Float> {
+        SIMD2(repeating: physicalDiameter * (1 + panRange))
+    }
+
+    /// Furthest the terrain can slide in each direction before the chunk would overhang the
+    /// fetched region.
+    var maximumPanOffset: SIMD2<Float> {
+        simd_max((terrainRegionExtent - boundary.extent) / 2, .zero)
     }
 
     /// The elevation multiplier actually applied, accounting for a `.flat` elevation style.

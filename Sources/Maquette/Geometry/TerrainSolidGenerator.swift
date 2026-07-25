@@ -18,6 +18,25 @@ public struct TerrainSolidParts {
     public let baseDepth: Float
     /// Highest point of the terrain surface in diorama-space Y.
     public let maxSurfaceY: Float
+
+    /// Retained CPU-side geometry, so the surface can be re-sampled at a new pan offset without
+    /// rebuilding topology. See `TerrainSolidGenerator.resample(_:heightField:panOffset:in:)`.
+    let geometry: TerrainSolidGenerator.Geometry
+    /// Parameters frozen at generation time so re-sampling stays consistent with the first build.
+    let resampling: ResamplingParameters
+}
+
+/// Values that must stay fixed across pan updates for the chunk to remain visually stable.
+struct ResamplingParameters {
+    /// Chunk depth below Y = 0.
+    let baseDepth: Float
+    /// Vertical span the wall texture is normalized against.
+    ///
+    /// Frozen at generation. If it tracked the terrain currently under the boundary, the strata
+    /// bands would slide up and down as the terrain panned beneath them.
+    let wallHeight: Float
+    /// Cell size, used as the step for the surface normal's central differences.
+    let sampleStep: SIMD2<Float>
 }
 
 /// Generates a terrain chunk: a closed solid whose top is real terrain, whose sides are cut walls
@@ -37,6 +56,8 @@ public enum TerrainSolidGenerator {
     ///   - includesWalls: Whether to generate the cut walls.
     ///   - includesBottom: Whether to close the chunk with a bottom face.
     ///   - resolution: Sampling cells along the chunk's longest horizontal axis.
+    ///   - panOffset: Shifts which part of the height field appears inside the boundary. The
+    ///     chunk's outline stays fixed; the terrain slides beneath it.
     /// - Returns: The generated mesh parts.
     @MainActor
     public static func generate(
@@ -45,7 +66,8 @@ public enum TerrainSolidGenerator {
         baseDepth: Float,
         includesWalls: Bool = true,
         includesBottom: Bool = true,
-        resolution: Int = 256
+        resolution: Int = 256,
+        panOffset: SIMD2<Float> = .zero
     ) throws -> TerrainSolidParts {
         let geometry = buildGeometry(
             heightField: heightField,
@@ -53,7 +75,8 @@ public enum TerrainSolidGenerator {
             baseDepth: baseDepth,
             includesWalls: includesWalls,
             includesBottom: includesBottom,
-            resolution: resolution
+            resolution: resolution,
+            panOffset: panOffset
         )
 
         guard !geometry.top.indices.isEmpty else {
@@ -67,7 +90,66 @@ public enum TerrainSolidGenerator {
             walls: geometry.walls.indices.isEmpty ? nil : try buildMesh(from: geometry.walls, name: "terrainWalls"),
             bottom: geometry.bottom.indices.isEmpty ? nil : try buildMesh(from: geometry.bottom, name: "terrainBottom"),
             baseDepth: baseDepth,
-            maxSurfaceY: heightField.maxSurfaceY
+            maxSurfaceY: heightField.maxSurfaceY,
+            geometry: geometry,
+            resampling: geometry.resampling
+        )
+    }
+
+    // MARK: - Panning
+
+    /// Re-samples a chunk's surface at a new pan offset, updating the retained buffers in place.
+    ///
+    /// The chunk's outline is fixed in diorama space, so panning changes neither the topology nor
+    /// the horizontal vertex positions — only heights, normals, and texture coordinates. That is
+    /// what makes panning affordable: the expensive part of generation, clipping the sampling grid
+    /// against the boundary, is done once and reused for every offset.
+    ///
+    /// - Parameters:
+    ///   - geometry: Retained geometry to update.
+    ///   - heightField: The terrain surface to sample.
+    ///   - panOffset: The new offset, in diorama meters.
+    static func resample(
+        _ geometry: inout Geometry,
+        heightField: TerrainHeightField,
+        panOffset: SIMD2<Float>
+    ) {
+        let parameters = geometry.resampling
+
+        // Surface: height, shading, and imagery all follow the terrain.
+        for index in geometry.top.positions.indices {
+            let position = geometry.top.positions[index]
+            let sample = SIMD2(position.x, position.z) + panOffset
+            geometry.top.positions[index].y = heightField.surfaceY(atX: sample.x, z: sample.y)
+            geometry.top.normals[index] = surfaceNormal(
+                heightField: heightField,
+                at: sample,
+                sampleStep: parameters.sampleStep
+            )
+            geometry.top.uvs[index] = textureCoordinate(for: sample, heightField: heightField)
+        }
+
+        // Walls: `appendWallQuad` emits its four vertices as top, bottom, top, bottom, so the
+        // even-indexed ones ride the surface and the odd-indexed ones stay pinned to the base.
+        for index in stride(from: 0, to: geometry.walls.positions.count, by: 2) {
+            let position = geometry.walls.positions[index]
+            let sample = SIMD2(position.x, position.z) + panOffset
+            let y = heightField.surfaceY(atX: sample.x, z: sample.y)
+            geometry.walls.positions[index].y = y
+            geometry.walls.uvs[index].y = parameters.wallHeight > 0
+                ? ((y + parameters.baseDepth) / parameters.wallHeight).clampedToUnitRange
+                : 0
+        }
+
+        // The bottom face is flat and untextured, so panning leaves it untouched.
+    }
+
+    /// Rebuilds mesh resources from re-sampled geometry.
+    @MainActor
+    static func rebuildMeshes(from geometry: Geometry) throws -> (top: MeshResource, walls: MeshResource?) {
+        (
+            try buildMesh(from: geometry.top, name: "terrainTop"),
+            geometry.walls.indices.isEmpty ? nil : try buildMesh(from: geometry.walls, name: "terrainWalls")
         )
     }
 
@@ -96,6 +178,7 @@ public enum TerrainSolidGenerator {
         var top = Buffers()
         var walls = Buffers()
         var bottom = Buffers()
+        var resampling = ResamplingParameters(baseDepth: 0, wallHeight: 0, sampleStep: .one)
     }
 
     /// Builds all chunk geometry. Exposed for testing without a RealityKit device context.
@@ -105,7 +188,8 @@ public enum TerrainSolidGenerator {
         baseDepth: Float,
         includesWalls: Bool,
         includesBottom: Bool,
-        resolution: Int
+        resolution: Int,
+        panOffset: SIMD2<Float> = .zero
     ) -> Geometry {
         var geometry = Geometry()
 
@@ -140,10 +224,20 @@ public enum TerrainSolidGenerator {
         for index in 0..<boundary.edgeCount {
             let (a, b) = boundary.edge(index)
             let midpoint = (a + b) / 2
-            maxBoundarySurfaceY = max(maxBoundarySurfaceY, heightField.surfaceY(atX: a.x, z: a.y))
-            maxBoundarySurfaceY = max(maxBoundarySurfaceY, heightField.surfaceY(atX: midpoint.x, z: midpoint.y))
+            for point in [a, midpoint] {
+                let sample = point + panOffset
+                maxBoundarySurfaceY = max(
+                    maxBoundarySurfaceY,
+                    heightField.surfaceY(atX: sample.x, z: sample.y)
+                )
+            }
         }
         let wallHeight = maxBoundarySurfaceY + baseDepth
+        geometry.resampling = ResamplingParameters(
+            baseDepth: baseDepth,
+            wallHeight: wallHeight,
+            sampleStep: cellSize
+        )
         let cumulativeEdgeLengths = cumulativeLengths(of: boundary)
         let perimeter = boundary.perimeter
         // Repeat the wall texture around the perimeter so its texels stay roughly square.
@@ -156,10 +250,17 @@ public enum TerrainSolidGenerator {
             )
         }
 
+        // The vertex stays where the boundary put it; only what the terrain does there depends on
+        // the pan offset.
         func topVertex(at point: SIMD2<Float>) -> (position: SIMD3<Float>, normal: SIMD3<Float>, uv: SIMD2<Float>) {
-            let y = heightField.surfaceY(atX: point.x, z: point.y)
-            let normal = surfaceNormal(heightField: heightField, at: point, sampleStep: cellSize)
-            return (SIMD3(point.x, y, point.y), normal, textureCoordinate(for: point, heightField: heightField))
+            let sample = point + panOffset
+            let y = heightField.surfaceY(atX: sample.x, z: sample.y)
+            let normal = surfaceNormal(heightField: heightField, at: sample, sampleStep: cellSize)
+            return (
+                SIMD3(point.x, y, point.y),
+                normal,
+                textureCoordinate(for: sample, heightField: heightField)
+            )
         }
 
         func sharedTopIndex(_ ix: Int, _ iz: Int) -> UInt32 {
@@ -318,6 +419,7 @@ public enum TerrainSolidGenerator {
                         perimeter: perimeter,
                         uRepeat: wallURepeat,
                         heightField: heightField,
+                        panOffset: panOffset,
                         baseDepth: baseDepth,
                         wallHeight: wallHeight,
                         into: &geometry.walls
@@ -340,14 +442,17 @@ public enum TerrainSolidGenerator {
         perimeter: Float,
         uRepeat: Float,
         heightField: TerrainHeightField,
+        panOffset: SIMD2<Float>,
         baseDepth: Float,
         wallHeight: Float,
         into buffers: inout Buffers
     ) {
         let normal = DioramaBoundary.outwardNormal(forEdgeFrom: a, to: b)
 
-        let yA = heightField.surfaceY(atX: a.x, z: a.y)
-        let yB = heightField.surfaceY(atX: b.x, z: b.y)
+        let sampleA = a + panOffset
+        let sampleB = b + panOffset
+        let yA = heightField.surfaceY(atX: sampleA.x, z: sampleA.y)
+        let yB = heightField.surfaceY(atX: sampleB.x, z: sampleB.y)
 
         var uA = wallU(
             for: a,

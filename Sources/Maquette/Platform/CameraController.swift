@@ -99,6 +99,40 @@ public final class CameraController {
         distance = min(max(distance, minDistance), maxDistance)
     }
 
+    /// Converts a screen-space drag into a terrain pan delta in diorama meters.
+    ///
+    /// The result makes the ground track the finger: dragging right slides terrain to the right
+    /// regardless of which way the camera is facing. Because the chunk shows the terrain sampled at
+    /// `position + offset`, moving the ground one way means moving the offset the other, which is
+    /// why the result is negated.
+    ///
+    /// - Parameters:
+    ///   - dragDeltaX: Horizontal drag in points, positive to the right.
+    ///   - dragDeltaY: Vertical drag in points, positive downward.
+    ///   - viewHeight: Height of the view in points.
+    ///   - entityScale: Scale applied to the diorama entity.
+    ///   - fieldOfView: Vertical camera field of view in radians.
+    public func terrainPanDelta(
+        dragDeltaX: Float,
+        dragDeltaY: Float,
+        viewHeight: Float,
+        entityScale: Float,
+        fieldOfView: Float = 60 * .pi / 180
+    ) -> SIMD2<Float> {
+        guard viewHeight > 0, entityScale > 0 else { return .zero }
+
+        // World height visible at the orbit target, divided across the view's points.
+        let visibleHeight = 2 * distance * tan(fieldOfView / 2)
+        let metersPerPoint = visibleHeight / viewHeight / entityScale
+
+        // Screen axes expressed in the diorama's horizontal plane.
+        let screenRight = SIMD2<Float>(cos(azimuth), -sin(azimuth))
+        let screenDown = SIMD2<Float>(sin(azimuth), cos(azimuth))
+
+        let groundMovement = (screenRight * dragDeltaX + screenDown * dragDeltaY) * metersPerPoint
+        return -groundMovement
+    }
+
     /// Updates the target offset based on pan deltas.
     public func pan(deltaX: Float, deltaY: Float) {
         let right = SIMD3<Float>(cos(azimuth), 0, -sin(azimuth))

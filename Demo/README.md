@@ -27,8 +27,14 @@ Each preset isolates one part of the chunk model:
 | Plinth | Rounded-rectangle boundary plus an overhanging display base |
 | Star | Arbitrary **concave** outline — the hardest clipping case |
 | Surface | `wall: .none`, for comparison against a solid chunk |
+| Pan | Live terrain panning within a fixed outline |
 
 Canyon and Surface use the same location and camera on purpose: the difference between them is
 exactly what the chunk model adds.
 
 Drag to orbit, pinch to zoom.
+
+The Pan preset adds an Orbit/Pan switch. In Pan mode the drag slides the terrain beneath the
+chunk's outline instead of moving the camera — the silhouette, walls, and strata stay put while the
+ground moves under them. It fetches a region 80% wider than the chunk to pan through, and the offset
+clamps at that edge.

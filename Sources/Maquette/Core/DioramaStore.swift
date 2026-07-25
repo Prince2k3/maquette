@@ -87,6 +87,7 @@ public final class DioramaStore {
         dioramaEntity = nil
         elevationSampler = nil
         routePreviewEntity = nil
+        panOffset = .zero
     }
 
     // MARK: - Terrain Mesh Pipeline
@@ -94,18 +95,21 @@ public final class DioramaStore {
     /// Loads terrain + satellite imagery and assembles the terrain entity.
     private func loadTerrainPipeline(into rootEntity: DioramaEntity) async throws {
         let center = Coordinate(configuration.center)
+        // Zoom is chosen from the chunk's own radius so panning does not coarsen the detail;
+        // a wider pan region simply means more tiles at the same zoom.
         let zoom = configuration.zoomLevel ?? TileMath.optimalZoomLevel(
             radiusMeters: configuration.radiusMeters,
             latitude: center.latitude
         )
 
+        let fetchRadius = configuration.terrainFetchRadiusMeters
         let tiles = TileMath.tilesInRegion(
             center: center,
-            radiusMeters: configuration.radiusMeters,
+            radiusMeters: fetchRadius,
             zoom: zoom
         )
 
-        logger.debug("Loading \(tiles.count) tiles at zoom \(zoom)")
+        logger.debug("Loading \(tiles.count) tiles at zoom \(zoom), radius \(fetchRadius)m")
 
         // Select providers based on configuration
         let terrainProvider: any TileProvider = switch configuration.elevationSource {
@@ -169,11 +173,12 @@ public final class DioramaStore {
         let elevationScale = configuration.geographicScale * exaggeration
 
         // The imagery mosaic spans the full tile grid, so the height field does too. The chunk
-        // boundary is then cut out of that region.
+        // boundary is then cut out of that region — smaller than the region when panning is on,
+        // and the leftover margin is what the terrain slides through.
         let heightField = TerrainHeightField(
             grids: terrainGrids.map(\.grid),
             tilePositions: terrainGrids.map { (x: $0.x, y: $0.y) },
-            extent: SIMD2(configuration.physicalDiameter, configuration.physicalDiameter),
+            extent: configuration.terrainRegionExtent,
             elevationScale: elevationScale
         )
         let globalMinElev = heightField.minElevation
@@ -226,7 +231,8 @@ public final class DioramaStore {
             wallMaterial: wallMaterial,
             bottomMaterial: chunkStyle.closesBottom
                 ? DioramaMaterials.bottomMaterial(color: chunkStyle.bottomColor)
-                : nil
+                : nil,
+            pannableTerrain: configuration.panRange > 0 ? heightField : nil
         )
         rootEntity.setTerrain(terrainEntity)
 
@@ -238,17 +244,19 @@ public final class DioramaStore {
             }
         }
 
-        // Retain elevation data for marker/polyline positioning
+        // Retain elevation data for marker/polyline positioning. The sampler covers the whole
+        // fetched region, so markers outside the chunk are still placeable once panned into view.
         elevationSampler = ElevationSampler(
             grids: terrainGrids.map(\.grid),
             tilePositions: terrainGrids.map { (x: $0.x, y: $0.y) },
             zoom: zoom,
             center: configuration.center,
-            radiusMeters: configuration.radiusMeters,
-            physicalDiameter: configuration.physicalDiameter,
+            radiusMeters: configuration.terrainFetchRadiusMeters,
+            physicalDiameter: configuration.terrainRegionExtent.x,
             exaggeration: exaggeration,
             globalMinElev: globalMinElev
         )
+        elevationSampler?.panOffset = panOffset
     }
 
     // MARK: - Photorealistic 3D Tiles Pipeline
@@ -264,7 +272,48 @@ public final class DioramaStore {
         rootEntity.setTiles3D(tiles3DEntity)
     }
 
+    // MARK: - Panning
+
+    /// How far the terrain has slid beneath the chunk's fixed outline, in diorama meters.
+    public private(set) var panOffset: SIMD2<Float> = .zero
+
+    /// The furthest the terrain can slide before the chunk would overhang the fetched region.
+    public var maximumPanOffset: SIMD2<Float> {
+        configuration.maximumPanOffset
+    }
+
+    /// Slides the terrain beneath the chunk's outline by a delta, clamped to the fetched region.
+    ///
+    /// - Parameter delta: Movement in diorama meters.
+    public func pan(by delta: SIMD2<Float>) {
+        setPanOffset(panOffset + delta)
+    }
+
+    /// Slides the terrain to an absolute offset, clamped to the fetched region.
+    ///
+    /// The chunk keeps its shape and position; only the ground beneath it moves. Markers and
+    /// polylines are repositioned so they stay attached to the terrain they sit on.
+    ///
+    /// - Parameter offset: The target offset in diorama meters.
+    public func setPanOffset(_ offset: SIMD2<Float>) {
+        guard configuration.panRange > 0 else { return }
+
+        let limit = configuration.maximumPanOffset
+        let clamped = simd_clamp(offset, -limit, limit)
+        guard clamped != panOffset else { return }
+
+        panOffset = clamped
+        elevationSampler?.panOffset = clamped
+        (dioramaEntity as? DioramaEntity)?.terrain?.setPanOffset(clamped)
+
+        // Content is anchored to geography, so it has to move with the ground.
+        applyContent(appliedContent)
+    }
+
     // MARK: - Content Application
+
+    /// The content most recently applied, retained so panning can reposition it.
+    private var appliedContent: DioramaContentGroup?
 
     /// Materializes diorama content (markers, polylines) as 3D entities on the loaded diorama.
     ///
@@ -273,6 +322,7 @@ public final class DioramaStore {
     ///
     /// - Parameter content: The content group to apply, or `nil` to skip.
     public func applyContent(_ content: DioramaContentGroup?) {
+        appliedContent = content
         guard let content, let rootEntity = dioramaEntity as? DioramaEntity else { return }
 
         let proxy = DioramaProxy(

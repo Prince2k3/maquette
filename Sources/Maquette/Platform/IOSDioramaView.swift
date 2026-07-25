@@ -77,11 +77,14 @@ struct IOSDioramaView: View {
         cameraController.target.y = entity.verticalCenter
     }
 
+    /// Scale applied to the diorama entity so it fills the available view.
+    private var entityScale: Float {
+        Float(min(viewSize.width, viewSize.height) / 400.0)
+    }
+
     private func updateEntityScale() {
         guard let entity = store.dioramaEntity else { return }
-        let referenceSize: CGFloat = 400.0
-        let scaleFactor = Float(min(viewSize.width, viewSize.height) / referenceSize)
-        entity.scale = SIMD3<Float>(repeating: scaleFactor)
+        entity.scale = SIMD3<Float>(repeating: entityScale)
     }
 
     @ViewBuilder
@@ -160,6 +163,25 @@ struct IOSDioramaView: View {
                     let dy = Float(value.translation.height - lastDragTranslation.height)
                     lastDragTranslation = value.translation
                     cameraController.rotate(deltaX: dx, deltaY: dy)
+                }
+                .onEnded { _ in
+                    lastDragTranslation = .zero
+                }
+        )
+        // Terrain panning takes the drag only when orbiting has been turned off, so the two
+        // never contend for the same gesture.
+        .gestureIf(enabledGestures.contains(.pan) && !enabledGestures.contains(.rotate),
+            DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    let dx = Float(value.translation.width - lastDragTranslation.width)
+                    let dy = Float(value.translation.height - lastDragTranslation.height)
+                    lastDragTranslation = value.translation
+                    store.pan(by: cameraController.terrainPanDelta(
+                        dragDeltaX: dx,
+                        dragDeltaY: dy,
+                        viewHeight: Float(viewSize.height),
+                        entityScale: entityScale
+                    ))
                 }
                 .onEnded { _ in
                     lastDragTranslation = .zero

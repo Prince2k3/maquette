@@ -16,8 +16,9 @@ import os
 /// let provider = GoogleTiles3DProvider(apiKey: "your-google-key")
 /// ```
 public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
-    /// Base host that content URIs resolve against.
-    private static let tileHost = URL(string: "https://tile.googleapis.com/")!
+    /// The root tileset document. Content URIs resolve against it, so relative references keep
+    /// the "/v1/3dtiles" prefix that a bare host would drop.
+    private static let rootDocument = URL(string: "https://tile.googleapis.com/v1/3dtiles/root.json")!
 
     private let apiKey: String
     private let httpClient: any HTTPClient
@@ -96,10 +97,7 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
             key: rootCacheKey,
             maximumAge: rootCacheLifetime
         ) {
-            if let json = try? JSONSerialization.jsonObject(with: cached) as? [String: Any],
-               let sessionToken = json["session"] as? String {
-                sessionState.set(token: sessionToken, baseURL: urlString)
-            }
+            captureSession(from: cached, baseURL: urlString)
             if let tileset = try? JSONDecoder().decode(TilesetJSON.self, from: cached) {
                 logger.info("Reused cached root tileset — no billable request")
                 return tileset
@@ -133,12 +131,7 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
             throw DioramaError.networkFailure(message: "Google root tileset returned HTTP \(httpResponse.statusCode)")
         }
 
-        // Extract session token from response JSON if present
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let sessionToken = json["session"] as? String {
-            sessionState.set(token: sessionToken, baseURL: urlString)
-            logger.debug("Google session token acquired")
-        }
+        captureSession(from: data, baseURL: urlString)
 
         let tileset: TilesetJSON
         do {
@@ -153,6 +146,30 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
         return tileset
     }
 
+    /// Extracts the session token that Google issues alongside a root tileset.
+    ///
+    /// The token is **not** a field on the response — it arrives embedded in the query string of
+    /// the tile URIs, as `…/file.glb?session=…`. Looking for a top-level `session` key finds
+    /// nothing, and the renderer then omits it from requests. That only breaks some of them:
+    /// a URI that carries its own session still works, while every URI without one is rejected
+    /// with 400, which reads like a partly-broken tileset rather than a missing token.
+    private func captureSession(from data: Data, baseURL: String) {
+        guard let text = String(data: data, encoding: .utf8),
+              let range = text.range(of: "session=")
+        else {
+            logger.warning("No session token found in root tileset; tile requests will be rejected")
+            return
+        }
+
+        let token = text[range.upperBound...].prefix { character in
+            character.isLetter || character.isNumber || character == "-" || character == "_"
+        }
+
+        guard !token.isEmpty else { return }
+        sessionState.set(token: String(token), baseURL: baseURL)
+        logger.debug("Google session token acquired")
+    }
+
     /// Discards the cached root so the next load establishes a new session.
     ///
     /// Costs a billable request, so it is only worth doing when tile requests start failing
@@ -162,12 +179,15 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
     }
 
     public func fetchTileContent(uri: String) async throws -> Data {
-        // Google returns content URIs as absolute paths ("/v1/3dtiles/datasets/…") already
-        // carrying a session parameter. Joining those onto a base path by hand doubles the path
-        // and every tile 404s, so resolve them properly and only add what is missing.
+        // Content URIs resolve against the tileset document that referenced them, not the host
+        // root. Google mixes both forms: geometry arrives as absolute paths
+        // ("/v1/3dtiles/datasets/…") while sub-tilesets are relative ("datasets/…json"), and
+        // resolving the relative ones against the host drops the "/v1/3dtiles" prefix so they
+        // fail. Both forms resolve correctly against the root document's own URL.
+        let base = sessionState.baseURL.flatMap(URL.init(string:)) ?? Self.rootDocument
         guard var components = URLComponents(
-            url: URL(string: uri, relativeTo: Self.tileHost)?.absoluteURL
-                ?? Self.tileHost.appendingPathComponent(uri),
+            url: URL(string: uri, relativeTo: base)?.absoluteURL
+                ?? base.deletingLastPathComponent().appendingPathComponent(uri),
             resolvingAgainstBaseURL: true
         ) else {
             throw DioramaError.glbParsingFailed(reason: "Invalid tile content URL: \(uri)")
@@ -198,13 +218,19 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
             throw DioramaError.networkFailure(message: "Invalid response fetching Google tile content")
         }
 
+        if httpResponse.statusCode != 200 {
+            let redacted = resolvedURL.replacingOccurrences(of: apiKey, with: "<key>")
+            logger.info("Tile request failed \(httpResponse.statusCode): \(redacted.suffix(120))")
+        }
+
         switch httpResponse.statusCode {
         case 200...299:
             return data
-        case 401, 403:
-            // Most likely an expired session. The cached root carries that session in its tile
-            // URIs, so it has to go too — otherwise the next load reuses the same dead session and
-            // every tile keeps failing.
+        case 400, 401, 403:
+            // An expired session shows up as 400, not 401 — Google treats the stale token as a
+            // malformed request. The cached root carries that session in its tile URIs, so it has
+            // to go too, or the next load reuses the same dead session and every tile keeps
+            // failing while the model renders empty.
             if sessionState.token != nil {
                 sessionState.set(token: nil, baseURL: nil)
                 await rootCache.invalidate(key: rootCacheKey)

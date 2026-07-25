@@ -24,9 +24,18 @@ public final class Tiles3DLODManager {
     private var framesSinceVisible: [String: Int] = [:]
     private var subTilesets: [String: TilesetJSON] = [:]
     private var hasLoggedFirstTraversal = false
-    /// Content already fetched that yielded nothing drawable — an unsupported format, or geometry
-    /// entirely outside the boundary. Remembered so it is not re-fetched on every traversal.
-    private var barrenTiles: Set<String> = []
+    /// Content fetched successfully that holds nothing drawable — an unsupported format, or
+    /// geometry entirely outside the boundary. Remembered so it is not re-fetched every traversal,
+    /// and treated as covered: nothing will ever appear there, so an ancestor standing in would
+    /// only draw coarse geometry over ground that is meant to be empty.
+    private var emptyTiles: Set<String> = []
+
+    /// Content whose fetch failed, with how many times it has been tried.
+    ///
+    /// Deliberately *not* treated as covered. Conflating a failed fetch with an empty tile is what
+    /// turns a handful of failing requests into a blank model: the traversal believes the area is
+    /// accounted for, so the ancestor that could have stood in stays hidden.
+    private var failedTiles: [String: Int] = [:]
     /// Content fetches currently in flight, so a tile is not requested twice.
     private var inFlight: Set<String> = []
 
@@ -44,6 +53,9 @@ public final class Tiles3DLODManager {
     /// Bounded so a deep tileset cannot spin indefinitely; whatever is left is picked up by the
     /// next update.
     public var maxPassesPerUpdate: Int = 12
+
+    /// How many times a failing tile is retried before the traversal stops asking for it.
+    public var maximumLoadAttempts: Int = 3
 
     /// Tiles retained before unseen ones start being evicted.
     ///
@@ -138,12 +150,12 @@ public final class Tiles3DLODManager {
             if requests.isEmpty { return }
 
             let loadedBefore = loadedEntities.count
-            let resolvedBefore = subTilesets.count + barrenTiles.count
+            let resolvedBefore = subTilesets.count + emptyTiles.count + failedTiles.count
             await fetch(requests, into: parentEntity)
 
             // Nothing arrived, so another pass would ask for exactly the same things.
             if loadedEntities.count == loadedBefore,
-               subTilesets.count + barrenTiles.count == resolvedBefore {
+               subTilesets.count + emptyTiles.count + failedTiles.count == resolvedBefore {
                 break
             }
         }
@@ -174,6 +186,7 @@ public final class Tiles3DLODManager {
         _ = traverseTile(
             rootTileset.root,
             parentTransform: simd_double4x4(diagonal: .one),
+            inheritedRefine: .replace,
             cameraPosition: cameraPosition,
             screenHeight: screenHeight,
             fov: fov,
@@ -187,7 +200,7 @@ public final class Tiles3DLODManager {
         evict(keeping: visibleURIs)
 
         if !hasLoggedFirstTraversal || requests.isEmpty {
-            logger.debug("LOD: visited=\(stats.visited) culled=\(stats.culled) refined=\(stats.refined) rendered=\(stats.rendered) requested=\(requests.count) noContent=\(stats.noContent) barren=\(self.barrenTiles.count) subtilesets=\(self.subTilesets.count) depth=\(stats.maxDepth) loaded=\(self.loadedEntities.count)")
+            logger.debug("LOD: visited=\(stats.visited) culled=\(stats.culled) refined=\(stats.refined) rendered=\(stats.rendered) requested=\(requests.count) noContent=\(stats.noContent) empty=\(self.emptyTiles.count) failed=\(self.failedTiles.count) subtilesets=\(self.subTilesets.count) depth=\(stats.maxDepth) loaded=\(self.loadedEntities.count)")
             hasLoggedFirstTraversal = true
         }
 
@@ -203,6 +216,7 @@ public final class Tiles3DLODManager {
     private func traverseTile(
         _ tile: TileJSON,
         parentTransform: simd_double4x4,
+        inheritedRefine: RefinementStrategy,
         cameraPosition: SIMD3<Float>,
         screenHeight: Float,
         fov: Float,
@@ -240,6 +254,12 @@ public final class Tiles3DLODManager {
         if sse > screenSpaceErrorThreshold, let children = tile.children {
             stats.refined += 1
 
+            // The spec requires refinement on the root and makes it optional elsewhere: "When
+            // omitted, a tile inherits the refinement type of its parent." Defaulting to REPLACE
+            // instead is wrong in a way that erases geometry — a tile meant to be ADD would have
+            // its parent hidden, so if its children fail or are empty, nothing is drawn at all.
+            let refine = tile.refine ?? inheritedRefine
+
             var childrenCovered = true
             for child in children {
                 // Every child is visited even once coverage is known to be incomplete, because
@@ -247,6 +267,7 @@ public final class Tiles3DLODManager {
                 let covered = traverseTile(
                     child,
                     parentTransform: tileTransform,
+                    inheritedRefine: refine,
                     cameraPosition: cameraPosition,
                     screenHeight: screenHeight,
                     fov: fov,
@@ -261,12 +282,12 @@ public final class Tiles3DLODManager {
             // ADD refinement always draws the parent alongside its children. REPLACE normally
             // hands over to them, but while they are still loading the parent stands in —
             // handing over first is what punches holes in a tileset that streams.
-            let refine = tile.refine ?? .replace
             var parentDrawn = false
             if refine == .add || !childrenCovered, let uri = tile.content?.uri {
                 parentDrawn = present(
                     uri: uri,
                     transform: tileTransform,
+                    inheritedRefine: refine,
                     cameraPosition: cameraPosition,
                     screenHeight: screenHeight,
                     fov: fov,
@@ -288,6 +309,7 @@ public final class Tiles3DLODManager {
         return present(
             uri: uri,
             transform: tileTransform,
+            inheritedRefine: inheritedRefine,
             cameraPosition: cameraPosition,
             screenHeight: screenHeight,
             fov: fov,
@@ -305,6 +327,7 @@ public final class Tiles3DLODManager {
     private func present(
         uri: String,
         transform: simd_double4x4,
+        inheritedRefine: RefinementStrategy,
         cameraPosition: SIMD3<Float>,
         screenHeight: Float,
         fov: Float,
@@ -319,14 +342,18 @@ public final class Tiles3DLODManager {
             return true
         }
 
-        // Fetched already and found to hold nothing we can draw. Treated as covered so an
-        // ancestor does not keep standing in for geometry that will never arrive.
-        if barrenTiles.contains(uri) { return true }
+        // Fetched and genuinely empty: covered, because nothing is meant to appear here.
+        if emptyTiles.contains(uri) { return true }
+
+        // Failed too many times. Reported as uncovered so an ancestor draws in its place rather
+        // than leaving a hole, but no longer requested.
+        if let attempts = failedTiles[uri], attempts >= maximumLoadAttempts { return false }
 
         if let subTileset = subTilesets[uri] {
             return traverseTile(
                 subTileset.root,
                 parentTransform: transform,
+                inheritedRefine: inheritedRefine,
                 cameraPosition: cameraPosition,
                 screenHeight: screenHeight,
                 fov: fov,
@@ -381,7 +408,7 @@ public final class Tiles3DLODManager {
         inFlight.remove(request.uri)
 
         guard let data else {
-            barrenTiles.insert(request.uri)
+            failedTiles[request.uri, default: 0] += 1
             logger.debug("Failed to fetch tile: \(request.uri)")
             return
         }
@@ -390,7 +417,7 @@ public final class Tiles3DLODManager {
             if let subTileset = try? JSONDecoder().decode(TilesetJSON.self, from: data) {
                 subTilesets[request.uri] = subTileset
             } else {
-                barrenTiles.insert(request.uri)
+                emptyTiles.insert(request.uri)
             }
             return
         }
@@ -400,9 +427,9 @@ public final class Tiles3DLODManager {
                   data, uri: request.uri, transform: request.transform
               )
         else {
-            // Unsupported format, or every triangle fell outside the boundary. Either way it is
-            // recorded so the next traversal does not fetch it all over again.
-            barrenTiles.insert(request.uri)
+            // Unsupported format, or every triangle fell outside the boundary. Either way the
+            // content arrived, so this is genuinely empty rather than a failure.
+            emptyTiles.insert(request.uri)
             return
         }
 

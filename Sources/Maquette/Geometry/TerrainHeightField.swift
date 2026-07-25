@@ -35,6 +35,13 @@ public struct TerrainHeightField: Sendable {
     /// Index into `grids` for each mosaic slot, or `nil` where no tile was loaded.
     private let gridIndexBySlot: [Int?]
 
+    // Panning re-samples the whole surface every frame, so the per-sample arithmetic is hot.
+    // These fold the repeated divisions and integer conversions into the initializer.
+    private let halfExtent: SIMD2<Float>
+    private let inverseExtent: SIMD2<Float>
+    private let tilesWideFloat: Float
+    private let tilesTallFloat: Float
+
     /// Creates a height field from loaded elevation grids.
     ///
     /// - Parameters:
@@ -71,6 +78,14 @@ public struct TerrainHeightField: Sendable {
         self.tilesWide = maxTX - minTX + 1
         self.tilesTall = maxTY - minTY + 1
 
+        self.halfExtent = extent / 2
+        self.inverseExtent = SIMD2(
+            extent.x > 0 ? 1 / extent.x : 0,
+            extent.y > 0 ? 1 / extent.y : 0
+        )
+        self.tilesWideFloat = Float(maxTX - minTX + 1)
+        self.tilesTallFloat = Float(maxTY - minTY + 1)
+
         var slots = [Int?](repeating: nil, count: (maxTX - minTX + 1) * (maxTY - minTY + 1))
         for (index, position) in tilePositions.enumerated() {
             let slot = (position.y - minTY) * (maxTX - minTX + 1) + (position.x - minTX)
@@ -92,14 +107,15 @@ public struct TerrainHeightField: Sendable {
     /// Returns the raw elevation (meters above sea level) at a diorama-space X/Z position.
     ///
     /// Positions outside the sampled region clamp to the nearest edge sample.
+    @inline(__always)
     public func rawElevation(atX x: Float, z: Float) -> Float {
         // Normalize into 0...1 across the mosaic.
-        let nx = ((x + extent.x / 2) / extent.x).clampedToUnitRange
-        let nz = ((z + extent.y / 2) / extent.y).clampedToUnitRange
+        let nx = ((x + halfExtent.x) * inverseExtent.x).clampedToUnitRange
+        let nz = ((z + halfExtent.y) * inverseExtent.y).clampedToUnitRange
 
         // Locate the tile and the fractional position within it.
-        let tileFx = nx * Float(tilesWide)
-        let tileFz = nz * Float(tilesTall)
+        let tileFx = nx * tilesWideFloat
+        let tileFz = nz * tilesTallFloat
         let tileX = min(Int(tileFx), tilesWide - 1)
         let tileZ = min(Int(tileFz), tilesTall - 1)
         let fracX = (tileFx - Float(tileX)).clampedToUnitRange
@@ -116,6 +132,7 @@ public struct TerrainHeightField: Sendable {
     /// Returns the terrain surface height in diorama-space Y at a diorama-space X/Z position.
     ///
     /// Y = 0 corresponds to the lowest elevation in the loaded region.
+    @inline(__always)
     public func surfaceY(atX x: Float, z: Float) -> Float {
         (rawElevation(atX: x, z: z) - minElevation) * elevationScale
     }
@@ -124,6 +141,7 @@ public struct TerrainHeightField: Sendable {
 extension ElevationGrid {
     /// Bilinearly samples the grid at a fractional position, where 0 is the first sample
     /// and 1 is the last sample along each axis.
+    @inline(__always)
     func bilinearElevation(fracX: Float, fracY: Float) -> Float {
         let gx = fracX * Float(width - 1)
         let gy = fracY * Float(height - 1)

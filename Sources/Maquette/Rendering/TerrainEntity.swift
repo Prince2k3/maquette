@@ -28,6 +28,9 @@ public class TerrainEntity: Entity {
     /// Retained geometry and the terrain it samples, kept only when the chunk can pan.
     private var geometry: TerrainSolidGenerator.Geometry?
     private var heightField: TerrainHeightField?
+    /// Directly-writable meshes, used in place of regenerating resources on every pan.
+    private var surfaceMesh: ChunkSurfaceMesh?
+    private var wallMesh: ChunkSurfaceMesh?
 
     /// Creates a terrain chunk entity from generated mesh parts.
     ///
@@ -50,18 +53,27 @@ public class TerrainEntity: Entity {
         self.baseDepth = parts.baseDepth
         self.maxSurfaceY = parts.maxSurfaceY
 
+        // A pannable chunk is backed by directly-writable meshes so a pan is a buffer write
+        // rather than a fresh resource build.
         if let pannableTerrain {
             self.geometry = parts.geometry
             self.heightField = pannableTerrain
+            self.surfaceMesh = try? ChunkSurfaceMesh(buffers: parts.geometry.top, name: "terrainTop")
+            if !parts.geometry.walls.indices.isEmpty {
+                self.wallMesh = try? ChunkSurfaceMesh(buffers: parts.geometry.walls, name: "terrainWalls")
+            }
         }
 
-        let surfaceModel = ModelEntity(mesh: parts.top, materials: [surfaceMaterial])
+        let surfaceModel = ModelEntity(
+            mesh: surfaceMesh?.resource ?? parts.top,
+            materials: [surfaceMaterial]
+        )
         surfaceModel.name = "TerrainSurface"
         addChild(surfaceModel)
         self.surface = surfaceModel
 
-        if let wallMesh = parts.walls, let wallMaterial {
-            let wallModel = ModelEntity(mesh: wallMesh, materials: [wallMaterial])
+        if let wallResource = wallMesh?.resource ?? parts.walls, let wallMaterial {
+            let wallModel = ModelEntity(mesh: wallResource, materials: [wallMaterial])
             wallModel.name = "TerrainWalls"
             addChild(wallModel)
             self.walls = wallModel
@@ -90,11 +102,8 @@ public class TerrainEntity: Entity {
 
         TerrainSolidGenerator.resample(&geometry, heightField: heightField, panOffset: offset)
 
-        guard let meshes = try? TerrainSolidGenerator.rebuildMeshes(from: geometry) else { return }
-        surface?.model?.mesh = meshes.top
-        if let wallMesh = meshes.walls {
-            walls?.model?.mesh = wallMesh
-        }
+        surfaceMesh?.update(from: geometry.top)
+        wallMesh?.update(from: geometry.walls)
 
         self.geometry = geometry
         self.panOffset = offset

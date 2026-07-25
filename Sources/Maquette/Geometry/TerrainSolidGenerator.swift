@@ -144,15 +144,6 @@ public enum TerrainSolidGenerator {
         // The bottom face is flat and untextured, so panning leaves it untouched.
     }
 
-    /// Rebuilds mesh resources from re-sampled geometry.
-    @MainActor
-    static func rebuildMeshes(from geometry: Geometry) throws -> (top: MeshResource, walls: MeshResource?) {
-        (
-            try buildMesh(from: geometry.top, name: "terrainTop"),
-            geometry.walls.indices.isEmpty ? nil : try buildMesh(from: geometry.walls, name: "terrainWalls")
-        )
-    }
-
     // MARK: - Geometry Accumulation
 
     /// A mesh under construction.

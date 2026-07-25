@@ -3,15 +3,22 @@ import os
 import RealityKit
 import SwiftUI
 
-/// Root entity that composes the complete diorama: terrain or 3D tiles, mask, and annotation anchors.
+/// Root entity that composes the complete diorama: the terrain chunk or 3D tiles, an optional
+/// display base, and annotation anchors.
 ///
 /// ```
 /// DioramaEntity (root)
-/// ├── TerrainEntity (mesh + satellite texture)  — OR —
+/// ├── TerrainEntity (surface + cut walls + bottom)  — OR —
 /// ├── Tiles3DEntity (OGC 3D Tiles content)
-/// ├── MaskEntity (circular boundary + pedestal)
+/// ├── WaterPlane (when the region reaches sea level)
+/// ├── BaseEntity (optional plinth beneath the chunk)
 /// └── AnnotationAnchors (positioned for SwiftUI attachments)
 /// ```
+///
+/// ## Vertical convention
+///
+/// Diorama-space Y = 0 is the lowest terrain elevation in the region. The terrain surface rises
+/// into positive Y and the chunk's earth mass extends into negative Y down to its base depth.
 @MainActor
 public class DioramaEntity: Entity {
     /// The terrain sub-entity (used with raster tile pipeline).
@@ -23,8 +30,8 @@ public class DioramaEntity: Entity {
     /// The water plane sub-entity (visible when terrain has sea-level areas).
     public private(set) var waterPlane: Entity?
 
-    /// The mask/pedestal sub-entity.
-    public private(set) var mask: Entity?
+    /// The optional display base beneath the chunk.
+    public private(set) var base: Entity?
 
     /// Annotation anchor entities keyed by identifier.
     public private(set) var annotationAnchors: [String: Entity] = [:]
@@ -37,6 +44,15 @@ public class DioramaEntity: Entity {
 
     /// The route preview entity, if active.
     public private(set) var routePreview: RoutePreviewEntity?
+
+    /// Vertical midpoint of the chunk in diorama space.
+    ///
+    /// Because the chunk hangs below Y = 0 by its base depth and rises above it by the terrain's
+    /// relief, orbiting a camera about Y = 0 would frame the chunk off-center. Use this instead.
+    public var verticalCenter: Float {
+        guard let terrain else { return 0 }
+        return (terrain.maxSurfaceY - terrain.baseDepth) / 2
+    }
 
     /// Creates an empty diorama entity. Populate using the `set*` methods.
     public required init() {
@@ -65,11 +81,11 @@ public class DioramaEntity: Entity {
         addChild(entity)
     }
 
-    /// Sets the mask/pedestal component of the diorama.
-    public func setMask(_ maskEntity: Entity) {
-        self.mask?.removeFromParent()
-        self.mask = maskEntity
-        addChild(maskEntity)
+    /// Sets the display base beneath the chunk.
+    public func setBase(_ baseEntity: Entity) {
+        self.base?.removeFromParent()
+        self.base = baseEntity
+        addChild(baseEntity)
     }
 
     /// Adds an annotation anchor at the specified 3D position.

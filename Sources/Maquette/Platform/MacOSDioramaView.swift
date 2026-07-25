@@ -20,6 +20,7 @@ struct MacOSDioramaView: View {
     @State private var lastAnimationDate: Date?
 
     @Environment(\.routePreviewController) private var routePreviewController
+    @Environment(\.enabledDioramaGestures) private var enabledGestures
 
     init(configuration: DioramaConfiguration, content: DioramaContentGroup?) {
         self.configuration = configuration
@@ -39,7 +40,14 @@ struct MacOSDioramaView: View {
                     updateEntityScale()
                 }
         }
-        .dioramaLoadingOverlay(state: store.loadingState)
+        .dioramaLoadingOverlay(state: store.loadingState) {
+            store.reset()
+            Task {
+                await store.load()
+                store.applyContent(content)
+                frameLoadedChunk()
+            }
+        }
         .task {
             if let elevation = configuration.cameraElevation {
                 cameraController.elevation = elevation
@@ -49,6 +57,7 @@ struct MacOSDioramaView: View {
             }
             await store.load()
             store.applyContent(content)
+            frameLoadedChunk()
         }
         .onChange(of: routePreviewController?.playbackState) { _, newState in
             RouteAnimationHelper.handlePlaybackStateChange(
@@ -58,6 +67,14 @@ struct MacOSDioramaView: View {
                 lastAnimationDate: &lastAnimationDate
             )
         }
+    }
+
+    /// Points the orbit camera at the chunk's vertical midpoint.
+    ///
+    /// The chunk hangs below Y = 0 by its base depth, so orbiting the origin would frame it high.
+    private func frameLoadedChunk() {
+        guard let entity = store.dioramaEntity as? DioramaEntity else { return }
+        cameraController.target.y = entity.verticalCenter
     }
 
     private func updateEntityScale() {
@@ -136,7 +153,7 @@ struct MacOSDioramaView: View {
                 )
             }
         }
-        .gesture(
+        .gestureIf(enabledGestures.contains(.rotate),
             DragGesture(minimumDistance: 1)
                 .onChanged { value in
                     let dx = Float(value.translation.width - lastDragTranslation.width)
@@ -151,6 +168,7 @@ struct MacOSDioramaView: View {
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
             geometry.contentOffset.y
         } action: { _, newValue in
+            guard enabledGestures.contains(.zoom) else { return }
             cameraController.zoom(delta: Float(newValue) * 0.1)
         }
     }

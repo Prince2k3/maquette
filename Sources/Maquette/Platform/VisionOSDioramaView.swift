@@ -13,6 +13,7 @@ struct VisionOSDioramaView: View {
     @State private var store: DioramaStore
 
     @Environment(\.routePreviewController) private var routePreviewController
+    @Environment(\.enabledDioramaGestures) private var enabledGestures
 
     init(configuration: DioramaConfiguration, content: DioramaContentGroup?) {
         self.configuration = configuration
@@ -23,12 +24,18 @@ struct VisionOSDioramaView: View {
     var body: some View {
         GeometryReader3D { geometry in
             realityContent(geometry: geometry)
-                .dioramaLoadingOverlay(state: store.loadingState)
+                .dioramaLoadingOverlay(state: store.loadingState) {
+                    store.reset()
+                    Task {
+                        await store.load()
+                        store.applyContent(content)
+                    }
+                }
                 .task {
                     await store.load()
                     store.applyContent(content)
                 }
-                .gesture(
+                .gestureIf(enabledGestures.contains(.rotate),
                     DragGesture()
                         .targetedToAnyEntity()
                         .onChanged { value in
@@ -39,7 +46,7 @@ struct VisionOSDioramaView: View {
                             }
                         }
                 )
-                .gesture(
+                .gestureIf(enabledGestures.contains(.zoom),
                     MagnifyGesture()
                         .targetedToAnyEntity()
                         .onChanged { value in

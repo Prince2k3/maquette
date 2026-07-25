@@ -1,6 +1,7 @@
 import CoreLocation
 import Foundation
 import SwiftUI
+import simd
 
 /// Controls whether terrain elevation is rendered.
 public enum ElevationStyle: Sendable {
@@ -28,12 +29,28 @@ public enum ElevationSource: Sendable {
     case mapTiler(apiKey: String)
 }
 
-/// Shape of the diorama boundary.
-public enum DioramaShape: Sendable {
-    /// Circular diorama with the configured diameter.
+/// Outline the terrain chunk is cut to.
+///
+/// Every shape resolves to a `DioramaBoundary`, which the mesh generator clips the terrain against.
+public enum DioramaShape: Sendable, Equatable {
+    /// Circular chunk filling the configured diameter.
     case circular
-    /// Rectangular diorama with explicit width and depth in meters.
+    /// Rectangular chunk with explicit width and depth in meters.
     case rectangular(width: Float, depth: Float)
+    /// Rectangular chunk with rounded corners, in meters.
+    case roundedRectangular(width: Float, depth: Float, cornerRadius: Float)
+    /// Regular polygon filling the configured diameter.
+    ///
+    /// - Parameters:
+    ///   - sides: Number of sides. Values below three are clamped to three.
+    ///   - rotation: Rotation of the polygon about its center, in radians.
+    case polygonal(sides: Int, rotation: Float)
+    /// An arbitrary closed outline given as (x, z) points in diorama-space meters, centered on
+    /// the origin. Use for real-world outlines such as city limits or a park boundary.
+    case custom(points: [SIMD2<Float>])
+
+    /// A hexagonal chunk, flat-topped.
+    public static let hexagonal = DioramaShape.polygonal(sides: 6, rotation: 0)
 }
 
 /// Configuration for a diorama instance, defining its geographic region, visual style, and presentation parameters.
@@ -56,8 +73,9 @@ public struct DioramaConfiguration: Sendable {
     /// to the diorama diameter. Increase for more dramatic relief: `1.5`–`2.0` for
     /// mountainous regions, `2.0`–`3.0` for moderate terrain, `3.0`–`5.0` for flat areas.
     public var elevationExaggeration: Float
-    /// Color used for the pedestal rim.
-    public var baseColor: Color
+    /// Appearance of the terrain chunk: how much earth sits beneath the surface, how the cut
+    /// walls read, and what the chunk rests on.
+    public var chunk: TerrainChunkStyle
 
     // MARK: - Platform-Specific Hints
 
@@ -84,7 +102,7 @@ public struct DioramaConfiguration: Sendable {
         physicalDiameter: Float = 0.8,
         zoomLevel: Int? = nil,
         elevationExaggeration: Float = 1.0,
-        baseColor: Color = Color(red: 0.1, green: 0.1, blue: 0.3),
+        chunk: TerrainChunkStyle = .standard,
         cameraElevation: Float? = nil,
         cameraDistance: Float? = nil,
         allowsARPlacement: Bool = false,
@@ -98,11 +116,51 @@ public struct DioramaConfiguration: Sendable {
         self.physicalDiameter = physicalDiameter
         self.zoomLevel = zoomLevel
         self.elevationExaggeration = elevationExaggeration
-        self.baseColor = baseColor
+        self.chunk = chunk
         self.cameraElevation = cameraElevation
         self.cameraDistance = cameraDistance
         self.allowsARPlacement = allowsARPlacement
         self.imagerySource = imagerySource
         self.elevationSource = elevationSource
+    }
+}
+
+public extension DioramaConfiguration {
+    /// The horizontal extent the diorama occupies in diorama meters: X width and Z depth.
+    ///
+    /// Shapes that carry explicit dimensions use them; the rest fill `physicalDiameter`.
+    var horizontalExtent: SIMD2<Float> {
+        switch shape {
+        case .circular, .polygonal:
+            return SIMD2(physicalDiameter, physicalDiameter)
+        case .rectangular(let width, let depth),
+             .roundedRectangular(let width, let depth, _):
+            return SIMD2(width, depth)
+        case .custom(let points):
+            guard var lo = points.first else {
+                return SIMD2(physicalDiameter, physicalDiameter)
+            }
+            var hi = lo
+            for point in points.dropFirst() {
+                lo = simd_min(lo, point)
+                hi = simd_max(hi, point)
+            }
+            return hi - lo
+        }
+    }
+
+    /// The outline the terrain chunk is cut to.
+    var boundary: DioramaBoundary {
+        DioramaBoundary.make(shape: shape, extent: horizontalExtent)
+    }
+
+    /// Converts real-world meters into diorama-space meters.
+    var geographicScale: Float {
+        physicalDiameter / Float(radiusMeters * 2.0)
+    }
+
+    /// The elevation multiplier actually applied, accounting for a `.flat` elevation style.
+    var effectiveExaggeration: Float {
+        elevation == .realistic ? elevationExaggeration : 0
     }
 }

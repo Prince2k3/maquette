@@ -100,6 +100,58 @@ public enum DioramaMaterials {
         return material
     }
 
+    // MARK: - Chunk Materials
+
+    /// Creates the material for a terrain chunk's cut walls.
+    ///
+    /// Strata walls are textured with a procedurally generated cross-section; solid walls are a
+    /// flat color. Both are lit so the chunk's sides read as a physical object rather than a decal.
+    ///
+    /// - Parameter style: The wall style to realize.
+    /// - Returns: A material, or `nil` when the style requests no walls.
+    @MainActor
+    public static func wallMaterial(for style: ChunkWallStyle) -> RealityKit.Material? {
+        switch style {
+        case .none:
+            return nil
+
+        case .solid(let color):
+            return litMaterial(color: color, roughness: 0.9)
+
+        case .strata(let palette):
+            guard let texture = try? StrataTexture.makeTexture(palette: palette) else {
+                // Fall back to the deepest band so a texture failure still reads as earth.
+                let fallback = palette.bands.first?.color ?? Color(red: 0.35, green: 0.29, blue: 0.24)
+                return litMaterial(color: fallback, roughness: 0.9)
+            }
+            var material = PhysicallyBasedMaterial()
+            material.baseColor = .init(texture: .init(texture))
+            material.roughness = .init(floatLiteral: 0.95)
+            material.metallic = .init(floatLiteral: 0.0)
+            return material
+        }
+    }
+
+    /// Creates the material for a terrain chunk's bottom face.
+    @MainActor
+    public static func bottomMaterial(color: Color) -> RealityKit.Material {
+        litMaterial(color: color, roughness: 1.0)
+    }
+
+    /// Creates a lit, non-metallic material with the given color.
+    @MainActor
+    public static func litMaterial(color: Color, roughness: Float) -> SimpleMaterial {
+        var material = SimpleMaterial()
+        #if canImport(UIKit)
+        material.color.tint = UIColor(color)
+        #elseif canImport(AppKit)
+        material.color.tint = NSColor(color)
+        #endif
+        material.roughness = .float(roughness)
+        material.metallic = .float(0.0)
+        return material
+    }
+
     /// Creates an unlit material with the given SwiftUI color.
     ///
     /// Used for markers and polyline overlays that should not be affected by scene lighting.

@@ -3,7 +3,7 @@ import Foundation
 /// Errors that can occur during diorama construction and rendering.
 public enum DioramaError: LocalizedError, Sendable {
     /// A network request failed.
-    case networkFailure(underlying: any Error)
+    case networkFailure(message: String)
     /// The requested tile was not found.
     case tileNotFound(x: Int, y: Int, zoom: Int)
     /// Elevation data could not be decoded from the terrain tile.
@@ -29,8 +29,8 @@ public enum DioramaError: LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .networkFailure(let underlying):
-            "Network request failed: \(underlying.localizedDescription)"
+        case .networkFailure(let message):
+            "Network request failed: \(message)"
         case .tileNotFound(let x, let y, let zoom):
             "Tile not found at (\(x), \(y)) zoom \(zoom)"
         case .elevationDecodingFailed:

@@ -63,7 +63,7 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
         let (data, response) = try await httpClient.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw DioramaError.networkFailure(underlying: URLError(.badServerResponse))
+            throw DioramaError.networkFailure(message: "Invalid response from Google root tileset")
         }
 
         switch httpResponse.statusCode {
@@ -75,7 +75,7 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
             let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init)
             throw DioramaError.rateLimited(provider: "Google", retryAfter: retryAfter)
         default:
-            throw DioramaError.networkFailure(underlying: URLError(.badServerResponse))
+            throw DioramaError.networkFailure(message: "Google root tileset returned HTTP \(httpResponse.statusCode)")
         }
 
         // Extract session token from response JSON if present
@@ -126,7 +126,7 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
         let (data, response) = try await httpClient.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw DioramaError.networkFailure(underlying: URLError(.badServerResponse))
+            throw DioramaError.networkFailure(message: "Invalid response fetching Google tile content")
         }
 
         switch httpResponse.statusCode {
@@ -143,7 +143,7 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
             let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init)
             throw DioramaError.rateLimited(provider: "Google", retryAfter: retryAfter)
         default:
-            throw DioramaError.networkFailure(underlying: URLError(.badServerResponse))
+            throw DioramaError.networkFailure(message: "Google tile fetch returned HTTP \(httpResponse.statusCode)")
         }
     }
 

@@ -110,7 +110,7 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
         let (endpointData, endpointResponse) = try await httpClient.data(from: endpointURL)
 
         guard let httpResponse = endpointResponse as? HTTPURLResponse else {
-            throw DioramaError.networkFailure(underlying: URLError(.badServerResponse))
+            throw DioramaError.networkFailure(message: "Invalid response from Cesium endpoint")
         }
 
         switch httpResponse.statusCode {
@@ -123,8 +123,7 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
             throw DioramaError.rateLimited(provider: "Cesium", retryAfter: retryAfter)
         default:
             throw DioramaError.networkFailure(
-                underlying: URLError(.badServerResponse,
-                    userInfo: [NSLocalizedDescriptionKey: "Cesium endpoint returned HTTP \(httpResponse.statusCode)"])
+                message: "Cesium endpoint returned HTTP \(httpResponse.statusCode)"
             )
         }
 
@@ -168,8 +167,7 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
               (200...299).contains(tilesetHTTPResponse.statusCode) else {
             let statusCode = (tilesetResponse as? HTTPURLResponse)?.statusCode ?? -1
             throw DioramaError.networkFailure(
-                underlying: URLError(.badServerResponse,
-                    userInfo: [NSLocalizedDescriptionKey: "Tileset fetch failed with HTTP \(statusCode) from \(tilesetURL.host ?? "unknown host")"])
+                message: "Tileset fetch failed with HTTP \(statusCode) from \(tilesetURL.host ?? "unknown host")"
             )
         }
 
@@ -241,10 +239,10 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
                 url = resolved
             }
         } else {
-            throw DioramaError.networkFailure(underlying: URLError(.badURL))
+            throw DioramaError.networkFailure(message: "Invalid tile content URL")
         }
 
-        print("[Tiles3D] fetch: \(url.absoluteString)")
+        logger.debug("Fetching tile: \(url.absoluteString)")
 
         var request = URLRequest(url: url)
         if let token = endpointState.endpointToken, !isExternal {
@@ -255,7 +253,7 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
         let (data, response) = try await httpClient.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw DioramaError.networkFailure(underlying: URLError(.badServerResponse))
+            throw DioramaError.networkFailure(message: "Invalid response fetching Cesium tile content")
         }
 
         switch httpResponse.statusCode {
@@ -269,8 +267,7 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
             throw DioramaError.rateLimited(provider: "Cesium", retryAfter: retryAfter)
         default:
             throw DioramaError.networkFailure(
-                underlying: URLError(.badServerResponse,
-                    userInfo: [NSLocalizedDescriptionKey: "Tile fetch failed with HTTP \(httpResponse.statusCode)"])
+                message: "Cesium tile fetch returned HTTP \(httpResponse.statusCode)"
             )
         }
     }

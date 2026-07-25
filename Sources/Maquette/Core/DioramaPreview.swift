@@ -96,6 +96,70 @@ private struct RoutePreviewDemoView: View {
     .frame(minWidth: 500, minHeight: 400)
 }
 
+// MARK: - Chunk Style Previews
+
+#Preview("Chunk — Canyon strata, hexagonal") {
+    DioramaView(
+        configuration: DioramaConfiguration(
+            center: CLLocationCoordinate2D(latitude: 36.0544, longitude: -112.1401),
+            radiusMeters: 5000,
+            shape: .hexagonal,
+            elevationExaggeration: 1.5,
+            chunk: .canyon
+        )
+    )
+    .frame(minWidth: 400, minHeight: 400)
+}
+
+#Preview("Chunk — Alpine slice on a plinth") {
+    DioramaView(
+        configuration: DioramaConfiguration(
+            center: CLLocationCoordinate2D(latitude: 46.8523, longitude: -121.7603),
+            radiusMeters: 8000,
+            shape: .roundedRectangular(width: 1.0, depth: 0.7, cornerRadius: 0.12),
+            physicalDiameter: 1.0,
+            elevationExaggeration: 1.5,
+            chunk: TerrainChunkStyle(
+                baseDepth: .proportional(0.18),
+                wall: .strata(.alpine),
+                base: .plinth(
+                    color: Color(white: 0.12),
+                    height: 0.03,
+                    inset: -0.02
+                )
+            )
+        )
+    )
+    .frame(minWidth: 500, minHeight: 400)
+}
+
+#Preview("Chunk — Deep block, solid walls") {
+    DioramaView(
+        configuration: DioramaConfiguration(
+            center: CLLocationCoordinate2D(latitude: 37.7460, longitude: -119.5332),
+            radiusMeters: 4000,
+            elevationExaggeration: 1.5,
+            chunk: TerrainChunkStyle(
+                baseDepth: .proportional(0.3),
+                wall: .solid(Color(red: 0.30, green: 0.26, blue: 0.22))
+            )
+        )
+    )
+    .frame(minWidth: 400, minHeight: 400)
+}
+
+#Preview("Chunk — Surface only (no earth beneath)") {
+    DioramaView(
+        configuration: DioramaConfiguration(
+            center: CLLocationCoordinate2D(latitude: 37.2692, longitude: -112.9466),
+            radiusMeters: 3000,
+            elevationExaggeration: 1.5,
+            chunk: .surfaceOnly
+        )
+    )
+    .frame(minWidth: 400, minHeight: 400)
+}
+
 #Preview("Minimal — Half Dome") {
     DioramaView(
         center: CLLocationCoordinate2D(latitude: 37.7460, longitude: -119.5332),

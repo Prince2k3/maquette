@@ -6,16 +6,19 @@ import SwiftUI
 /// feedback during tile fetching and mesh generation.
 struct DioramaLoadingOverlay: ViewModifier {
     let loadingState: DioramaLoadingState
+    let onRetry: (() -> Void)?
 
     func body(content: Content) -> some View {
         content.overlay {
             switch loadingState {
             case .loading:
-                ProgressView("Loading terrain...")
-                    .padding()
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                ProgressView {
+                    Text("Loading terrain...")
+                }
+                .padding()
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
             case .failed(let error):
-                VStack {
+                VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.largeTitle)
                     Text("Failed to load diorama")
@@ -23,6 +26,15 @@ struct DioramaLoadingOverlay: ViewModifier {
                     Text(error.localizedDescription)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if let onRetry {
+                        Button {
+                            onRetry()
+                        } label: {
+                            Text("Retry")
+                        }
+                        .buttonStyle(.bordered)
+                        .padding(.top, 4)
+                    }
                 }
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -34,7 +46,10 @@ struct DioramaLoadingOverlay: ViewModifier {
 }
 
 extension View {
-    func dioramaLoadingOverlay(state: DioramaLoadingState) -> some View {
-        modifier(DioramaLoadingOverlay(loadingState: state))
+    func dioramaLoadingOverlay(
+        state: DioramaLoadingState,
+        onRetry: (() -> Void)? = nil
+    ) -> some View {
+        modifier(DioramaLoadingOverlay(loadingState: state, onRetry: onRetry))
     }
 }

@@ -42,93 +42,67 @@ public struct ElevationSampler: Sendable {
         self.physicalDiameter = physicalDiameter
         self.exaggeration = exaggeration
         self.globalMinElev = globalMinElev
+        self.heightField = TerrainHeightField(
+            grids: grids,
+            tilePositions: tilePositions,
+            extent: SIMD2(physicalDiameter, physicalDiameter),
+            elevationScale: physicalDiameter / Float(radiusMeters * 2.0) * exaggeration,
+            baselineElevation: globalMinElev
+        )
     }
+
+    /// The terrain surface this sampler reads from — the same surface the chunk mesh is built on.
+    private let heightField: TerrainHeightField
 
     /// Returns a 3D position in diorama-space for the given geographic coordinate.
     ///
-    /// Uses the **same tile-grid layout** as `TerrainMeshGenerator` so the returned X/Z match the
-    /// terrain mesh surface exactly. Y is bilinear-interpolated from the elevation grid and
-    /// transformed with the same scale/exaggeration as the mesh vertices.
+    /// X/Z come from the tile mosaic layout and Y is read from the shared `TerrainHeightField`,
+    /// so a sampled position lands exactly on the generated chunk surface.
     ///
     /// Returns `nil` if the coordinate falls outside the loaded tiles.
     ///
     /// - Parameter coordinate: The geographic coordinate to project.
     /// - Returns: A 3D position in diorama-space meters, or `nil` if outside bounds.
     public func position(for coordinate: CLLocationCoordinate2D) -> SIMD3<Float>? {
-        let coord = Coordinate(coordinate)
+        guard let point = horizontalPosition(for: coordinate) else { return nil }
+        return SIMD3(point.x, heightField.surfaceY(atX: point.x, z: point.y), point.y)
+    }
 
-        // Find which tile this coordinate falls in
+    /// Maps a geographic coordinate onto the diorama's horizontal plane.
+    ///
+    /// Returns `nil` if the coordinate falls outside the loaded tiles.
+    public func horizontalPosition(for coordinate: CLLocationCoordinate2D) -> SIMD2<Float>? {
+        let coord = Coordinate(coordinate)
         let tileCoord = TileMath.tileXY(for: coord, zoom: zoom)
 
-        // Find the matching grid
-        guard let gridIndex = tilePositions.firstIndex(where: {
-            $0.x == tileCoord.x && $0.y == tileCoord.y
-        }) else {
+        guard tilePositions.contains(where: { $0.x == tileCoord.x && $0.y == tileCoord.y }) else {
             return nil
         }
 
-        let grid = grids[gridIndex]
         let bounds = TileMath.tileBounds(x: tileCoord.x, y: tileCoord.y, zoom: zoom)
 
-        // Compute fractional position within the tile (0..1)
+        // Fractional position within the tile.
         let fracX = (coord.longitude - bounds.minLongitude) / (bounds.maxLongitude - bounds.minLongitude)
         let fracY = (bounds.maxLatitude - coord.latitude) / (bounds.maxLatitude - bounds.minLatitude)
-
-        // Clamp to valid range
         let clampedFracX = Float(max(0, min(1, fracX)))
         let clampedFracY = Float(max(0, min(1, fracY)))
 
-        // --- Compute X/Z using the same tile-grid layout as TerrainMeshGenerator ---
         let minTX = tilePositions.map(\.x).min()!
         let minTY = tilePositions.map(\.y).min()!
         let maxTX = tilePositions.map(\.x).max()!
         let maxTY = tilePositions.map(\.y).max()!
-        let tilesWide = maxTX - minTX + 1
-        let tilesTall = maxTY - minTY + 1
+        let tilesWide = Float(maxTX - minTX + 1)
+        let tilesTall = Float(maxTY - minTY + 1)
 
-        let tileSizeX = physicalDiameter / Float(tilesWide)
-        let tileSizeZ = physicalDiameter / Float(tilesTall)
+        // Tiles tile the extent edge to edge, so the mosaic position is simply the tile index
+        // plus the fraction within it.
+        let mosaicX = (Float(tileCoord.x - minTX) + clampedFracX) / tilesWide
+        let mosaicZ = (Float(tileCoord.y - minTY) + clampedFracY) / tilesTall
 
-        let tx = tileCoord.x - minTX
-        let ty = tileCoord.y - minTY
-
-        let tileOffsetX = Float(tx) * tileSizeX - physicalDiameter / 2.0 + tileSizeX / 2.0
-        let tileOffsetZ = Float(ty) * tileSizeZ - physicalDiameter / 2.0 + tileSizeZ / 2.0
-
-        // Position within the tile: fracX/fracY map 0..1 across the tile's physical extent
-        let x = tileOffsetX + (clampedFracX - 0.5) * tileSizeX
-        let z = tileOffsetZ + (clampedFracY - 0.5) * tileSizeZ
-
-        // --- Bilinear-interpolate elevation (Y) ---
-        let gridX = Double(clampedFracX) * Double(grid.width - 1)
-        let gridY = Double(clampedFracY) * Double(grid.height - 1)
-
-        let x0 = Int(floor(gridX))
-        let y0 = Int(floor(gridY))
-        let x1 = min(x0 + 1, grid.width - 1)
-        let y1 = min(y0 + 1, grid.height - 1)
-
-        let xFrac = Float(gridX - Double(x0))
-        let yFrac = Float(gridY - Double(y0))
-
-        let e00 = grid.elevation(atColumn: x0, row: y0)
-        let e10 = grid.elevation(atColumn: x1, row: y0)
-        let e01 = grid.elevation(atColumn: x0, row: y1)
-        let e11 = grid.elevation(atColumn: x1, row: y1)
-
-        let rawElevation = e00 * (1 - xFrac) * (1 - yFrac)
-            + e10 * xFrac * (1 - yFrac)
-            + e01 * (1 - xFrac) * yFrac
-            + e11 * xFrac * yFrac
-
-        // Apply the same transform as the terrain mesh generator:
-        // y = (rawElev - globalMinElev) * geographicScale * exaggeration
-        let geographicScale = physicalDiameter / Float(radiusMeters * 2.0)
-        let elevationScale = geographicScale * exaggeration
-
-        let y = (rawElevation - globalMinElev) * elevationScale
-
-        return SIMD3<Float>(x, y, z)
+        return SIMD2(
+            (mosaicX - 0.5) * heightField.extent.x,
+            (mosaicZ - 0.5) * heightField.extent.y
+        )
     }
 
     /// Returns the terrain elevation (in diorama-space Y) at the given geographic coordinate.

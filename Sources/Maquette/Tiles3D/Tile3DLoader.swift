@@ -108,7 +108,7 @@ public struct Tile3DLoader: Sendable {
 
         let localTransform = ecefConverter.ecefTransformToLocal(ecefTransform)
 
-        print("[Tiles3D] Transform \(uri.suffix(30)): ecef=(\(String(format: "%.1f", ecefTransform.columns.3.x)), \(String(format: "%.1f", ecefTransform.columns.3.y)), \(String(format: "%.1f", ecefTransform.columns.3.z))) local=(\(String(format: "%.3f", localTransform.columns.3.x)), \(String(format: "%.3f", localTransform.columns.3.y)), \(String(format: "%.3f", localTransform.columns.3.z)))")
+        logger.debug("Transform \(uri.suffix(30)): ecef=(\(String(format: "%.1f", ecefTransform.columns.3.x)), \(String(format: "%.1f", ecefTransform.columns.3.y)), \(String(format: "%.1f", ecefTransform.columns.3.z))) local=(\(String(format: "%.3f", localTransform.columns.3.x)), \(String(format: "%.3f", localTransform.columns.3.y)), \(String(format: "%.3f", localTransform.columns.3.z)))")
 
         entity.transform = Transform(matrix: localTransform)
 

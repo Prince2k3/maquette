@@ -58,13 +58,14 @@ public final class DioramaStore {
                 try await loadTerrainPipeline(into: rootEntity)
             }
 
-            // Generate mask/pedestal (applies to all rendering paths)
-            if let maskEntity = try? DioramaMask.generateMaskEntity(
-                shape: configuration.shape,
-                physicalDiameter: configuration.physicalDiameter,
-                baseColor: configuration.baseColor
+            // Generate the optional display base (applies to all rendering paths)
+            let chunkBottomY = -(rootEntity.terrain?.baseDepth ?? 0)
+            if let baseEntity = try? DioramaBase.generate(
+                style: configuration.chunk.base,
+                boundary: configuration.boundary,
+                chunkBottomY: chunkBottomY
             ) {
-                rootEntity.setMask(maskEntity)
+                rootEntity.setBase(baseEntity)
             }
 
             dioramaEntity = rootEntity
@@ -75,7 +76,7 @@ public final class DioramaStore {
             loadingState = .failed(error)
             logger.error("Diorama loading failed: \(error)")
         } catch {
-            loadingState = .failed(.networkFailure(underlying: error))
+            loadingState = .failed(.networkFailure(message: error.localizedDescription))
             logger.error("Diorama loading failed: \(error)")
         }
     }
@@ -152,30 +153,48 @@ public final class DioramaStore {
             satelliteImages.append((x: tile.x, y: tile.y, data: sData))
         }
 
-        // Determine clip radius based on diorama shape
-        let clipRadius: Float? = switch configuration.shape {
-        case .circular:
-            configuration.physicalDiameter / 2.0
-        case .rectangular:
-            nil
+        // Stitch adjacent tile edges to eliminate seams in multi-tile meshes
+        if terrainGrids.count > 1 {
+            let stitchedGrids = MeshStitcher.stitchEdges(
+                grids: terrainGrids.map(\.grid),
+                tilePositions: terrainGrids.map { (x: $0.x, y: $0.y) },
+                resolution: terrainGrids[0].grid.width
+            )
+            terrainGrids = zip(terrainGrids, stitchedGrids).map { original, stitchedGrid in
+                (x: original.x, y: original.y, grid: stitchedGrid)
+            }
         }
 
-        let exaggeration = configuration.elevation == .realistic ? configuration.elevationExaggeration : Float(0)
-        let geographicScale = configuration.physicalDiameter / Float(configuration.radiusMeters * 2.0)
-        let elevationScale = geographicScale * exaggeration
+        let exaggeration = configuration.effectiveExaggeration
+        let elevationScale = configuration.geographicScale * exaggeration
 
-        // Compute global min elevation for water plane detection
-        let globalMinElev = terrainGrids.map(\.grid.minElevation).min() ?? 0
-
-        // Generate terrain mesh with clipping and skirt walls
-        let terrainMesh = try TerrainMeshGenerator.generateMesh(
-            from: terrainGrids.map(\.grid),
+        // The imagery mosaic spans the full tile grid, so the height field does too. The chunk
+        // boundary is then cut out of that region.
+        let heightField = TerrainHeightField(
+            grids: terrainGrids.map(\.grid),
             tilePositions: terrainGrids.map { (x: $0.x, y: $0.y) },
-            exaggeration: exaggeration,
-            physicalDiameter: configuration.physicalDiameter,
-            radiusMeters: configuration.radiusMeters,
-            clipRadius: clipRadius
+            extent: SIMD2(configuration.physicalDiameter, configuration.physicalDiameter),
+            elevationScale: elevationScale
         )
+        let globalMinElev = heightField.minElevation
+
+        let boundary = configuration.boundary
+        let chunkStyle = configuration.chunk
+        let baseDepth = chunkStyle.baseDepth.resolved(
+            horizontalExtent: max(boundary.extent.x, boundary.extent.y),
+            relief: heightField.relief
+        )
+
+        let wallMaterial = DioramaMaterials.wallMaterial(for: chunkStyle.wall)
+        let solid = try TerrainSolidGenerator.generate(
+            heightField: heightField,
+            boundary: boundary,
+            baseDepth: baseDepth,
+            includesWalls: wallMaterial != nil,
+            includesBottom: chunkStyle.closesBottom
+        )
+
+        logger.debug("Generated terrain chunk with base depth \(baseDepth)m")
 
         // Create satellite material — composite multiple tiles if needed
         let terrainMaterial: RealityKit.Material
@@ -201,18 +220,22 @@ public final class DioramaStore {
             terrainMaterial = TerrainEntity.fallbackMaterial()
         }
 
-        let terrainEntity = TerrainEntity(mesh: terrainMesh, material: terrainMaterial)
+        let terrainEntity = TerrainEntity(
+            parts: solid,
+            surfaceMaterial: terrainMaterial,
+            wallMaterial: wallMaterial,
+            bottomMaterial: chunkStyle.closesBottom
+                ? DioramaMaterials.bottomMaterial(color: chunkStyle.bottomColor)
+                : nil
+        )
         rootEntity.setTerrain(terrainEntity)
 
         // Add water plane if terrain has sea-level areas
         if globalMinElev <= 0 && exaggeration > 0 {
             let waterY = (0.0 - globalMinElev) * elevationScale
-            let waterEntity = WaterPlaneEntity.generate(
-                shape: configuration.shape,
-                physicalDiameter: configuration.physicalDiameter,
-                waterY: waterY
-            )
-            rootEntity.setWaterPlane(waterEntity)
+            if let waterEntity = WaterPlaneEntity.generate(boundary: boundary, waterY: waterY) {
+                rootEntity.setWaterPlane(waterEntity)
+            }
         }
 
         // Retain elevation data for marker/polyline positioning

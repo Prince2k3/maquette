@@ -39,6 +39,9 @@ public class RoutePreviewEntity: Entity {
     /// Y offset to prevent z-fighting with the terrain.
     let yOffset: Float
 
+    /// The last segment index used for mesh generation, to avoid redundant rebuilds.
+    private var lastHighlightedSegmentIndex: Int = -1
+
     /// Creates a route preview entity from precomputed 3D positions.
     ///
     /// - Parameters:
@@ -128,8 +131,12 @@ public class RoutePreviewEntity: Entity {
         // Compute the current position and segment index
         let (position, segmentIndex) = interpolatedPosition(at: clampedProgress)
 
-        // Update marker position
+        // Update marker position (cheap — every frame)
         marker?.position = position
+
+        // Only regenerate the highlighted route mesh when the segment index changes
+        guard segmentIndex != lastHighlightedSegmentIndex else { return }
+        lastHighlightedSegmentIndex = segmentIndex
 
         // Update highlighted route mesh: prefix up to current position
         let prefixPointCount = segmentIndex + 1

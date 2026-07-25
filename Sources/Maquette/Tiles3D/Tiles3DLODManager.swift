@@ -55,7 +55,7 @@ public final class Tiles3DLODManager {
         else if root.boundingVolume.box != nil { bvType = "box" }
         else if root.boundingVolume.sphere != nil { bvType = "sphere" }
         else { bvType = "none" }
-        print("[Tiles3D] Root tile: bvType=\(bvType) geometricError=\(root.geometricError) children=\(childCount) hasContent=\(hasContent) hasTransform=\(root.transform != nil)")
+        logger.info("Root tile: bvType=\(bvType) geometricError=\(root.geometricError) children=\(childCount) hasContent=\(hasContent) hasTransform=\(root.transform != nil)")
         if let children = root.children {
             for (i, child) in children.prefix(5).enumerated() {
                 let cbv: String
@@ -63,9 +63,9 @@ public final class Tiles3DLODManager {
                 else if child.boundingVolume.box != nil { cbv = "box" }
                 else if child.boundingVolume.sphere != nil { cbv = "sphere" }
                 else { cbv = "none" }
-                print("[Tiles3D]   child[\(i)]: bv=\(cbv) geoErr=\(child.geometricError) children=\(child.children?.count ?? 0) content=\(child.content?.uri ?? "nil")")
+                logger.info("  child[\(i)]: bv=\(cbv) geoErr=\(child.geometricError) children=\(child.children?.count ?? 0) content=\(child.content?.uri ?? "nil")")
             }
-            if children.count > 5 { print("[Tiles3D]   ... and \(children.count - 5) more children") }
+            if children.count > 5 { logger.info("  ... and \(children.count - 5) more children") }
         }
     }
 
@@ -109,7 +109,7 @@ public final class Tiles3DLODManager {
 
         // Log first traversal and periodically after
         if !hasLoggedFirstTraversal || stats.rendered > 0 {
-            print("[Tiles3D] LOD: visited=\(stats.visited) culled=\(stats.culled) refined=\(stats.refined) rendered=\(stats.rendered) noContent=\(stats.noContent) failed=\(stats.loadFailed) draco=\(stats.draco) subtilesets=\(stats.subTilesetsLoaded) depth=\(stats.maxDepth) loaded=\(self.loadedEntities.count)")
+            logger.debug("LOD: visited=\(stats.visited) culled=\(stats.culled) refined=\(stats.refined) rendered=\(stats.rendered) noContent=\(stats.noContent) failed=\(stats.loadFailed) draco=\(stats.draco) subtilesets=\(stats.subTilesetsLoaded) depth=\(stats.maxDepth) loaded=\(self.loadedEntities.count)")
             hasLoggedFirstTraversal = true
         }
 
@@ -268,7 +268,7 @@ public final class Tiles3DLODManager {
                 let subTileset = try JSONDecoder().decode(TilesetJSON.self, from: data)
                 subTilesets[uri] = subTileset
                 stats.subTilesetsLoaded += 1
-                print("[Tiles3D] Loaded sub-tileset: \(uri) (root children=\(subTileset.root.children?.count ?? 0))")
+                logger.info("Loaded sub-tileset: \(uri) (root children=\(subTileset.root.children?.count ?? 0))")
                 await traverseTile(
                     subTileset.root,
                     parentTransform: transform,
@@ -287,15 +287,15 @@ public final class Tiles3DLODManager {
                     parentEntity.addChild(entity)
                     loadedEntities[uri] = entity
                     visibleURIs.insert(uri)
-                    print("[Tiles3D] Loaded tile: \(uri)")
+                    logger.debug("Loaded tile: \(uri)")
                 } else {
                     stats.draco += 1
-                    print("[Tiles3D] Skipped tile (unsupported format): \(uri)")
+                    logger.info("Skipped tile (unsupported format): \(uri)")
                 }
             }
         } catch {
             stats.loadFailed += 1
-            print("[Tiles3D] Failed to load tile \(uri): \(error)")
+            logger.warning("Failed to load tile \(uri): \(error)")
         }
     }
 

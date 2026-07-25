@@ -38,3 +38,17 @@ extension View {
 extension EnvironmentValues {
     @Entry var enabledDioramaGestures: Set<DioramaGestureType> = [.rotate, .zoom, .pan]
 }
+
+// MARK: - Conditional Gesture Helper
+
+extension View {
+    /// Applies the gesture only when the condition is true.
+    @ViewBuilder
+    func gestureIf<G: Gesture>(_ condition: Bool, _ gesture: G) -> some View {
+        if condition {
+            self.gesture(gesture)
+        } else {
+            self
+        }
+    }
+}

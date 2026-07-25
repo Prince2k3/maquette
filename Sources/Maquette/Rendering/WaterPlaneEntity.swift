@@ -10,25 +10,25 @@ import AppKit
 
 /// Generates a flat water plane entity for filling sea-level areas in the diorama.
 public enum WaterPlaneEntity {
-    /// Creates a semi-transparent water disc at the given Y height.
+    /// Creates a semi-transparent water surface at the given Y height, cut to the chunk's outline.
     ///
     /// - Parameters:
-    ///   - shape: The diorama shape (circular or rectangular).
-    ///   - physicalDiameter: Physical diameter of the diorama in meters.
+    ///   - boundary: The chunk's outline, so the water stops exactly where the terrain does.
     ///   - waterY: Y position of the water surface in diorama space.
-    /// - Returns: A `ModelEntity` representing the water surface.
+    /// - Returns: An entity representing the water surface, or `nil` if the surface could not
+    ///   be generated.
     @MainActor
     public static func generate(
-        shape: DioramaShape,
-        physicalDiameter: Float,
+        boundary: DioramaBoundary,
         waterY: Float
-    ) -> Entity {
-        let mesh: MeshResource
-        switch shape {
-        case .circular:
-            mesh = .generateCylinder(height: 0.001, radius: physicalDiameter / 2.0)
-        case .rectangular(let width, let depth):
-            mesh = .generateBox(width: width, height: 0.001, depth: depth)
+    ) -> Entity? {
+        // A zero-thickness prism gives a flat face that follows any boundary shape.
+        guard let mesh = try? DioramaBase.prismMesh(
+            outline: boundary.vertices,
+            topY: 0,
+            bottomY: -0.0005
+        ) else {
+            return nil
         }
 
         var material = SimpleMaterial()

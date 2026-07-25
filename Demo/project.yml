@@ -1,0 +1,32 @@
+name: MaquetteDemo
+
+options:
+  bundleIdPrefix: com.maquette
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+
+packages:
+  Maquette:
+    path: ..
+
+targets:
+  MaquetteDemo:
+    type: application
+    platform: iOS
+    sources:
+      - path: MaquetteDemo
+    dependencies:
+      - package: Maquette
+        product: Maquette
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.maquette.MaquetteDemo
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Maquette
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""

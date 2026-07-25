@@ -131,7 +131,19 @@ public enum TerrainSolidGenerator {
         var topGridSlots = [Int32](repeating: -1, count: (cellsX + 1) * (cellsZ + 1))
         var bottomGridSlots = [Int32](repeating: -1, count: (cellsX + 1) * (cellsZ + 1))
 
-        let wallHeight = heightField.maxSurfaceY + baseDepth
+        // Walls exist only along the boundary, where the terrain usually sits well below the
+        // region's highest point. Normalizing the wall's vertical texture coordinate against the
+        // global maximum would squeeze every wall into the bottom of the strata texture and show a
+        // single band, so measure the range the walls actually span. Edge midpoints are sampled
+        // alongside vertices to catch ridges that crest between two boundary vertices.
+        var maxBoundarySurfaceY: Float = 0
+        for index in 0..<boundary.edgeCount {
+            let (a, b) = boundary.edge(index)
+            let midpoint = (a + b) / 2
+            maxBoundarySurfaceY = max(maxBoundarySurfaceY, heightField.surfaceY(atX: a.x, z: a.y))
+            maxBoundarySurfaceY = max(maxBoundarySurfaceY, heightField.surfaceY(atX: midpoint.x, z: midpoint.y))
+        }
+        let wallHeight = maxBoundarySurfaceY + baseDepth
         let cumulativeEdgeLengths = cumulativeLengths(of: boundary)
         let perimeter = boundary.perimeter
         // Repeat the wall texture around the perimeter so its texels stay roughly square.
@@ -340,8 +352,10 @@ public enum TerrainSolidGenerator {
         uA *= uRepeat
         uB *= uRepeat
 
+        // A ridge cresting between sampled boundary points can sit slightly above the measured
+        // wall height, so clamp rather than letting the texture coordinate run past its range.
         func v(_ y: Float) -> Float {
-            wallHeight > 0 ? (y + baseDepth) / wallHeight : 0
+            wallHeight > 0 ? ((y + baseDepth) / wallHeight).clampedToUnitRange : 0
         }
 
         let aTop = buffers.addVertex(position: SIMD3(a.x, yA, a.y), normal: normal, uv: SIMD2(uA, v(yA)))

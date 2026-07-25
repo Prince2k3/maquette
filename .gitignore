@@ -54,3 +54,7 @@ fastlane/test_output
 # https://github.com/johnno1962/injectionforxcode
 
 iOSInjectionProject/
+
+# Demo app — the Xcode project is generated from Demo/project.yml by XcodeGen
+Demo/MaquetteDemo.xcodeproj/
+Demo/DerivedData/

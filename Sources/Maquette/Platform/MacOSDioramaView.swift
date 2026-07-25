@@ -156,32 +156,34 @@ struct MacOSDioramaView: View {
                 )
             }
         }
-        .gestureIf(enabledGestures.contains(.rotate),
+        // A pointer has no second finger, so the multitouch split used on iOS becomes a modifier
+        // here: option-drag orbits, matching the two-finger gesture, and a plain drag slides the
+        // ground the way a map does.
+        .highPriorityGestureIf(enabledGestures.contains(.rotate),
             DragGesture(minimumDistance: 1)
+                .modifiers(.option)
                 .onChanged { value in
-                    let dx = Float(value.translation.width - lastDragTranslation.width)
-                    let dy = Float(value.translation.height - lastDragTranslation.height)
-                    lastDragTranslation = value.translation
-                    cameraController.rotate(deltaX: dx, deltaY: dy)
+                    let delta = consumeDragDelta(value.translation)
+                    cameraController.rotate(deltaX: delta.x, deltaY: delta.y)
                 }
                 .onEnded { _ in
                     lastDragTranslation = .zero
                 }
         )
-        // Terrain panning takes the drag only when orbiting has been turned off, so the two
-        // never contend for the same gesture.
-        .gestureIf(enabledGestures.contains(.pan) && !enabledGestures.contains(.rotate),
+        .gesture(
             DragGesture(minimumDistance: 1)
                 .onChanged { value in
-                    let dx = Float(value.translation.width - lastDragTranslation.width)
-                    let dy = Float(value.translation.height - lastDragTranslation.height)
-                    lastDragTranslation = value.translation
-                    store.pan(by: cameraController.terrainPanDelta(
-                        dragDeltaX: dx,
-                        dragDeltaY: dy,
-                        viewHeight: Float(viewSize.height),
-                        entityScale: entityScale
-                    ))
+                    let delta = consumeDragDelta(value.translation)
+                    if canPanTerrain {
+                        store.pan(by: cameraController.terrainPanDelta(
+                            dragDeltaX: delta.x,
+                            dragDeltaY: delta.y,
+                            viewHeight: Float(viewSize.height),
+                            entityScale: entityScale
+                        ))
+                    } else if enabledGestures.contains(.rotate) {
+                        cameraController.rotate(deltaX: delta.x, deltaY: delta.y)
+                    }
                 }
                 .onEnded { _ in
                     lastDragTranslation = .zero
@@ -193,6 +195,22 @@ struct MacOSDioramaView: View {
             guard enabledGestures.contains(.zoom) else { return }
             cameraController.zoom(delta: Float(newValue) * 0.1)
         }
+    }
+
+    /// Returns the movement since the last drag callback and stores the new position.
+    private func consumeDragDelta(_ translation: CGSize) -> SIMD2<Float> {
+        let delta = SIMD2(
+            Float(translation.width - lastDragTranslation.width),
+            Float(translation.height - lastDragTranslation.height)
+        )
+        lastDragTranslation = translation
+        return delta
+    }
+
+    /// Whether a plain drag should slide the terrain rather than orbit.
+    private var canPanTerrain: Bool {
+        enabledGestures.contains(.pan)
+            && (store.dioramaEntity as? DioramaEntity)?.terrain?.canPan == true
     }
 }
 #endif

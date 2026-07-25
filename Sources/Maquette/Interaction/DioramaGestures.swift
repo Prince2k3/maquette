@@ -2,12 +2,22 @@ import Foundation
 import SwiftUI
 
 /// Describes the types of interactive gestures supported by the diorama.
+///
+/// ## How they map to input
+///
+/// On iOS the split follows what a map does: **one finger** slides the terrain beneath the chunk's
+/// outline, and **two fingers** orbit the camera and pinch to zoom. On macOS a pointer has no
+/// second finger, so **drag** slides the terrain and **option-drag** orbits, with scroll to zoom.
+///
+/// Terrain sliding requires a chunk that can pan, which means a configuration with a non-zero
+/// `panRange`. Without one, a single drag orbits instead, so a fixed diorama behaves as it always
+/// has.
 public enum DioramaGestureType: Sendable, Hashable {
-    /// Rotate the diorama (orbit camera or rotate entity).
+    /// Orbit the camera around the diorama.
     case rotate
     /// Zoom in/out on the diorama.
     case zoom
-    /// Pan/translate the diorama view.
+    /// Slide the terrain beneath the chunk's outline.
     case pan
 }
 
@@ -47,6 +57,16 @@ extension View {
     func gestureIf<G: Gesture>(_ condition: Bool, _ gesture: G) -> some View {
         if condition {
             self.gesture(gesture)
+        } else {
+            self
+        }
+    }
+
+    /// Applies the gesture at high priority only when the condition is true.
+    @ViewBuilder
+    func highPriorityGestureIf<G: Gesture>(_ condition: Bool, _ gesture: G) -> some View {
+        if condition {
+            self.highPriorityGesture(gesture)
         } else {
             self
         }

@@ -14,8 +14,7 @@ struct IOSDioramaView: View {
 
     @State private var store: DioramaStore
     @State private var cameraController = CameraController()
-    @State private var lastDragTranslation: CGSize = .zero
-    @State private var lastMagnification: CGFloat = 1.0
+    @State private var dragTracker = MultitouchDragTracker()
     @State private var viewSize: CGSize = CGSize(width: 400, height: 400)
     @State private var lastAnimationDate: Date?
 
@@ -156,48 +155,59 @@ struct IOSDioramaView: View {
                 )
             }
         }
-        .gestureIf(enabledGestures.contains(.rotate),
-            DragGesture(minimumDistance: 1)
-                .onChanged { value in
-                    let dx = Float(value.translation.width - lastDragTranslation.width)
-                    let dy = Float(value.translation.height - lastDragTranslation.height)
-                    lastDragTranslation = value.translation
-                    cameraController.rotate(deltaX: dx, deltaY: dy)
+        // One gesture handles everything, so pan, orbit, and zoom never contend for the same
+        // touches: one finger slides the ground, two orbit the camera and pinch to zoom.
+        .gesture(
+            SpatialEventGesture(coordinateSpace: .local)
+                .onChanged { events in
+                    let locations = events.filter { $0.phase == .active }.map(\.location)
+                    guard let update = dragTracker.update(with: locations) else { return }
+                    apply(update)
                 }
                 .onEnded { _ in
-                    lastDragTranslation = .zero
-                }
-        )
-        // Terrain panning takes the drag only when orbiting has been turned off, so the two
-        // never contend for the same gesture.
-        .gestureIf(enabledGestures.contains(.pan) && !enabledGestures.contains(.rotate),
-            DragGesture(minimumDistance: 1)
-                .onChanged { value in
-                    let dx = Float(value.translation.width - lastDragTranslation.width)
-                    let dy = Float(value.translation.height - lastDragTranslation.height)
-                    lastDragTranslation = value.translation
-                    store.pan(by: cameraController.terrainPanDelta(
-                        dragDeltaX: dx,
-                        dragDeltaY: dy,
-                        viewHeight: Float(viewSize.height),
-                        entityScale: entityScale
-                    ))
-                }
-                .onEnded { _ in
-                    lastDragTranslation = .zero
-                }
-        )
-        .gestureIf(enabledGestures.contains(.zoom),
-            MagnifyGesture()
-                .onChanged { value in
-                    let delta = Float(value.magnification - lastMagnification) * 5.0
-                    lastMagnification = value.magnification
-                    cameraController.zoom(delta: delta)
-                }
-                .onEnded { _ in
-                    lastMagnification = 1.0
+                    dragTracker.reset()
                 }
         )
     }
+
+    /// Routes a multitouch update to panning, orbiting, and zooming.
+    ///
+    /// A single touch slides the terrain, matching how a map behaves. When the chunk cannot pan —
+    /// either the caller disabled it or the configuration set no pan range — a single touch orbits
+    /// instead, so a fixed diorama still responds the way it always has.
+    private func apply(_ update: MultitouchDragTracker.Update) {
+        let dx = Float(update.translation.width)
+        let dy = Float(update.translation.height)
+
+        if update.touchCount == 1 {
+            if canPanTerrain {
+                store.pan(by: cameraController.terrainPanDelta(
+                    dragDeltaX: dx,
+                    dragDeltaY: dy,
+                    viewHeight: Float(viewSize.height),
+                    entityScale: entityScale
+                ))
+            } else if enabledGestures.contains(.rotate) {
+                cameraController.rotate(deltaX: dx, deltaY: dy)
+            }
+            return
+        }
+
+        if enabledGestures.contains(.rotate) {
+            cameraController.rotate(deltaX: dx, deltaY: dy)
+        }
+        if enabledGestures.contains(.zoom), update.spreadChange != 0 {
+            cameraController.zoom(delta: Float(update.spreadChange) * Self.pinchZoomScale)
+        }
+    }
+
+    /// Whether a single touch should slide the terrain rather than orbit.
+    private var canPanTerrain: Bool {
+        enabledGestures.contains(.pan)
+            && (store.dioramaEntity as? DioramaEntity)?.terrain?.canPan == true
+    }
+
+    /// Converts the change in touch spread, in points, into a zoom delta.
+    private static let pinchZoomScale: Float = 0.3
 }
 #endif

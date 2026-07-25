@@ -32,9 +32,9 @@ Each preset isolates one part of the chunk model:
 Canyon and Surface use the same location and camera on purpose: the difference between them is
 exactly what the chunk model adds.
 
-Drag to orbit, pinch to zoom.
+## Gestures
 
-The Pan preset adds an Orbit/Pan switch. In Pan mode the drag slides the terrain beneath the
-chunk's outline instead of moving the camera — the silhouette, walls, and strata stay put while the
-ground moves under them. It fetches a region 80% wider than the chunk to pan through, and the offset
-clamps at that edge.
+One finger slides the terrain beneath the chunk's outline; two fingers orbit the camera and pinch to
+zoom — the same split a map uses. Only the Pan preset can slide, since it is the one configured with
+a `panRange`; on the others a single finger orbits instead. It fetches a region 80% wider than the
+chunk to pan through, and the offset clamps at that edge.

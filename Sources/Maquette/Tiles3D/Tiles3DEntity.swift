@@ -326,7 +326,7 @@ public class Tiles3DEntity: Entity {
     /// cut before — and the cut is what discarded the geometry needed to do it, which is why the
     /// pre-clip geometry is retained. Interior and exterior tiles are untouched, so the cost tracks
     /// the rim rather than the model: measured on downtown San Francisco at 700 m, 153–185 rim tiles
-    /// out of ~700, taking 175–211 ms on the main actor in a release build. That is a stepped jump,
+    /// out of ~700, taking 85–106 ms on the main actor in a release build. That is a stepped jump,
     /// not a drag. Treat this as a discrete move rather than something to drive every frame.
     ///
     /// A debug build is another matter entirely — the same step measures 2.3–4.1 s there, because

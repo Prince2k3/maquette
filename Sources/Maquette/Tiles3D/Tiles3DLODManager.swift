@@ -27,6 +27,8 @@ public final class Tiles3DLODManager {
     private var tileLoader: Tile3DLoader?
     /// Each tile's geometry as it arrived, kept only while the diorama can pan.
     private var sourceGeometry: [String: Tiles3DSourceGeometry] = [:]
+    /// Each tile's drawable buffer, rewritten in place every time the outline moves past it.
+    private var tileMeshes: [String: Tiles3DTileMesh] = [:]
     /// Loaded tiles the outline currently cuts away entirely.
     ///
     /// Held rather than forgotten because panning is exactly what brings them back, but never
@@ -708,7 +710,26 @@ public final class Tiles3DLODManager {
             cutEdges = []
         }
 
-        guard !descriptors.isEmpty, let mesh = try? MeshResource.generate(from: descriptors) else {
+
+        // Written into a buffer RealityKit already holds rather than compiled into a new asset. A
+        // pan re-cuts a couple of hundred tiles at once, and `MeshResource.generate` measured about
+        // half the cost of a step doing exactly that work over again every time.
+        let buffer: Tiles3DTileMesh
+        if let existing = tileMeshes[uri] {
+            buffer = existing
+        } else if let created = try? Tiles3DTileMesh(vertexCapacity: 1, indexCapacity: 1) {
+            buffer = created
+            tileMeshes[uri] = created
+        } else {
+            entity.model = nil
+            entity.isEnabled = false
+            entity.components.remove(Tiles3DCutEdgeComponent.self)
+            clippedAway.insert(uri)
+            return
+        }
+
+        let outcome = (try? buffer.write(descriptors)) ?? .empty
+        guard outcome != .empty else {
             entity.model = nil
             entity.isEnabled = false
             entity.components.remove(Tiles3DCutEdgeComponent.self)
@@ -719,7 +740,13 @@ public final class Tiles3DLODManager {
         // The clip bakes placement into the vertices, so an entity holding cut geometry carries no
         // transform of its own — and one that previously held whole geometry has to give up the
         // transform it was placed with.
-        entity.model = ModelComponent(mesh: mesh, materials: [source.material])
+        //
+        // The `ModelComponent` only has to be replaced when the buffer grew and handed back a new
+        // `MeshResource`; otherwise the one the entity holds already points at the mesh that was
+        // just rewritten.
+        if outcome == .regrown || entity.model == nil {
+            entity.model = ModelComponent(mesh: buffer.resource, materials: [source.material])
+        }
         entity.transform = Transform(
             matrix: prism == nil ? source.placement : matrix_identity_float4x4
         )
@@ -788,6 +815,7 @@ public final class Tiles3DLODManager {
             loadedEntities.removeValue(forKey: uri)?.removeFromParent()
             framesSinceVisible.removeValue(forKey: uri)
             sourceGeometry.removeValue(forKey: uri)
+            tileMeshes.removeValue(forKey: uri)
             clippedAway.remove(uri)
             selectedURIs.remove(uri)
             removed += 1

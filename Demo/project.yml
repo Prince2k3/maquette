@@ -33,3 +33,33 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""
+
+schemes:
+  MaquetteDemo:
+    build:
+      targets:
+        MaquetteDemo: all
+    run:
+      config: Debug
+      # Xcode's default diagnostics make this demo look broken. Measured on the Canyon preset,
+      # already loaded and idle: 77-103% CPU running from Xcode against 14-23% for the same commit
+      # launched with simctl. None of that gap is Maquette — a 4,456-sample profile of the slow
+      # process contained zero library frames, its main thread was 88% asleep, and it answered a
+      # tap instantly. The cost sat in the Thread Performance Checker symbolicating backtraces
+      # (dladdr, 3,427 samples on one queue) and in Metal's capture and validation layers wrapping
+      # every command encoder. Both scale with draw calls, so a scene of this size is exactly where
+      # they hurt, and both are off by default here for that reason.
+      #
+      # Turn them back on when the bug being chased is a GPU or thread-priority one. The main
+      # thread checker stays enabled: it is cheap and this library is @MainActor throughout.
+      enableGPUFrameCaptureMode: disabled
+      enableGPUValidationMode: disabled
+      disableThreadPerformanceChecker: true
+    test:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

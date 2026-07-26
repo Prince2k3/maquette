@@ -58,5 +58,6 @@ iOSInjectionProject/
 # Demo app — the Xcode project is generated from Demo/project.yml by XcodeGen
 Demo/MaquetteDemo.xcodeproj/
 Demo/DerivedData/
+Demo/build/
 # Demo credentials — copy Secrets.example.swift to Secrets.swift
 Demo/MaquetteDemo/Secrets.swift

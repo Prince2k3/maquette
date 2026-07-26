@@ -216,8 +216,9 @@ struct MacOSDioramaView: View {
 
     /// Whether a plain drag should slide the terrain rather than orbit.
     private var canPanTerrain: Bool {
-        enabledGestures.contains(.pan)
-            && (store.dioramaEntity as? DioramaEntity)?.terrain?.canPan == true
+        guard enabledGestures.contains(.pan) else { return false }
+        let root = store.dioramaEntity as? DioramaEntity
+        return root?.terrain?.canPan == true || root?.tiles3D?.canPan == true
     }
 }
 #endif

@@ -8,12 +8,31 @@ public struct Tile3DLoader: Sendable {
     let provider: any Tiles3DProvider
     let ecefConverter: ECEFConverter
     /// Outline to cut tile geometry to as it loads, or `nil` to keep tiles whole.
-    let clipPrism: BoundaryPrism?
+    ///
+    /// Moves when the diorama pans, so tiles arriving mid-pan are cut where the outline is now
+    /// rather than where it started.
+    var clipPrism: BoundaryPrism?
+    /// Whether to hand back each tile's geometry as it arrived, so a moved outline can re-cut it.
+    var retainsSourceGeometry: Bool
 
-    init(provider: any Tiles3DProvider, ecefConverter: ECEFConverter, clipPrism: BoundaryPrism? = nil) {
+    init(
+        provider: any Tiles3DProvider,
+        ecefConverter: ECEFConverter,
+        clipPrism: BoundaryPrism? = nil,
+        retainsSourceGeometry: Bool = false
+    ) {
         self.provider = provider
         self.ecefConverter = ecefConverter
         self.clipPrism = clipPrism
+        self.retainsSourceGeometry = retainsSourceGeometry
+    }
+
+    /// A tile turned into something drawable, with whatever is needed to cut it again.
+    public struct LoadedTile {
+        /// The tile's geometry, already cut to the outline.
+        public let entity: ModelEntity
+        /// The geometry before the cut, present only when the diorama can pan.
+        let source: Tiles3DSourceGeometry?
     }
 
     private let logger = Logger(subsystem: "com.maquette", category: "Tile3DLoader")
@@ -24,7 +43,7 @@ public struct Tile3DLoader: Sendable {
     ///   - transform: The accumulated ECEF transform for this tile (Double precision).
     /// - Returns: A `ModelEntity` positioned in local coordinates, or `nil` if the tile uses unsupported features.
     @MainActor
-    public func loadTile(uri: String, transform: simd_double4x4?) async throws -> ModelEntity? {
+    public func loadTile(uri: String, transform: simd_double4x4?) async throws -> LoadedTile? {
         let data = try await provider.fetchTileContent(uri: uri)
         return try await loadTileFromData(data, uri: uri, transform: transform)
     }
@@ -36,7 +55,7 @@ public struct Tile3DLoader: Sendable {
     ///   - transform: The accumulated ECEF transform for this tile (Double precision).
     /// - Returns: A `ModelEntity` positioned in local coordinates, or `nil` if the tile uses unsupported features.
     @MainActor
-    public func loadTileFromData(_ data: Data, uri: String, transform: simd_double4x4?) async throws -> ModelEntity? {
+    public func loadTileFromData(_ data: Data, uri: String, transform: simd_double4x4?) async throws -> LoadedTile? {
         let parsed: GLBParser.ParsedTile
         do {
             parsed = try GLBParser.parse(data)
@@ -117,6 +136,16 @@ public struct Tile3DLoader: Sendable {
         let descriptors: [MeshDescriptor]
         let entityTransform: simd_float4x4
         var cutEdges: [Tiles3DCutEdge] = []
+        // Kept before the clip, since the clip is what throws the original away. Built from the
+        // parsed geometry rather than the clipped result so a pan can cut a tile somewhere it was
+        // never cut before.
+        let source = retainsSourceGeometry && clipPrism != nil
+            ? Tiles3DSourceGeometry(
+                descriptors: parsed.meshDescriptors,
+                placement: localTransform,
+                material: material
+            )
+            : nil
         if let clipPrism {
             let clipped = Tiles3DClipper.clip(
                 descriptors: parsed.meshDescriptors,
@@ -125,7 +154,7 @@ public struct Tile3DLoader: Sendable {
             )
             descriptors = clipped.descriptors
             cutEdges = clipped.cutEdges
-            guard !descriptors.isEmpty else {
+            if descriptors.isEmpty {
                 // Worth logging the geometry's position against the prism: a tileset whose tiles
                 // are coarser than the diorama's radius will clip away entirely, which looks like
                 // a rendering failure but is really a radius that is too small for the source.
@@ -135,7 +164,15 @@ public struct Tile3DLoader: Sendable {
                     local=(\(translation.x), \(translation.y), \(translation.z)) \
                     prism=[\(clipPrism.lowerBound.x)...\(clipPrism.upperBound.x)]
                     """)
-                return nil
+                // On a fixed diorama nothing will ever bring this tile back, so the caller is told
+                // it is empty and stops asking. When the diorama can pan it is the opposite: the
+                // tile is just outside the outline *for now*, and panning towards it is precisely
+                // how it comes into view. Discarding it would leave a permanent hole in that
+                // direction, so it is kept — geometry and all, minus anything to draw.
+                guard let source else { return nil }
+                let placeholder = ModelEntity()
+                placeholder.isEnabled = false
+                return LoadedTile(entity: placeholder, source: source)
             }
             entityTransform = matrix_identity_float4x4
         } else {
@@ -153,6 +190,6 @@ public struct Tile3DLoader: Sendable {
             entity.components.set(Tiles3DCutEdgeComponent(edges: cutEdges))
         }
 
-        return entity
+        return LoadedTile(entity: entity, source: source)
     }
 }

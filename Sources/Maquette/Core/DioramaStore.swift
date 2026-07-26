@@ -320,7 +320,8 @@ public final class DioramaStore {
             radiusMeters: configuration.radiusMeters,
             physicalDiameter: configuration.physicalDiameter,
             boundary: configuration.boundary,
-            style: style
+            style: style,
+            panRange: configuration.panRange
         )
         rootEntity.setTiles3D(tiles3DEntity)
     }
@@ -358,6 +359,7 @@ public final class DioramaStore {
         panOffset = clamped
         elevationSampler?.panOffset = clamped
         (dioramaEntity as? DioramaEntity)?.terrain?.setPanOffset(clamped)
+        (dioramaEntity as? DioramaEntity)?.tiles3D?.setPanOffset(clamped)
 
         // Content is anchored to geography, so it has to move with the ground.
         applyContent(appliedContent)

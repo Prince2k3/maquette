@@ -96,9 +96,13 @@ public struct DioramaConfiguration: Sendable {
     /// How far the terrain can slide beneath the chunk's fixed outline, as a fraction of the
     /// chunk's horizontal extent. `0` disables panning.
     ///
-    /// Panning fetches a correspondingly larger region up front, so the terrain has somewhere to
-    /// pan from: `0.5` fetches half again as much ground in each direction and costs roughly
-    /// twice the tiles. The chunk itself does not grow.
+    /// Either way there has to be ground outside the outline to slide onto, so this costs roughly
+    /// as much again in tiles. The chunk itself does not grow.
+    ///
+    /// On a terrain chunk the extra ground is fetched up front and the surface is re-sampled at the
+    /// offset. On a photorealistic model it is streamed and cut away like everything else outside
+    /// the outline, and panning re-cuts it — which is the more expensive of the two, since the
+    /// tiles the outline's edge crosses have to be cut again wherever it stops.
     public var panRange: Float
 
     // MARK: - Platform-Specific Hints

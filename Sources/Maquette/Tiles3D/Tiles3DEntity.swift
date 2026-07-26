@@ -53,7 +53,29 @@ public class Tiles3DEntity: Entity {
     /// Kept because the cut wall is built from the segments that clip produced, which are in that
     /// space too — so the wall, its perimeter texturing, and its outward normals all come from one
     /// consistent source rather than being re-derived from the diorama-space outline.
-    private let clipPrism: BoundaryPrism?
+    ///
+    /// Moves with `panOffset`.
+    private var clipPrism: BoundaryPrism?
+
+    /// Everything that slides when the diorama pans: the streamed tiles, and the wall closing them.
+    ///
+    /// Panning could equally have been expressed by leaving the tiles alone and moving the outline
+    /// and the tray instead — the relative motion is the same. It is done this way because tile
+    /// vertices are the one thing that must not move: the clip bakes each tile's placement into its
+    /// vertices, so a pan that edited positions would have to rewrite every loaded tile rather than
+    /// one transform. The prism selects, this places, and the geometry stays where it arrived.
+    private let tileContainer = Entity()
+
+    /// How far the model can be slid beneath its outline, as a fraction of the diorama's radius.
+    private let panRange: Float
+    /// How far the model is currently slid, in diorama meters.
+    public private(set) var panOffset: SIMD2<Float> = .zero
+
+    /// Whether this diorama can be panned at all.
+    ///
+    /// Panning slides the outline across ground that was streamed but left outside it, so it needs
+    /// both an outline to slide and a margin of tiles to slide onto.
+    public var canPan: Bool { panRange > 0 && style.clipsToBoundary }
     /// The tray beneath the model, if the style asks for one.
     public private(set) var base: Entity?
     /// The wall closing the model's cut silhouette, if the style asks for one.
@@ -75,13 +97,16 @@ public class Tiles3DEntity: Entity {
     ///   - physicalDiameter: The diorama's physical diameter in meters.
     ///   - boundary: The outline to cut the model to, in diorama meters.
     ///   - style: How the model is bounded and what it rests on.
+    ///   - panRange: How far the model may be slid beneath its outline, as a fraction of the
+    ///     diorama's radius. Zero — the default — fixes it in place.
     public init(
         provider: any Tiles3DProvider,
         center: CLLocationCoordinate2D,
         radiusMeters: Double,
         physicalDiameter: Float,
         boundary: DioramaBoundary,
-        style: Tiles3DStyle = .standard
+        style: Tiles3DStyle = .standard,
+        panRange: Float = 0
     ) async throws {
         let ecefConverter = ECEFConverter(origin: center)
         let geographicScale = physicalDiameter / Float(radiusMeters * 2.0)
@@ -97,16 +122,20 @@ public class Tiles3DEntity: Entity {
             ecefConverter: ecefConverter,
             center: center,
             radiusMeters: radiusMeters,
-            clipPrism: prism
+            clipPrism: prism,
+            panRange: style.clipsToBoundary ? panRange : 0
         )
         self.lodManager.screenSpaceErrorThreshold = style.detailThreshold
         self.geographicScale = geographicScale
         self.style = style
         self.boundary = boundary
         self.clipPrism = prism
+        self.panRange = max(0, panRange)
         super.init()
         self.name = "Tiles3D"
         self.scale = SIMD3<Float>(repeating: geographicScale)
+        self.tileContainer.name = Self.containerName
+        addChild(tileContainer)
 
         try await lodManager.start()
         logger.info("3D Tiles entity initialized (scale=\(self.geographicScale), clipped=\(prism != nil)): \(provider.attribution)")
@@ -141,7 +170,7 @@ public class Tiles3DEntity: Entity {
     /// datum by an Earth diameter on the strength of one tile.
     private func lowestVisibleY() -> Float? {
         var candidate = Float.greatestFiniteMagnitude
-        for child in children where child.isEnabled && !Self.derivedNames.contains(child.name) {
+        for child in tileContainer.children where child.isEnabled && child.name != Self.cutWallName {
             let bounds = child.visualBounds(relativeTo: self)
             guard bounds.min.y.isFinite,
                   bounds.min.y > -BoundingVolume.terrainElevationBound else { continue }
@@ -234,7 +263,7 @@ public class Tiles3DEntity: Entity {
         guard let floorY = lowestVisibleY() else { return }
 
         var edges: [Tiles3DCutEdge] = []
-        for child in children where child.isEnabled && !Self.derivedNames.contains(child.name) {
+        for child in tileContainer.children where child.isEnabled && child.name != Self.cutWallName {
             guard let component = child.components[Tiles3DCutEdgeComponent.self] else { continue }
             edges.append(contentsOf: component.edges)
         }
@@ -269,16 +298,64 @@ public class Tiles3DEntity: Entity {
         placedWall = (edges.count, floorY)
         cutWall?.removeFromParent()
         rebuilt.name = Self.cutWallName
-        addChild(rebuilt)
+        // In the container rather than on this entity, because its geometry comes from the prism
+        // the tiles were cut against — which pans with them. The tray does not: it is built in
+        // diorama space from the outline, which is exactly what stays still.
+        tileContainer.addChild(rebuilt)
         cutWall = rebuilt
     }
 
-    /// Names of children this entity derives from the others, and so must not measure.
-    private static let derivedNames: Set<String> = [baseName, cutWallName]
     /// Name used to keep the tray out of its own measurement.
     private static let baseName = "Tiles3DBase"
     /// Name used to keep the cut wall out of its own measurement.
     private static let cutWallName = "Tiles3DCutWall"
+    /// Name of the child everything pannable hangs from.
+    private static let containerName = "Tiles3DTiles"
+
+    // MARK: - Panning
+
+    /// Slides the model beneath its outline.
+    ///
+    /// Same convention as the raster chunk: the outline is fixed in diorama space and the ground
+    /// moves under it, so a positive offset shows the ground that lies in that direction. The
+    /// caller is expected to have clamped the offset to what was streamed;
+    /// `DioramaConfiguration.maximumPanOffset` is that limit.
+    ///
+    /// Unlike the raster path this is not free, and not by a little. A pan moves the outline across
+    /// the model, so every tile the outline's edge now crosses has to be cut somewhere it was not
+    /// cut before — and the cut is what discarded the geometry needed to do it, which is why the
+    /// pre-clip geometry is retained. Interior and exterior tiles are untouched, so the cost tracks
+    /// the rim rather than the model: measured on downtown San Francisco at 700 m, 165–196 rim tiles
+    /// out of ~650, taking 169–925 ms on the main actor. That is a stepped jump, not a drag. Treat
+    /// this as a discrete move rather than something to drive every frame.
+    public func setPanOffset(_ offset: SIMD2<Float>) {
+        guard canPan, offset != panOffset else { return }
+        panOffset = offset
+
+        // The container is inside this entity's scale, so a diorama-meter offset has to be divided
+        // back out of it.
+        tileContainer.position = SIMD3<Float>(-offset.x, 0, -offset.y) / max(geographicScale, .ulpOfOne)
+
+        let moved = DioramaBoundary(vertices: boundary.vertices.map { $0 + offset })
+        let prism = BoundaryPrism(boundary: moved, scale: geographicScale)
+        clipPrism = prism
+        lodManager.setClipPrism(prism)
+
+        // The wall's signature is an edge count and a floor, neither of which need change when the
+        // outline moves across ground of similar shape — so it is retired explicitly rather than
+        // left to notice.
+        placedWall = nil
+        updateCutWall()
+        anchorGround()
+        updateBase()
+
+        logger.debug("""
+            Pan offset \(offset.x, format: .fixed(precision: 4)), \
+            \(offset.y, format: .fixed(precision: 4)) m \
+            -> container \(self.tileContainer.position.x, format: .fixed(precision: 1)), \
+            \(self.tileContainer.position.z, format: .fixed(precision: 1))
+            """)
+    }
 
     @MainActor
     required init() {
@@ -297,7 +374,7 @@ public class Tiles3DEntity: Entity {
         fov: Float
     ) async -> Tiles3DLODManager.Refinement {
         await lodManager.update(
-            parentEntity: self,
+            parentEntity: tileContainer,
             cameraPosition: cameraPosition,
             screenHeight: screenHeight,
             fov: fov

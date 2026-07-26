@@ -14,13 +14,27 @@ public final class Tiles3DLODManager {
     private let ecefConverter: ECEFConverter
     private let center: CLLocationCoordinate2D
     private let radiusMeters: Double
+    /// How far beyond the outline the diorama can be panned, as a fraction of its radius.
+    private let panRange: Float
     /// Outline to cut tile geometry to as it loads, or `nil` to leave tiles whole.
-    private let clipPrism: BoundaryPrism?
+    ///
+    /// Moves when the diorama pans; see `setClipPrism`.
+    private var clipPrism: BoundaryPrism?
     private let logger = Logger(subsystem: "com.maquette", category: "Tiles3DLODManager")
 
     private var rootTileset: TilesetJSON?
-    private var loadedEntities: [String: Entity] = [:]
+    private var loadedEntities: [String: ModelEntity] = [:]
     private var tileLoader: Tile3DLoader?
+    /// Each tile's geometry as it arrived, kept only while the diorama can pan.
+    private var sourceGeometry: [String: Tiles3DSourceGeometry] = [:]
+    /// Loaded tiles the outline currently cuts away entirely.
+    ///
+    /// Held rather than forgotten because panning is exactly what brings them back, but never
+    /// enabled — an entity with no mesh draws nothing, and enabling it would only confuse the
+    /// visible-tile scans the datum and the cut wall are built from.
+    private var clippedAway: Set<String> = []
+    /// Bumped every time the outline moves, so a tile that was being cut while it moved can tell.
+    private var clipGeneration = 0
     private var framesSinceVisible: [String: Int] = [:]
     private var subTilesets: [String: TilesetJSON] = [:]
     private var hasLoggedFirstTraversal = false
@@ -103,20 +117,40 @@ public final class Tiles3DLODManager {
         ecefConverter: ECEFConverter,
         center: CLLocationCoordinate2D,
         radiusMeters: Double,
-        clipPrism: BoundaryPrism? = nil
+        clipPrism: BoundaryPrism? = nil,
+        panRange: Float = 0
     ) {
         self.provider = provider
         self.ecefConverter = ecefConverter
         self.center = center
         self.radiusMeters = radiusMeters
         self.clipPrism = clipPrism
+        self.panRange = max(0, panRange)
     }
+
+    /// How far out tiles are kept, which is further than the outline reaches when panning.
+    ///
+    /// The cull is what decides a tile is irrelevant, and on a pannable diorama the ground just
+    /// outside the outline is not irrelevant at all — it is what slides into view. Culling to the
+    /// outline alone would leave the model with a hard edge that never fills in, in whichever
+    /// direction the user drags.
+    private var cullRadiusMeters: Double {
+        radiusMeters * Double(1 + panRange)
+    }
+
+    /// Whether tiles keep their pre-clip geometry, so a pan can cut them somewhere new.
+    private var canPan: Bool { panRange > 0 && clipPrism != nil }
 
     /// Loads the root tileset and prepares for tile management.
     func start() async throws {
         let tileset = try await provider.fetchTileset()
         self.rootTileset = tileset
-        self.tileLoader = Tile3DLoader(provider: provider, ecefConverter: ecefConverter, clipPrism: clipPrism)
+        self.tileLoader = Tile3DLoader(
+            provider: provider,
+            ecefConverter: ecefConverter,
+            clipPrism: clipPrism,
+            retainsSourceGeometry: canPan
+        )
         logger.info("Loaded root tileset (version: \(tileset.asset.version), geometricError: \(tileset.geometricError))")
 
         // Log root tile structure for diagnostics
@@ -300,7 +334,7 @@ public final class Tiles3DLODManager {
         let bv = BoundingVolume(from: tile.boundingVolume, transform: tileTransform, ecefConverter: ecefConverter)
 
         // Outside the diorama footprint entirely — nothing to draw, and no hole either.
-        if let bv, !bv.intersects(center: center, radiusMeters: radiusMeters) {
+        if let bv, !bv.intersects(center: center, radiusMeters: cullRadiusMeters) {
             stats.culled += 1
             return true
         }
@@ -579,8 +613,13 @@ public final class Tiles3DLODManager {
             return
         }
 
+        // A tile takes several awaits to decode and cut, and the outline can move across every one
+        // of them — leaving geometry cut to an outline that is no longer where it was. Noted here
+        // rather than compared afterwards, because by then the prism that did the cutting is gone.
+        let generationAtLoad = clipGeneration
+
         guard let tileLoader,
-              let entity = try? await tileLoader.loadTileFromData(
+              let loaded = try? await tileLoader.loadTileFromData(
                   data, uri: request.uri, transform: request.transform
               )
         else {
@@ -591,10 +630,96 @@ public final class Tiles3DLODManager {
         }
 
         // Hidden until a traversal selects it, so a tile cannot flash in at the wrong level.
+        let entity = loaded.entity
         entity.isEnabled = false
         parentEntity.addChild(entity)
         loadedEntities[request.uri] = entity
         framesSinceVisible[request.uri] = 0
+        if let source = loaded.source {
+            sourceGeometry[request.uri] = source
+            // The loader hands back a model-less entity when the outline took everything, so that
+            // panning towards it can still find it. Nothing to draw until then.
+            if entity.model == nil { clippedAway.insert(request.uri) }
+            if generationAtLoad != clipGeneration {
+                apply(clipPrism, to: entity, from: source, uri: request.uri)
+            }
+        }
+    }
+
+    // MARK: - Panning
+
+    /// Moves the outline the tiles are cut to, re-cutting only what the move actually changes.
+    ///
+    /// Almost every tile is either still wholly inside the outline or still wholly outside it after
+    /// a pan step, and neither needs touching — the container the tiles hang from carries them.
+    /// Only the rim, where the outline's edge crosses a tile, has a different answer than before.
+    func setClipPrism(_ prism: BoundaryPrism?) {
+        let previous = clipPrism
+        clipPrism = prism
+        tileLoader?.clipPrism = prism
+        clipGeneration &+= 1
+
+        var recut = 0
+        let started = ContinuousClock.now
+        for (uri, source) in sourceGeometry {
+            guard let entity = loadedEntities[uri] else { continue }
+            guard source.needsRecut(from: previous, to: prism) else { continue }
+            recut += 1
+            apply(prism, to: entity, from: source, uri: uri)
+        }
+        if recut > 0 {
+            let elapsed = Double((ContinuousClock.now - started).components.attoseconds) / 1e15
+            logger.debug("""
+                Re-cut \(recut) of \(self.sourceGeometry.count) tiles \
+                against the moved outline in \(String(format: "%.1f", elapsed)) ms
+                """)
+        }
+    }
+
+    /// Rebuilds one tile's drawable geometry against the outline where it now stands.
+    private func apply(
+        _ prism: BoundaryPrism?,
+        to entity: ModelEntity,
+        from source: Tiles3DSourceGeometry,
+        uri: String
+    ) {
+        let descriptors: [MeshDescriptor]
+        let cutEdges: [Tiles3DCutEdge]
+        if let prism {
+            let clipped = Tiles3DClipper.clip(
+                descriptors: source.descriptors,
+                placement: source.placement,
+                to: prism
+            )
+            descriptors = clipped.descriptors
+            cutEdges = clipped.cutEdges
+        } else {
+            descriptors = source.descriptors
+            cutEdges = []
+        }
+
+        guard !descriptors.isEmpty, let mesh = try? MeshResource.generate(from: descriptors) else {
+            entity.model = nil
+            entity.isEnabled = false
+            entity.components.remove(Tiles3DCutEdgeComponent.self)
+            clippedAway.insert(uri)
+            return
+        }
+
+        // The clip bakes placement into the vertices, so an entity holding cut geometry carries no
+        // transform of its own — and one that previously held whole geometry has to give up the
+        // transform it was placed with.
+        entity.model = ModelComponent(mesh: mesh, materials: [source.material])
+        entity.transform = Transform(
+            matrix: prism == nil ? source.placement : matrix_identity_float4x4
+        )
+        if cutEdges.isEmpty {
+            entity.components.remove(Tiles3DCutEdgeComponent.self)
+        } else {
+            _ = Tiles3DCutEdgeRegistration.perform
+            entity.components.set(Tiles3DCutEdgeComponent(edges: cutEdges))
+        }
+        clippedAway.remove(uri)
     }
 
     /// Shows exactly the tiles the traversal selected and hides the rest.
@@ -605,7 +730,7 @@ public final class Tiles3DLODManager {
     /// Hidden tiles stay loaded, so switching back is free.
     private func applyVisibility(_ visibleURIs: Set<String>) {
         for (uri, entity) in loadedEntities {
-            let shouldShow = visibleURIs.contains(uri)
+            let shouldShow = visibleURIs.contains(uri) && !clippedAway.contains(uri)
             if entity.isEnabled != shouldShow {
                 entity.isEnabled = shouldShow
             }
@@ -644,6 +769,8 @@ public final class Tiles3DLODManager {
             }
             loadedEntities.removeValue(forKey: uri)?.removeFromParent()
             framesSinceVisible.removeValue(forKey: uri)
+            sourceGeometry.removeValue(forKey: uri)
+            clippedAway.remove(uri)
             removed += 1
         }
         if removed > 0 {

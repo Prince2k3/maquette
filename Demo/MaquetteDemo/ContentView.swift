@@ -188,6 +188,28 @@ enum DemoPresets {
                 configuration: configuration
             )
         }(),
+
+        {
+            // The same gesture over streamed photogrammetry. `panRange` widens what the tile
+            // traversal keeps rather than what is fetched up front — the ground outside the outline
+            // is streamed and cut away, and sliding the outline onto it is what brings it back.
+            var configuration = DioramaConfiguration(
+                center: CLLocationCoordinate2D(latitude: 37.7929, longitude: -122.3971),
+                radiusMeters: 700,
+                panRange: 0.6,
+                presentation: .photorealistic(
+                    provider: GoogleTiles3DProvider(apiKey: Secrets.googleMapsAPIKey),
+                    style: .detailed
+                )
+            )
+            camera(&configuration)
+            return DemoPreset(
+                id: "photoreal-pan",
+                title: "Pan 3D",
+                caption: "Slide the outline across San Francisco",
+                configuration: configuration
+            )
+        }(),
     ]
 }
 

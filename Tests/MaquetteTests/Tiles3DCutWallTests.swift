@@ -70,7 +70,7 @@ struct Tiles3DCutWallTests {
             to: prism
         )
 
-        #expect(!result.descriptors.isEmpty)
+        #expect(!result.isEmpty)
         #expect(!result.cutEdges.isEmpty)
         // Everything reported has to actually lie on the outline it claims to.
         for cut in result.cutEdges {
@@ -96,7 +96,7 @@ struct Tiles3DCutWallTests {
             to: prism
         )
 
-        #expect(!result.descriptors.isEmpty)
+        #expect(!result.isEmpty)
         #expect(result.cutEdges.isEmpty)
     }
 

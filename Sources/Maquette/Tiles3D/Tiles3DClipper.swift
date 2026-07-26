@@ -20,11 +20,34 @@ import simd
 /// having to decide what is inside the shell.
 enum Tiles3DClipper {
     /// What a clip produced: the surviving geometry, and where it was cut.
+    ///
+    /// The geometry comes out in the layout it will be drawn in, as one merged part, so a tile
+    /// reaches its buffer as a pair of bulk copies. `MeshDescriptor` sat in the middle of this until
+    /// it was measured: it holds positions, normals and texture coordinates in three separate
+    /// arrays, so every vertex was written out scattered, read back, and then packed — all of it
+    /// per pan step, for geometry the next step throws away.
+    ///
+    /// A caller that clips repeatedly should keep one of these and pass it back in, so the arrays
+    /// settle at the size the tile needs and stop reallocating.
     struct Result {
-        var descriptors: [MeshDescriptor] = []
+        var vertices: [Tiles3DVertex] = []
+        var indices: [UInt32] = []
         var cutEdges: [Tiles3DCutEdge] = []
+        /// Accumulated as the geometry is emitted, so nothing has to walk it again to find them.
+        var lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
 
-        var isEmpty: Bool { descriptors.isEmpty }
+        var isEmpty: Bool { indices.isEmpty }
+
+        var bounds: BoundingBox { BoundingBox(min: lower, max: upper) }
+
+        mutating func reset() {
+            vertices.removeAll(keepingCapacity: true)
+            indices.removeAll(keepingCapacity: true)
+            cutEdges.removeAll(keepingCapacity: true)
+            lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+            upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        }
     }
 
     /// A vertex carrying everything that must survive interpolation along a clipped edge.
@@ -55,6 +78,20 @@ enum Tiles3DClipper {
         placement: simd_float4x4,
         to prism: BoundaryPrism
     ) -> Result {
+        var result = Result()
+        clip(descriptors: descriptors, placement: placement, to: prism, into: &result)
+        return result
+    }
+
+    /// Clips into a result the caller keeps, so a repeated cut reuses its buffers.
+    ///
+    /// Whatever the result held is discarded first.
+    static func clip(
+        descriptors: [MeshDescriptor],
+        placement: simd_float4x4,
+        to prism: BoundaryPrism,
+        into result: inout Result
+    ) {
         // Normals transform by the inverse-transpose; for the rigid transforms 3D Tiles uses, the
         // upper-left block is enough.
         let normalMatrix = simd_float3x3(
@@ -63,18 +100,48 @@ enum Tiles3DClipper {
             SIMD3(placement.columns.2.x, placement.columns.2.y, placement.columns.2.z)
         )
 
-        var result = Result()
+        result.reset()
         for descriptor in descriptors {
-            guard let part = clipPart(
+            clipPart(
                 descriptor,
                 placement: placement,
                 normalMatrix: normalMatrix,
                 prism: prism,
-                cutEdges: &result.cutEdges
-            ) else { continue }
-            result.descriptors.append(part)
+                into: &result
+            )
         }
-        return result
+    }
+
+    /// Copies a tile's mesh parts into the drawable layout without cutting them.
+    ///
+    /// The placement is deliberately not applied: an uncut tile keeps it on its entity, where the
+    /// scene graph carries it for free.
+    static func pack(descriptors: [MeshDescriptor], into result: inout Result) {
+        result.reset()
+        for descriptor in descriptors {
+            let positions = descriptor.positions.elements
+            guard !positions.isEmpty,
+                  case .triangles(let sourceIndices) = descriptor.primitives,
+                  sourceIndices.count >= 3
+            else { continue }
+
+            let normals = descriptor.normals?.elements
+            let uvs = descriptor.textureCoordinates?.elements
+            let base = UInt32(result.vertices.count)
+            for index in positions.indices {
+                append(
+                    Vertex(
+                        position: positions[index],
+                        normal: normals?[index] ?? SIMD3(0, 1, 0),
+                        uv: uvs?[index] ?? .zero
+                    ),
+                    to: &result
+                )
+            }
+            for index in sourceIndices {
+                result.indices.append(index + base)
+            }
+        }
     }
 
     // MARK: - Per-Part Clipping
@@ -84,13 +151,13 @@ enum Tiles3DClipper {
         placement: simd_float4x4,
         normalMatrix: simd_float3x3,
         prism: BoundaryPrism,
-        cutEdges: inout [Tiles3DCutEdge]
-    ) -> MeshDescriptor? {
+        into result: inout Result
+    ) {
         let sourcePositions = descriptor.positions.elements
-        guard !sourcePositions.isEmpty else { return nil }
+        guard !sourcePositions.isEmpty else { return }
 
         guard case .triangles(let sourceIndices) = descriptor.primitives, sourceIndices.count >= 3 else {
-            return nil
+            return
         }
 
         let sourceNormals = descriptor.normals?.elements
@@ -108,25 +175,6 @@ enum Tiles3DClipper {
                 normal: normal,
                 uv: sourceUVs?[index] ?? .zero
             ))
-        }
-
-        var positions: [SIMD3<Float>] = []
-        var normals: [SIMD3<Float>] = []
-        var uvs: [SIMD2<Float>] = []
-        var indices: [UInt32] = []
-
-        func emit(_ polygon: [Vertex]) {
-            guard polygon.count >= 3 else { return }
-            let base = UInt32(positions.count)
-            for vertex in polygon {
-                positions.append(vertex.position)
-                normals.append(vertex.normal)
-                uvs.append(vertex.uv)
-            }
-            // Triangle ∩ convex region is convex, so a fan is a valid triangulation.
-            for offset in 1..<(polygon.count - 1) {
-                indices.append(contentsOf: [base, base + UInt32(offset), base + UInt32(offset) + 1])
-            }
         }
 
         var scratch = Scratch()
@@ -157,13 +205,13 @@ enum Tiles3DClipper {
             // the same answer.
             if !prism.mayCrossOutline(lower, upper) {
                 guard prism.contains(a) else { continue }
-                emit([triangle.0, triangle.1, triangle.2])
+                emit(triangle.0, triangle.1, triangle.2, into: &result)
                 continue
             }
 
             // Wholly inside, but close enough to the outline that the grid could not tell.
             if prism.contains(a) && prism.contains(b) && prism.contains(c) {
-                emit([triangle.0, triangle.1, triangle.2])
+                emit(triangle.0, triangle.1, triangle.2, into: &result)
                 continue
             }
 
@@ -173,21 +221,47 @@ enum Tiles3DClipper {
                 // Only the clipped path can produce a cut. A triangle kept whole was never sliced,
                 // and the outline is tested rather than the piece so that the interior splits a
                 // concave outline is broken into do not become walls through the middle.
-                collectCutEdges(of: polygon, prism: prism, into: &cutEdges)
-                emit(polygon)
+                collectCutEdges(of: polygon, prism: prism, into: &result.cutEdges)
+                emit(polygon, into: &result)
             }
         }
+    }
 
-        guard !indices.isEmpty else { return nil }
+    /// Appends a whole triangle.
+    ///
+    /// Kept apart from the polygon case because this is the path almost every triangle takes, and
+    /// wrapping three vertices in an array to reach the general one heap-allocates per triangle.
+    private static func emit(_ a: Vertex, _ b: Vertex, _ c: Vertex, into result: inout Result) {
+        let base = UInt32(result.vertices.count)
+        append(a, to: &result)
+        append(b, to: &result)
+        append(c, to: &result)
+        result.indices.append(base)
+        result.indices.append(base + 1)
+        result.indices.append(base + 2)
+    }
 
-        var result = MeshDescriptor(name: descriptor.name)
-        result.positions = MeshBuffers.Positions(positions)
-        result.normals = MeshBuffers.Normals(normals)
-        if sourceUVs != nil {
-            result.textureCoordinates = MeshBuffers.TextureCoordinates(uvs)
+    private static func emit(_ polygon: [Vertex], into result: inout Result) {
+        guard polygon.count >= 3 else { return }
+        let base = UInt32(result.vertices.count)
+        for vertex in polygon {
+            append(vertex, to: &result)
         }
-        result.primitives = .triangles(indices)
-        return result
+        // Triangle ∩ convex region is convex, so a fan is a valid triangulation.
+        for offset in 1..<(polygon.count - 1) {
+            result.indices.append(base)
+            result.indices.append(base + UInt32(offset))
+            result.indices.append(base + UInt32(offset) + 1)
+        }
+    }
+
+    /// Writes one vertex out in the layout it will be drawn in, growing the bounds to hold it.
+    private static func append(_ vertex: Vertex, to result: inout Result) {
+        result.vertices.append(
+            Tiles3DVertex(position: vertex.position, normal: vertex.normal, uv: vertex.uv)
+        )
+        result.lower = simd_min(result.lower, vertex.position)
+        result.upper = simd_max(result.upper, vertex.position)
     }
 
     /// Records the edges of a clipped polygon that ended up lying on the outline.

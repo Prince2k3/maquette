@@ -29,6 +29,9 @@ public final class Tiles3DLODManager {
     private var sourceGeometry: [String: Tiles3DSourceGeometry] = [:]
     /// Each tile's drawable buffer, rewritten in place every time the outline moves past it.
     private var tileMeshes: [String: Tiles3DTileMesh] = [:]
+    /// Where the cut is assembled, held across tiles so its buffers are allocated once rather than
+    /// once per tile per pan step.
+    private var clipResult = Tiles3DClipper.Result()
     /// Loaded tiles the outline currently cuts away entirely.
     ///
     /// Held rather than forgotten because panning is exactly what brings them back, but never
@@ -647,6 +650,9 @@ public final class Tiles3DLODManager {
         framesSinceVisible[request.uri] = 0
         if let source = loaded.source {
             sourceGeometry[request.uri] = source
+            // Adopted rather than recreated, so the first re-cut writes into the buffer the tile is
+            // already being drawn from.
+            tileMeshes[request.uri] = loaded.mesh
             // The loader hands back a model-less entity when the outline took everything, so that
             // panning towards it can still find it. Nothing to draw until then.
             if entity.model == nil { clippedAway.insert(request.uri) }
@@ -695,21 +701,20 @@ public final class Tiles3DLODManager {
         from source: Tiles3DSourceGeometry,
         uri: String
     ) {
-        let descriptors: [MeshDescriptor]
-        let cutEdges: [Tiles3DCutEdge]
+        // Cut straight into the layout the buffer is drawn from, reusing the arrays the last tile
+        // filled: a pan re-cuts a couple of hundred tiles in a row, and they are all the same shape
+        // of work.
         if let prism {
-            let clipped = Tiles3DClipper.clip(
+            Tiles3DClipper.clip(
                 descriptors: source.descriptors,
                 placement: source.placement,
-                to: prism
+                to: prism,
+                into: &clipResult
             )
-            descriptors = clipped.descriptors
-            cutEdges = clipped.cutEdges
         } else {
-            descriptors = source.descriptors
-            cutEdges = []
+            Tiles3DClipper.pack(descriptors: source.descriptors, into: &clipResult)
         }
-
+        let cutEdges = clipResult.cutEdges
 
         // Written into a buffer RealityKit already holds rather than compiled into a new asset. A
         // pan re-cuts a couple of hundred tiles at once, and `MeshResource.generate` measured about
@@ -728,7 +733,11 @@ public final class Tiles3DLODManager {
             return
         }
 
-        let outcome = (try? buffer.write(descriptors)) ?? .empty
+        let outcome = (try? buffer.write(
+            vertices: clipResult.vertices,
+            indices: clipResult.indices,
+            bounds: clipResult.bounds
+        )) ?? .empty
         guard outcome != .empty else {
             entity.model = nil
             entity.isEnabled = false

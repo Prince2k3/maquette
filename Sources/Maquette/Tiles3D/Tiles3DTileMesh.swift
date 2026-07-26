@@ -2,6 +2,34 @@ import Foundation
 import RealityKit
 import simd
 
+/// A vertex in the layout the tiles are drawn with.
+///
+/// Written out as scalars rather than `SIMD3<Float>` so the stride is 32 bytes instead of 48: a
+/// `SIMD3` is 16-byte aligned, which would pad every position and normal by a third.
+///
+/// This is also the layout the clip produces, so a cut tile reaches the GPU as one bulk copy. Going
+/// through `MeshDescriptor` meant writing every vertex three times over — into the descriptor's
+/// separate position, normal and texture-coordinate arrays, back out of them, then into this — for
+/// geometry that is thrown away and rebuilt on the next pan step.
+struct Tiles3DVertex {
+    var px: Float, py: Float, pz: Float
+    var nx: Float, ny: Float, nz: Float
+    var u: Float, v: Float
+
+    init(position: SIMD3<Float>, normal: SIMD3<Float>, uv: SIMD2<Float>) {
+        px = position.x
+        py = position.y
+        pz = position.z
+        nx = normal.x
+        ny = normal.y
+        nz = normal.z
+        u = uv.x
+        v = uv.y
+    }
+
+    var position: SIMD3<Float> { SIMD3(px, py, pz) }
+}
+
 /// One streamed tile's drawable geometry, held as a buffer that can be rewritten in place.
 ///
 /// `MeshResource.generate` compiles an asset every time it is called, which is the wrong cost to pay
@@ -16,16 +44,6 @@ import simd
 /// steps the rim tiles have all reached a size that fits, and the recreations stop.
 @MainActor
 final class Tiles3DTileMesh {
-    /// A vertex in the layout the tiles are drawn with.
-    ///
-    /// Written out as scalars rather than `SIMD3<Float>` so the stride is 32 bytes instead of 48:
-    /// a `SIMD3` is 16-byte aligned, which would pad every position and normal by a third.
-    struct Vertex {
-        var px: Float, py: Float, pz: Float
-        var nx: Float, ny: Float, nz: Float
-        var u: Float, v: Float
-    }
-
     /// Fraction of extra capacity taken when the buffer has to grow, so a cut that creeps up by a
     /// few vertices a step does not recreate the mesh every step.
     private static let headroom = 1.25
@@ -34,8 +52,6 @@ final class Tiles3DTileMesh {
     private(set) var resource: MeshResource
     private var vertexCapacity: Int
     private var indexCapacity: Int
-    /// How many indices the last write left drawable — the rest of the buffer's capacity is stale.
-    private(set) var indexCount = 0
 
     init(vertexCapacity: Int, indexCapacity: Int) throws {
         let (mesh, resource) = try Self.make(vertexCapacity: vertexCapacity, indexCapacity: indexCapacity)
@@ -52,7 +68,7 @@ final class Tiles3DTileMesh {
             .init(semantic: .normal, format: .float3, offset: MemoryLayout<Float>.stride * 3),
             .init(semantic: .uv0, format: .float2, offset: MemoryLayout<Float>.stride * 6),
         ]
-        descriptor.vertexLayouts = [.init(bufferIndex: 0, bufferStride: MemoryLayout<Vertex>.stride)]
+        descriptor.vertexLayouts = [.init(bufferIndex: 0, bufferStride: MemoryLayout<Tiles3DVertex>.stride)]
         descriptor.indexType = .uint32
         descriptor.vertexCapacity = vertexCapacity
         descriptor.indexCapacity = indexCapacity
@@ -79,80 +95,39 @@ final class Tiles3DTileMesh {
         case regrown
     }
 
-    /// Rewrites the buffer from a freshly clipped set of parts.
+    /// Rewrites the buffer from a freshly clipped tile.
+    ///
+    /// Both copies are bulk. The clip produced this exact layout, so nothing here walks a vertex at
+    /// a time, and the bounds came out of the clip too rather than from a second pass over the
+    /// positions.
     @discardableResult
-    func write(_ descriptors: [MeshDescriptor]) throws -> Outcome {
-        var vertexCount = 0
-        var indexCount = 0
-        for descriptor in descriptors {
-            vertexCount += descriptor.positions.count
-            guard case .triangles(let indices) = descriptor.primitives else { continue }
-            indexCount += indices.count
-        }
-        guard vertexCount > 0, indexCount > 0 else {
-            self.indexCount = 0
-            return .empty
-        }
-        self.indexCount = indexCount
+    func write(vertices: [Tiles3DVertex], indices: [UInt32], bounds: BoundingBox) throws -> Outcome {
+        guard !vertices.isEmpty, !indices.isEmpty else { return .empty }
 
         var recreated = false
-        if vertexCount > vertexCapacity || indexCount > indexCapacity {
-            let vertices = max(Int(Double(vertexCount) * Self.headroom), vertexCapacity)
-            let indices = max(Int(Double(indexCount) * Self.headroom), indexCapacity)
-            (mesh, resource) = try Self.make(vertexCapacity: vertices, indexCapacity: indices)
-            vertexCapacity = vertices
-            indexCapacity = indices
+        if vertices.count > vertexCapacity || indices.count > indexCapacity {
+            let vertexRoom = max(Int(Double(vertices.count) * Self.headroom), vertexCapacity)
+            let indexRoom = max(Int(Double(indices.count) * Self.headroom), indexCapacity)
+            (mesh, resource) = try Self.make(vertexCapacity: vertexRoom, indexCapacity: indexRoom)
+            vertexCapacity = vertexRoom
+            indexCapacity = indexRoom
             recreated = true
         }
 
-        var lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
-        var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
-
         mesh.withUnsafeMutableBytes(bufferIndex: 0) { raw in
-            let vertices = raw.bindMemory(to: Vertex.self)
-            var cursor = 0
-            for descriptor in descriptors {
-                let positions = descriptor.positions.elements
-                let normals = descriptor.normals?.elements
-                let uvs = descriptor.textureCoordinates?.elements
-                for index in positions.indices {
-                    let position = positions[index]
-                    let normal = normals?[index] ?? SIMD3<Float>(0, 1, 0)
-                    let uv = uvs?[index] ?? .zero
-                    vertices[cursor] = Vertex(
-                        px: position.x, py: position.y, pz: position.z,
-                        nx: normal.x, ny: normal.y, nz: normal.z,
-                        u: uv.x, v: uv.y
-                    )
-                    lower = simd_min(lower, position)
-                    upper = simd_max(upper, position)
-                    cursor += 1
-                }
-            }
+            _ = raw.bindMemory(to: Tiles3DVertex.self).update(fromContentsOf: vertices)
         }
 
         mesh.withUnsafeMutableIndices { raw in
-            let buffer = raw.bindMemory(to: UInt32.self)
-            var cursor = 0
-            // Each part's indices are relative to its own vertices, so they shift by however many
-            // vertices the parts before it contributed.
-            var vertexBase = 0
-            for descriptor in descriptors {
-                guard case .triangles(let indices) = descriptor.primitives else { continue }
-                for index in indices {
-                    buffer[cursor] = index + UInt32(vertexBase)
-                    cursor += 1
-                }
-                vertexBase += descriptor.positions.count
-            }
+            _ = raw.bindMemory(to: UInt32.self).update(fromContentsOf: indices)
         }
 
         mesh.parts.replaceAll([
             LowLevelMesh.Part(
-                indexCount: indexCount,
+                indexCount: indices.count,
                 topology: .triangle,
                 materialIndex: 0,
-                bounds: BoundingBox(min: lower, max: upper)
+                bounds: bounds
             )
         ])
         return recreated ? .regrown : .rewritten

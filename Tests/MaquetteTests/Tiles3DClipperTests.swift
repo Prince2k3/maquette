@@ -25,14 +25,11 @@ struct Tiles3DClipperTests {
     }
 
     private func positions(of result: Tiles3DClipper.Result) -> [SIMD3<Float>] {
-        result.descriptors.flatMap { $0.positions.elements }
+        result.vertices.map(\.position)
     }
 
     private func triangleCount(of result: Tiles3DClipper.Result) -> Int {
-        result.descriptors.reduce(0) { total, descriptor in
-            guard case .triangles(let indices) = descriptor.primitives else { return total }
-            return total + indices.count / 3
-        }
+        result.indices.count / 3
     }
 
     // MARK: - Basic Containment
@@ -198,17 +195,13 @@ struct Tiles3DClipperTests {
 
         // What survives should be the outline itself.
         var area: Float = 0
-        for descriptor in result.descriptors {
-            guard case .triangles(let indices) = descriptor.primitives else { continue }
-            let points = descriptor.positions.elements
-            for start in stride(from: 0, to: indices.count, by: 3) {
-                let a = points[Int(indices[start])]
-                let b = points[Int(indices[start + 1])]
-                let c = points[Int(indices[start + 2])]
-                let ab = SIMD2(b.x - a.x, b.z - a.z)
-                let ac = SIMD2(c.x - a.x, c.z - a.z)
-                area += abs(ab.x * ac.y - ab.y * ac.x) / 2
-            }
+        for start in stride(from: 0, to: result.indices.count, by: 3) {
+            let a = result.vertices[Int(result.indices[start])].position
+            let b = result.vertices[Int(result.indices[start + 1])].position
+            let c = result.vertices[Int(result.indices[start + 2])].position
+            let ab = SIMD2(b.x - a.x, b.z - a.z)
+            let ac = SIMD2(c.x - a.x, c.z - a.z)
+            area += abs(ab.x * ac.y - ab.y * ac.x) / 2
         }
         let expected = Float.pi * 0.25
         #expect(abs(area - expected) / expected < 0.02,
@@ -234,11 +227,9 @@ struct Tiles3DClipperTests {
         let result = Tiles3DClipper.clip(descriptors: [mesh], placement: placement, to: prism)
         #expect(!result.isEmpty, "A tile overlapping the outline must leave geometry")
 
-        for descriptor in result.descriptors {
-            for position in descriptor.positions.elements {
-                let distance = sqrt(position.x * position.x + position.z * position.z)
-                #expect(distance <= 1200 + 5, "Vertex at \(position) escaped the outline")
-            }
+        for position in positions(of: result) {
+            let distance = sqrt(position.x * position.x + position.z * position.z)
+            #expect(distance <= 1200 + 5, "Vertex at \(position) escaped the outline")
         }
     }
 

@@ -33,6 +33,9 @@ public struct Tile3DLoader: Sendable {
         public let entity: ModelEntity
         /// The geometry before the cut, present only when the diorama can pan.
         let source: Tiles3DSourceGeometry?
+        /// The buffer the entity draws from, so a later re-cut can rewrite it in place. Absent when
+        /// the outline left nothing to draw.
+        let mesh: Tiles3DTileMesh?
     }
 
     private let logger = Logger(subsystem: "com.maquette", category: "Tile3DLoader")
@@ -133,9 +136,7 @@ public struct Tile3DLoader: Sendable {
         // Clipping bakes the placement into the vertices, because a prism that stands vertical in
         // diorama space would be tilted in the tile's own rotated space. The entity then carries
         // no transform of its own.
-        let descriptors: [MeshDescriptor]
         let entityTransform: simd_float4x4
-        var cutEdges: [Tiles3DCutEdge] = []
         // Kept before the clip, since the clip is what throws the original away. Built from the
         // parsed geometry rather than the clipped result so a pan can cut a tile somewhere it was
         // never cut before.
@@ -146,15 +147,15 @@ public struct Tile3DLoader: Sendable {
                 material: material
             )
             : nil
+        var geometry = Tiles3DClipper.Result()
         if let clipPrism {
-            let clipped = Tiles3DClipper.clip(
+            Tiles3DClipper.clip(
                 descriptors: parsed.meshDescriptors,
                 placement: localTransform,
-                to: clipPrism
+                to: clipPrism,
+                into: &geometry
             )
-            descriptors = clipped.descriptors
-            cutEdges = clipped.cutEdges
-            if descriptors.isEmpty {
+            if geometry.isEmpty {
                 // Worth logging the geometry's position against the prism: a tileset whose tiles
                 // are coarser than the diorama's radius will clip away entirely, which looks like
                 // a rendering failure but is really a radius that is too small for the source.
@@ -172,24 +173,38 @@ public struct Tile3DLoader: Sendable {
                 guard let source else { return nil }
                 let placeholder = ModelEntity()
                 placeholder.isEnabled = false
-                return LoadedTile(entity: placeholder, source: source)
+                return LoadedTile(entity: placeholder, source: source, mesh: nil)
             }
             entityTransform = matrix_identity_float4x4
         } else {
-            descriptors = parsed.meshDescriptors
+            Tiles3DClipper.pack(descriptors: parsed.meshDescriptors, into: &geometry)
+            guard !geometry.isEmpty else {
+                logger.warning("Tile has no triangles: \(uri)")
+                return nil
+            }
             entityTransform = localTransform
         }
 
-        let mesh = try MeshResource.generate(from: descriptors)
-        let entity = ModelEntity(mesh: mesh, materials: [material])
+        // The same buffer the pan path rewrites, so a tile that is later re-cut writes into the
+        // mesh it is already being drawn from rather than compiling a replacement.
+        let buffer = try Tiles3DTileMesh(
+            vertexCapacity: geometry.vertices.count,
+            indexCapacity: geometry.indices.count
+        )
+        try buffer.write(
+            vertices: geometry.vertices,
+            indices: geometry.indices,
+            bounds: geometry.bounds
+        )
+        let entity = ModelEntity(mesh: buffer.resource, materials: [material])
         entity.transform = Transform(matrix: entityTransform)
 
         // Carried on the tile so the cut wall can be rebuilt from whatever is currently visible.
-        if !cutEdges.isEmpty {
+        if !geometry.cutEdges.isEmpty {
             _ = Tiles3DCutEdgeRegistration.perform
-            entity.components.set(Tiles3DCutEdgeComponent(edges: cutEdges))
+            entity.components.set(Tiles3DCutEdgeComponent(edges: geometry.cutEdges))
         }
 
-        return LoadedTile(entity: entity, source: source)
+        return LoadedTile(entity: entity, source: source, mesh: buffer)
     }
 }

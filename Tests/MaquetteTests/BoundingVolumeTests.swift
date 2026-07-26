@@ -88,4 +88,72 @@ struct BoundingVolumeTests {
         let nyc = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060)
         #expect(bv.intersects(center: nyc, radiusMeters: 10000))
     }
+
+    /// Terrain far above the ellipsoid must survive culling.
+    ///
+    /// The local origin sits at ellipsoid height zero, so a volume high in the mountains is a long
+    /// way from it vertically while being directly overhead. Culling on 3D distance therefore
+    /// throws away exactly the tiles the chunk is made of — and only in terrain with relief, since
+    /// at sea level the vertical term is nil and the wrong test looks right. Half Dome is the
+    /// case that exposed it: a 1,400 m chunk around a summit ~2,700 m up rendered black.
+    @Test("A volume high above the ellipsoid is not culled by its height")
+    func highAltitudeVolumeSurvivesCulling() {
+        let center = CLLocationCoordinate2D(latitude: 37.7459, longitude: -119.5332)
+        let summit: Float = 2_700
+        let radiusMeters: Double = 1_400
+
+        // Horizontally centred, but far higher than the chunk is wide.
+        let sphere = BoundingVolume.sphere(center: SIMD3<Float>(0, summit, 0), radius: 50)
+        #expect(sphere.intersects(center: center, radiusMeters: radiusMeters))
+
+        let box = BoundingVolume.box(
+            center: SIMD3<Float>(0, summit, 0),
+            halfAxes: simd_float3x3(SIMD3<Float>(50, 0, 0), SIMD3<Float>(0, 50, 0), SIMD3<Float>(0, 0, 50))
+        )
+        #expect(box.intersects(center: center, radiusMeters: radiusMeters))
+    }
+
+    /// Height is ignored, but horizontal distance still culls.
+    @Test("A volume outside the footprint is still culled whatever its height")
+    func distantVolumeIsCulled() {
+        let center = CLLocationCoordinate2D(latitude: 37.7459, longitude: -119.5332)
+        let radiusMeters: Double = 1_400
+
+        // Well beyond the radius to the east, at the same height as the origin.
+        let sphere = BoundingVolume.sphere(center: SIMD3<Float>(5_000, 0, 0), radius: 50)
+        #expect(!sphere.intersects(center: center, radiusMeters: radiusMeters))
+
+        let box = BoundingVolume.box(
+            center: SIMD3<Float>(0, 0, 5_000),
+            halfAxes: simd_float3x3(SIMD3<Float>(50, 0, 0), SIMD3<Float>(0, 50, 0), SIMD3<Float>(0, 0, 50))
+        )
+        #expect(!box.intersects(center: center, radiusMeters: radiusMeters))
+    }
+
+    /// The far side of the planet is directly below the origin, and must not be mistaken for it.
+    ///
+    /// Letting the column run without a floor made it pass through the Earth: at the antipode the
+    /// east and north components are both nil, so the horizontal distance from the origin is zero
+    /// and the tiles there read as dead centre. Google's tileset is rooted at the whole planet, so
+    /// it has some, and they arrived as geometry an Earth diameter below the table — which then
+    /// became the lowest thing loaded and dragged the tray and the vertical datum down with it.
+    @Test("Geometry on the far side of the Earth is culled despite being directly below")
+    func antipodalVolumeIsCulled() {
+        let center = CLLocationCoordinate2D(latitude: 37.7459, longitude: -119.5332)
+        let radiusMeters: Double = 1_400
+        let earthDiameter: Float = 12_738_000
+
+        let sphere = BoundingVolume.sphere(center: SIMD3<Float>(0, -earthDiameter, 0), radius: 500)
+        #expect(!sphere.intersects(center: center, radiusMeters: radiusMeters))
+
+        let box = BoundingVolume.box(
+            center: SIMD3<Float>(0, -earthDiameter, 0),
+            halfAxes: simd_float3x3(SIMD3<Float>(500, 0, 0), SIMD3<Float>(0, 500, 0), SIMD3<Float>(0, 0, 500))
+        )
+        #expect(!box.intersects(center: center, radiusMeters: radiusMeters))
+
+        // The Earth's centre is the same mistake at half the depth, and must go too.
+        let core = BoundingVolume.sphere(center: SIMD3<Float>(0, -earthDiameter / 2, 0), radius: 500)
+        #expect(!core.intersects(center: center, radiusMeters: radiusMeters))
+    }
 }

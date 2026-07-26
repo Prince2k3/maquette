@@ -122,19 +122,51 @@ enum DemoPresets {
             // Photogrammetry cut to the outline, resting on a tray. Straight to Google rather
             // than proxied through Cesium ion. Google bills only the root tileset request, and the
             // provider caches that, so relaunching the demo does not keep costing events.
+            //
+            // The radius is what makes or breaks this path. Level of detail is chosen from the
+            // model's on-screen size, so a wide region is a small region: ten kilometres of city
+            // squeezed into a chunk the size of a dinner plate leaves a building two pixels tall,
+            // and the tileset correctly refuses to refine past flat draped imagery. Roughly a
+            // kilometre is where facades start reading as facades.
             var configuration = DioramaConfiguration(
-                center: CLLocationCoordinate2D(latitude: 37.773972, longitude: -122.431297),
-                radiusMeters: 5000,
+                center: CLLocationCoordinate2D(latitude: 37.7929, longitude: -122.3971),
+                radiusMeters: 700,
                 presentation: .photorealistic(
                     provider: GoogleTiles3DProvider(apiKey: Secrets.googleMapsAPIKey),
-                    style: .standard
+                    style: .detailed
                 )
             )
             camera(&configuration)
             return DemoPreset(
                 id: "photoreal",
-                title: "Photo",
-                caption: "3D Tiles cut to the outline, on a tray",
+                title: "City",
+                caption: "San Francisco downtown, cut to the outline",
+                configuration: configuration
+            )
+        }(),
+
+        {
+            // Half Dome, the end of the trail out of Yosemite Valley. Natural terrain rather than
+            // buildings, and 1,400 m of relief inside the outline — the case where a flat-looking
+            // model is unmistakably wrong.
+            var configuration = DioramaConfiguration(
+                center: CLLocationCoordinate2D(latitude: 37.7459, longitude: -119.5332),
+                radiusMeters: 1400,
+                presentation: .photorealistic(
+                    provider: GoogleTiles3DProvider(apiKey: Secrets.googleMapsAPIKey),
+                    style: .detailed
+                )
+            )
+            camera(&configuration)
+            configuration.cameraElevation = 0.28
+            // 1,400 m of relief on an 0.8 m footprint makes this the tallest preset by some way,
+            // so the shared framing crops it. Pull back until the summit and the valley floor are
+            // in frame together — that contrast is the whole point of the preset.
+            configuration.cameraDistance = 1.7
+            return DemoPreset(
+                id: "photoreal-trail",
+                title: "Trail",
+                caption: "Half Dome, Yosemite — photoreal terrain",
                 configuration: configuration
             )
         }(),

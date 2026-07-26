@@ -104,8 +104,86 @@ public enum BoundingVolume: Sendable {
             return latOverlap && lonOverlap
 
         case .box, .sphere:
-            // The diorama sits at the local origin, so the region is a sphere about it.
-            return distance(to: .zero) < Float(radiusMeters)
+            // The diorama's footprint is a vertical column about the local origin, not a sphere —
+            // the same shape `BoundaryPrism` clips to, which has vertical sides and no caps. So
+            // this measures horizontal distance rather than the full 3D distance.
+            //
+            // Testing the 3D distance instead ties how much terrain survives to how far the ground
+            // sits above the ellipsoid, because the origin is at ellipsoid height zero. At sea
+            // level the vertical term is nil and the two agree, which is why it went unnoticed; in
+            // the mountains it culls everything. Half Dome's summit is ~2,700 m up, so a 1,400 m
+            // chunk there rejected every tile it was made of, dead centre included.
+            guard horizontalDistanceFromOrigin() < Float(radiusMeters) else { return false }
+
+            // The column still has to end. Extended without limit it does not stop at bedrock — it
+            // runs through the planet and out the far side, where the antipode's east and north
+            // components are both nil and its horizontal distance from the origin is therefore
+            // zero. Every antipodal tile passes the test above, and a tileset rooted at the whole
+            // Earth has some.
+            //
+            // They are not harmless. Their footprint lands inside the outline, so `BoundaryPrism`
+            // keeps them too, and they arrive as geometry one Earth diameter below the table —
+            // which is then the lowest thing loaded, so the tray and the vertical datum both
+            // anchor to it and the real terrain ends up kilometres above the chunk.
+            let vertical = verticalRangeFromOrigin()
+            return vertical.upperBound >= -Self.terrainElevationBound
+                && vertical.lowerBound <= Self.terrainElevationBound
+        }
+    }
+
+    /// How far above and below the ellipsoid surface terrain can plausibly sit, in meters.
+    ///
+    /// Deliberately loose. It exists to separate this planet's surface from its far side, not to
+    /// trim tiles to the chunk — that is the outline's job — so it clears Everest by a wide margin
+    /// rather than sitting anywhere near real terrain.
+    static let terrainElevationBound: Float = 12_000
+
+    /// The vertical span this volume covers, measured from the local origin. Up is positive.
+    private func verticalRangeFromOrigin() -> ClosedRange<Float> {
+        switch self {
+        case .region:
+            // Region volumes carry no local-space position; the lat/lon test above handles them.
+            return 0...0
+
+        case .sphere(let center, let radius):
+            return (center.y - radius)...(center.y + radius)
+
+        case .box(let center, let halfAxes):
+            // As with the footprint, summing each axis's vertical reach bounds the true extent from
+            // outside, so the error is towards keeping a tile rather than discarding one.
+            var reach: Float = 0
+            for index in 0..<3 {
+                reach += abs(halfAxes[index].y)
+            }
+
+            return (center.y - reach)...(center.y + reach)
+        }
+    }
+
+    /// Horizontal distance from the local origin to the nearest point of this volume, ignoring
+    /// height. Zero when the origin lies within the volume's footprint.
+    private func horizontalDistanceFromOrigin() -> Float {
+        switch self {
+        case .region:
+            return 0
+
+        case .sphere(let center, let radius):
+            // A sphere projects to a disc of the same radius, so this is exact.
+            return max(simd_length(SIMD2(center.x, center.z)) - radius, 0)
+
+        case .box(let center, let halfAxes):
+            // An oriented box projects to a hexagon in general. Its bounding rectangle stands in:
+            // summing each axis's horizontal reach can only overstate the footprint, so the error
+            // is towards keeping a tile that could have been culled rather than discarding one that
+            // belongs.
+            var extent = SIMD2<Float>.zero
+            for index in 0..<3 {
+                let axis = halfAxes[index]
+                extent += SIMD2(abs(axis.x), abs(axis.z))
+            }
+
+            let offset = SIMD2(abs(center.x), abs(center.z))
+            return simd_length(simd_max(offset - extent, .zero))
         }
     }
 

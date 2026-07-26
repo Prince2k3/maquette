@@ -193,12 +193,15 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
             throw DioramaError.glbParsingFailed(reason: "Invalid tile content URL: \(uri)")
         }
 
-        var items = components.queryItems ?? []
-        let present = Set(items.map(\.name))
-        if !present.contains("key") {
-            items.append(URLQueryItem(name: "key", value: apiKey))
-        }
-        if !present.contains("session"), let token = sessionState.token {
+        // The live session wins over the one baked into the URI. Tile URIs carry the session that
+        // was current when their tileset was fetched, so deferring to them pins every request to
+        // that session for as long as the view lives — and once Google expires it, renewing is
+        // pointless because the new token is never the one sent. Only fall back to the embedded
+        // value when there is no live token at all.
+        let embedded = components.queryItems?.first { $0.name == "session" }?.value
+        var items = (components.queryItems ?? []).filter { $0.name != "key" && $0.name != "session" }
+        items.append(URLQueryItem(name: "key", value: apiKey))
+        if let token = sessionState.token ?? embedded {
             items.append(URLQueryItem(name: "session", value: token))
         }
         components.queryItems = items

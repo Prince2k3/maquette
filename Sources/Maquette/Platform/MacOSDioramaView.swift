@@ -21,6 +21,7 @@ struct MacOSDioramaView: View {
 
     @Environment(\.routePreviewController) private var routePreviewController
     @Environment(\.enabledDioramaGestures) private var enabledGestures
+    @Environment(\.displayScale) private var displayScale
 
     init(configuration: DioramaConfiguration, content: DioramaContentGroup?) {
         self.configuration = configuration
@@ -40,7 +41,10 @@ struct MacOSDioramaView: View {
                     updateEntityScale()
                 }
         }
-        .dioramaLoadingOverlay(state: store.loadingState) {
+        .dioramaLoadingOverlay(
+            state: store.loadingState,
+            streamingProgress: store.streamingProgress
+        ) {
             store.reset()
             Task {
                 await store.load()
@@ -147,11 +151,14 @@ struct MacOSDioramaView: View {
                 updateEntityScale()
             }
 
-            // Drive 3D Tiles LOD updates from camera position changes
+            // Drive 3D Tiles LOD updates from camera position changes. Screen-space error is
+            // measured in pixels, so the view's height has to be converted out of points first —
+            // passing points asks for half the detail on a Retina display, which reads as a model
+            // that never sharpens.
             if let tiles3D = (store.dioramaEntity as? DioramaEntity)?.tiles3D {
                 tiles3D.requestLODUpdate(
                     cameraPosition: cameraController.cameraPosition,
-                    screenHeight: Float(viewSize.height),
+                    screenHeight: Float(viewSize.height * displayScale),
                     fov: 60 * .pi / 180
                 )
             }

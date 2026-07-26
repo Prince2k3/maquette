@@ -24,12 +24,12 @@ struct Tiles3DClipperTests {
         return descriptor
     }
 
-    private func positions(of descriptors: [MeshDescriptor]) -> [SIMD3<Float>] {
-        descriptors.flatMap { $0.positions.elements }
+    private func positions(of result: Tiles3DClipper.Result) -> [SIMD3<Float>] {
+        result.descriptors.flatMap { $0.positions.elements }
     }
 
-    private func triangleCount(of descriptors: [MeshDescriptor]) -> Int {
-        descriptors.reduce(0) { total, descriptor in
+    private func triangleCount(of result: Tiles3DClipper.Result) -> Int {
+        result.descriptors.reduce(0) { total, descriptor in
             guard case .triangles(let indices) = descriptor.primitives else { return total }
             return total + indices.count / 3
         }
@@ -198,7 +198,7 @@ struct Tiles3DClipperTests {
 
         // What survives should be the outline itself.
         var area: Float = 0
-        for descriptor in result {
+        for descriptor in result.descriptors {
             guard case .triangles(let indices) = descriptor.primitives else { continue }
             let points = descriptor.positions.elements
             for start in stride(from: 0, to: indices.count, by: 3) {
@@ -234,7 +234,7 @@ struct Tiles3DClipperTests {
         let result = Tiles3DClipper.clip(descriptors: [mesh], placement: placement, to: prism)
         #expect(!result.isEmpty, "A tile overlapping the outline must leave geometry")
 
-        for descriptor in result {
+        for descriptor in result.descriptors {
             for position in descriptor.positions.elements {
                 let distance = sqrt(position.x * position.x + position.z * position.z)
                 #expect(distance <= 1200 + 5, "Vertex at \(position) escaped the outline")

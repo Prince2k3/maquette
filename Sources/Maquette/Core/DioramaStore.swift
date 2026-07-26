@@ -14,6 +14,48 @@ public enum DioramaLoadingState: Sendable {
     case failed(DioramaError)
 }
 
+/// How much of a streaming presentation has arrived.
+///
+/// Only the photorealistic 3D Tiles path streams. A terrain chunk is finished the moment
+/// `DioramaLoadingState` reaches `.loaded`, so it reports no progress at all — `nil` rather than a
+/// completed value, since "nothing to wait for" and "waiting for nothing" want different UI.
+///
+/// A streaming presentation reaches `.loaded` as soon as its root tileset arrives, which is long
+/// before there is much to look at. That is deliberate: the model is displayable and improving from
+/// that point on, and blocking behind a full-screen spinner until it settled would hide it for the
+/// whole time it was most obviously getting better. This is what fills the gap.
+///
+/// The denominator is not known up front, and cannot be. A 3D Tiles tree is discovered as it is
+/// walked — each tile that arrives may name children the traversal had never heard of — so
+/// `tilesPending` is what the *latest* traversal still wants, not what the finished model will have
+/// needed. `fractionComplete` therefore climbs, stalls, and sometimes steps backwards as detail
+/// comes into view. Show it as a sign of life rather than a countdown, and let `isStreaming` decide
+/// whether to show anything at all.
+public struct DioramaStreamingProgress: Sendable, Equatable {
+    /// Tiles held as drawable geometry.
+    public let tilesLoaded: Int
+    /// Content the latest traversal asked for and does not yet have.
+    public let tilesPending: Int
+    /// Whether more content is still on its way.
+    ///
+    /// `false` once the view is either fully covered or waiting on a camera move to ask for
+    /// anything further, which are the two states in which an indicator has nothing left to say.
+    public let isStreaming: Bool
+
+    /// Share of the currently known work that is done, in `0...1`.
+    public var fractionComplete: Double {
+        let total = tilesLoaded + tilesPending
+        guard total > 0 else { return isStreaming ? 0 : 1 }
+        return Double(tilesLoaded) / Double(total)
+    }
+
+    public init(tilesLoaded: Int, tilesPending: Int, isStreaming: Bool) {
+        self.tilesLoaded = tilesLoaded
+        self.tilesPending = tilesPending
+        self.isStreaming = isStreaming
+    }
+}
+
 /// Domain store responsible for orchestrating tile fetching, mesh generation, and entity assembly.
 @Observable
 @MainActor
@@ -32,6 +74,14 @@ public final class DioramaStore {
 
     /// The active route preview entity, if one was applied via content.
     public private(set) var routePreviewEntity: RoutePreviewEntity?
+
+    /// How much of a streaming presentation has arrived, or `nil` if this one does not stream.
+    ///
+    /// Computed rather than stored so it stays live: the counters belong to the tile manager, and
+    /// reading them here is what registers a SwiftUI view for their updates.
+    public var streamingProgress: DioramaStreamingProgress? {
+        (dioramaEntity as? DioramaEntity)?.tiles3D?.streamingProgress
+    }
 
     private let tileCache = TileCache()
     private let logger = Logger(subsystem: "com.maquette", category: "DioramaStore")

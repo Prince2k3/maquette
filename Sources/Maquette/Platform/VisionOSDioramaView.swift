@@ -24,7 +24,10 @@ struct VisionOSDioramaView: View {
     var body: some View {
         GeometryReader3D { geometry in
             realityContent(geometry: geometry)
-                .dioramaLoadingOverlay(state: store.loadingState) {
+                .dioramaLoadingOverlay(
+                    state: store.loadingState,
+                    streamingProgress: store.streamingProgress
+                ) {
                     store.reset()
                     Task {
                         await store.load()

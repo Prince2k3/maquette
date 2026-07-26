@@ -39,6 +39,21 @@ public final class Tiles3DLODManager {
     /// Content fetches currently in flight, so a tile is not requested twice.
     private var inFlight: Set<String> = []
 
+    /// Set when a fetch is rejected because the provider's session has expired.
+    private var needsSessionRenewal = false
+    private var lastSessionRenewal: Date?
+    /// Renewals since the last tile actually arrived, so a permanent failure stops spending.
+    private var renewalsWithoutProgress = 0
+
+    /// Shortest gap between session renewals.
+    ///
+    /// Each renewal is a billable root request, so a provider rejecting tiles for some reason other
+    /// than expiry must not be able to spend in a loop.
+    public var minimumSessionRenewalInterval: TimeInterval = 60
+
+    /// Renewals attempted without a single tile arriving before renewing is abandoned.
+    public var maximumRenewalsWithoutProgress = 3
+
     /// Maximum simultaneous tile loads.
     public var maxConcurrentLoads: Int = 4
 
@@ -62,6 +77,26 @@ public final class Tiles3DLODManager {
     /// This is a memory budget, not a limit on how much may be drawn. An earlier cap of
     /// `maxConcurrentLoads * 10` silently stopped loading anything once forty tiles existed.
     public var maxRetainedTiles: Int = 600
+
+    // MARK: - Streaming Progress
+
+    /// Tiles currently held as drawable geometry.
+    public private(set) var loadedTileCount = 0
+
+    /// Content the most recent traversal asked for and does not yet have.
+    public private(set) var pendingTileCount = 0
+
+    /// How far the most recent update got. Starts `incomplete`, since nothing has loaded yet.
+    public private(set) var refinement: Refinement = .incomplete
+
+    /// Records what the latest traversal saw, for anything observing the stream's progress.
+    ///
+    /// Assignments are guarded on inequality because Observation notifies on every write, not
+    /// every change, and these are read from view bodies that in turn drive the next update.
+    private func publishProgress(pending: Int) {
+        if loadedTileCount != loadedEntities.count { loadedTileCount = loadedEntities.count }
+        if pendingTileCount != pending { pendingTileCount = pending }
+    }
 
     init(
         provider: any Tiles3DProvider,
@@ -123,31 +158,47 @@ public final class Tiles3DLODManager {
         let transform: simd_double4x4
     }
 
+    /// How far an update got towards drawing everything the camera can see.
+    public enum Refinement {
+        /// Every visible tile is loaded and shown. Nothing more to do from here.
+        case converged
+        /// Content is still missing and still arriving — calling again makes progress.
+        case incomplete
+        /// Content is still missing but the last passes brought nothing new. Asking again with the
+        /// same camera would repeat identical requests, so it takes a change to move this on.
+        case stalled
+    }
+
     /// Updates visible tiles based on camera position.
     ///
     /// Traversal only reads what is already known — it never waits on the network. Anything
     /// missing is recorded as a request and fetched afterwards, concurrently. Fetching inline
     /// made a single pass take as long as every tile it touched, so the view spent essentially
     /// all its time part-loaded.
+    ///
+    /// One call is bounded — `maxPassesPerUpdate` passes of at most `maxConcurrentLoads * 4`
+    /// fetches each — so a dense view will not finish in one. The return value says so, and the
+    /// caller is expected to keep asking; see `Tiles3DEntity.requestLODUpdate`.
     func update(
         parentEntity: Entity,
         cameraPosition: SIMD3<Float>,
         screenHeight: Float,
         fov: Float
-    ) async {
-        guard rootTileset != nil else { return }
+    ) async -> Refinement {
+        guard rootTileset != nil else { return finish(.converged) }
 
         // Each pass can only descend as far as what is already resolved: a sub-tileset has to be
         // fetched before its children are even visible to the traversal. So a pass reaches one
         // level deeper than the last, and the update drives itself until coverage stops improving
         // rather than waiting for the view to ask again.
+        var stalled = false
         for _ in 0..<maxPassesPerUpdate {
             let requests = selectVisibleTiles(
                 cameraPosition: cameraPosition,
                 screenHeight: screenHeight,
                 fov: fov
             )
-            if requests.isEmpty { return }
+            if requests.isEmpty { return finish(.converged) }
 
             let loadedBefore = loadedEntities.count
             let resolvedBefore = subTilesets.count + emptyTiles.count + failedTiles.count
@@ -156,6 +207,7 @@ public final class Tiles3DLODManager {
             // Nothing arrived, so another pass would ask for exactly the same things.
             if loadedEntities.count == loadedBefore,
                subTilesets.count + emptyTiles.count + failedTiles.count == resolvedBefore {
+                stalled = true
                 break
             }
         }
@@ -164,11 +216,19 @@ public final class Tiles3DLODManager {
         // fetch brought in needs one more selection. Without it the newest geometry stays
         // invisible until something else happens to trigger an update — which looks like the view
         // filling in while the camera moves and emptying again when it stops.
-        _ = selectVisibleTiles(
+        let remaining = selectVisibleTiles(
             cameraPosition: cameraPosition,
             screenHeight: screenHeight,
             fov: fov
         )
+        if remaining.isEmpty { return finish(.converged) }
+        return finish(stalled ? .stalled : .incomplete)
+    }
+
+    /// Records how the update ended, so anything observing the stream knows whether to keep waiting.
+    private func finish(_ result: Refinement) -> Refinement {
+        if refinement != result { refinement = result }
+        return result
     }
 
     /// Runs one traversal, shows what it selected, and returns the content it still needs.
@@ -198,6 +258,7 @@ public final class Tiles3DLODManager {
 
         applyVisibility(visibleURIs)
         evict(keeping: visibleURIs)
+        publishProgress(pending: requests.count)
 
         if !hasLoggedFirstTraversal || requests.isEmpty {
             logger.debug("LOD: visited=\(stats.visited) culled=\(stats.culled) refined=\(stats.refined) rendered=\(stats.rendered) requested=\(requests.count) noContent=\(stats.noContent) empty=\(self.emptyTiles.count) failed=\(self.failedTiles.count) subtilesets=\(self.subTilesets.count) depth=\(stats.maxDepth) loaded=\(self.loadedEntities.count)")
@@ -283,7 +344,9 @@ public final class Tiles3DLODManager {
             // hands over to them, but while they are still loading the parent stands in —
             // handing over first is what punches holes in a tileset that streams.
             var parentDrawn = false
-            if refine == .add || !childrenCovered, let uri = tile.content?.uri {
+            let standsIn = refine == .add
+                || (!childrenCovered && canStandIn(screenSpaceError: sse))
+            if standsIn, let uri = tile.content?.uri {
                 parentDrawn = present(
                     uri: uri,
                     transform: tileTransform,
@@ -319,6 +382,35 @@ public final class Tiles3DLODManager {
             depth: depth
         )
     }
+
+    /// Whether a tile is close enough to the detail being asked for to stand in for it.
+    ///
+    /// Standing in is only worth doing while the substitute still resembles what it replaces. One
+    /// or two levels up the tree that holds — the ground is in the right place, just softer, which
+    /// is what progressive refinement is meant to look like. Further up it stops being a rougher
+    /// version of the answer and becomes a different one: on Half Dome the leaves sit at a
+    /// geometric error of 16 m, and the ancestor still standing in for them was at 1,027 m, a tile
+    /// with over a kilometre of relief in it drawn across a chunk 2.8 km wide. Cut to the outline
+    /// it read as a tilted, smeared wedge hanging off the model's left side.
+    ///
+    /// Excluding it is not only cosmetic. The ground datum and the tray are both measured from the
+    /// lowest visible geometry, and that one tile bottomed out 135 m below every other tile on
+    /// screen — so the tray was placed 135 m too low and the model floated in a visible gap above
+    /// the thing it is supposed to be resting on. Seventy-six tiles agreed on where the ground was
+    /// and the seventy-seventh overruled them, because a minimum is decided by its outlier.
+    ///
+    /// The bound is in screen-space error rather than metres, which is the same measure the
+    /// traversal refines by: it already accounts for camera distance and for how coarse this
+    /// particular tileset's levels happen to be. Four times the threshold is roughly two levels,
+    /// since each level about halves the error. Past that the hole is the better of the two —
+    /// there is a loading indicator for ground that has not arrived, and none for ground in the
+    /// wrong place.
+    private func canStandIn(screenSpaceError: Double) -> Bool {
+        screenSpaceError <= screenSpaceErrorThreshold * Self.standInErrorTolerance
+    }
+
+    /// How many times the refinement threshold a stand-in's screen-space error may reach.
+    private static let standInErrorTolerance: Double = 4
 
     /// Marks a tile's content visible if it is already available, or records a request for it.
     ///
@@ -381,35 +473,100 @@ public final class Tiles3DLODManager {
         for request in batch { inFlight.insert(request.uri) }
 
         let provider = self.provider
-        await withTaskGroup(of: (ContentRequest, Data?).self) { group in
+        func load(_ request: ContentRequest) -> @Sendable () async -> (ContentRequest, Result<Data, any Error>) {
+            {
+                do { return (request, .success(try await provider.fetchTileContent(uri: request.uri))) }
+                catch { return (request, .failure(error)) }
+            }
+        }
+
+        await withTaskGroup(of: (ContentRequest, Result<Data, any Error>).self) { group in
             var next = 0
             let width = min(max(1, maxConcurrentLoads), batch.count)
 
             while next < width {
-                let request = batch[next]
-                group.addTask { (request, try? await provider.fetchTileContent(uri: request.uri)) }
+                group.addTask(operation: load(batch[next]))
                 next += 1
             }
 
-            for await (request, data) in group {
-                await integrate(request: request, data: data, into: parentEntity)
+            for await (request, result) in group {
+                await integrate(request: request, result: result, into: parentEntity)
 
                 if next < batch.count {
-                    let follow = batch[next]
-                    group.addTask { (follow, try? await provider.fetchTileContent(uri: follow.uri)) }
+                    group.addTask(operation: load(batch[next]))
                     next += 1
                 }
             }
         }
+
+        // A dead session rejects every request alike, so one renewal covers the whole batch.
+        if needsSessionRenewal { await renewSession() }
+    }
+
+    /// Establishes a fresh session after the old one expired.
+    ///
+    /// Google's session token outlives neither the view nor the root cache: measured during
+    /// development, a root twenty minutes old already had tiles rejected with 400. Until this
+    /// existed there was no way back from that. The token was cleared, nothing ever re-fetched the
+    /// root, and every request from then on failed — so the model held whatever it had already
+    /// drawn and lost the rest as tiles were evicted or the camera moved somewhere new. It looked
+    /// like content appearing and then disappearing some minutes later.
+    ///
+    /// This costs one billable request, because Google bills the root and nothing else. That is
+    /// the price of a session that outlives its token, so it is rationed: no more often than
+    /// `minimumSessionRenewalInterval`, and not at all once renewals stop bringing tiles back.
+    private func renewSession() async {
+        needsSessionRenewal = false
+
+        guard renewalsWithoutProgress < maximumRenewalsWithoutProgress else { return }
+        if let last = lastSessionRenewal, Date().timeIntervalSince(last) < minimumSessionRenewalInterval {
+            return
+        }
+        lastSessionRenewal = Date()
+        renewalsWithoutProgress += 1
+
+        // The returned tileset is deliberately discarded. Its URIs name the new session, and
+        // adopting them would re-key every tile already loaded, so the whole model would reload as
+        // duplicates. The token is what was needed, and `fetchTileContent` now applies the live one
+        // to the URIs already held.
+        guard (try? await provider.fetchTileset()) != nil else {
+            logger.error("Session renewal failed; no further tiles will load")
+            return
+        }
+
+        // The rejections were the session's doing, not the tiles', so their strikes are wiped —
+        // otherwise a single expiry retires everything that happened to be in flight.
+        failedTiles.removeAll()
+        logger.info("Renewed the tile session after expiry")
     }
 
     /// Turns fetched bytes into either a resolved sub-tileset or a drawable entity.
-    private func integrate(request: ContentRequest, data: Data?, into parentEntity: Entity) async {
+    private func integrate(
+        request: ContentRequest,
+        result: Result<Data, any Error>,
+        into parentEntity: Entity
+    ) async {
         inFlight.remove(request.uri)
 
-        guard let data else {
-            failedTiles[request.uri, default: 0] += 1
-            logger.debug("Failed to fetch tile: \(request.uri)")
+        let data: Data
+        switch result {
+        case .success(let value):
+            data = value
+            renewalsWithoutProgress = 0
+        case .failure(let error):
+            // An expired session rejects every tile alike. Charging that to the tile would retire
+            // perfectly good content after three rounds and leave holes nothing ever fills, so the
+            // session is renewed and the tile asked for again with its record intact.
+            if let dioramaError = error as? DioramaError,
+               case .sessionExpired = dioramaError {
+                needsSessionRenewal = true
+            } else if let dioramaError = error as? DioramaError,
+                      case .authenticationFailed = dioramaError {
+                // How the same expiry presents once the token has already been cleared.
+            } else {
+                failedTiles[request.uri, default: 0] += 1
+            }
+            logger.debug("Failed to fetch tile: \(request.uri) — \(error.localizedDescription)")
             return
         }
 
@@ -458,7 +615,13 @@ public final class Tiles3DLODManager {
     /// Ages out tiles that have not been seen recently, but only once over budget.
     ///
     /// Evicting purely on age discards tiles the camera is about to swing back to, and reloading
-    /// them is what makes a tileset flicker.
+    /// them is what makes a tileset flicker. Age alone cannot be the whole rule either. The counter
+    /// advances per traversal, and traversals only happen while the camera moves, so a view that
+    /// settles ages nothing: measured on Half Dome, twenty-five minutes of orbiting produced 65
+    /// traversals and 689 retained tiles against a budget of 600, with not one eviction — nothing
+    /// could possibly have gone unseen for the required 60. Over budget the oldest hidden tiles
+    /// therefore go regardless of how recently they were seen; the threshold decides who is
+    /// preferred, not whether anyone is eligible.
     private func evict(keeping visibleURIs: Set<String>) {
         for uri in loadedEntities.keys {
             framesSinceVisible[uri] = visibleURIs.contains(uri) ? 0 : (framesSinceVisible[uri] ?? 0) + 1
@@ -466,14 +629,25 @@ public final class Tiles3DLODManager {
 
         guard loadedEntities.count > maxRetainedTiles else { return }
 
-        let stale = framesSinceVisible
-            .filter { !visibleURIs.contains($0.key) && $0.value > evictionFrameThreshold }
+        let hidden = framesSinceVisible
+            .filter { !visibleURIs.contains($0.key) && loadedEntities[$0.key] != nil }
             .sorted { $0.value > $1.value }
 
-        for (uri, _) in stale {
+        var removed = 0
+        for (uri, age) in hidden {
             guard loadedEntities.count > maxRetainedTiles else { break }
+            // Past the threshold this is routine ageing. Under it, the budget is being enforced,
+            // which is worth saying: a view evicting tiles it saw moments ago will reload them, and
+            // that is the flicker the threshold exists to avoid.
+            if age <= evictionFrameThreshold {
+                logger.debug("Over the tile budget with nothing stale; evicting \(uri) last seen \(age) traversals ago")
+            }
             loadedEntities.removeValue(forKey: uri)?.removeFromParent()
             framesSinceVisible.removeValue(forKey: uri)
+            removed += 1
+        }
+        if removed > 0 {
+            logger.debug("Evicted \(removed) tiles; \(self.loadedEntities.count) retained")
         }
     }
 

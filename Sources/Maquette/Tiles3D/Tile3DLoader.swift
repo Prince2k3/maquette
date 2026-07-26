@@ -50,20 +50,18 @@ public struct Tile3DLoader: Sendable {
             return nil
         }
 
-        // Create material from texture if available
+        // Photogrammetry arrives with lighting already baked into its imagery, and Google's tiles
+        // declare `KHR_materials_unlit` as *required* for exactly that reason. They also ship no
+        // NORMAL attribute, so a lit material has nothing to shade with: the surface renders black
+        // wherever the substituted normal faces away from whatever light the scene happens to have.
         let material: RealityKit.Material
         if let textureImage = parsed.textureImages.first {
             let texture = try await TextureResource(image: textureImage, options: .init(semantic: .color))
-            var simpleMaterial = SimpleMaterial()
-            simpleMaterial.color.texture = .init(texture)
-            simpleMaterial.roughness = .float(0.8)
-            simpleMaterial.metallic = .float(0.0)
-            material = simpleMaterial
+            var unlit = UnlitMaterial()
+            unlit.color = .init(texture: .init(texture))
+            material = unlit
         } else {
-            var simpleMaterial = SimpleMaterial()
-            simpleMaterial.color.tint = .gray
-            simpleMaterial.roughness = .float(0.9)
-            material = simpleMaterial
+            material = UnlitMaterial(color: .gray)
         }
 
         // Compose the full ECEF transform:
@@ -118,12 +116,15 @@ public struct Tile3DLoader: Sendable {
         // no transform of its own.
         let descriptors: [MeshDescriptor]
         let entityTransform: simd_float4x4
+        var cutEdges: [Tiles3DCutEdge] = []
         if let clipPrism {
-            descriptors = Tiles3DClipper.clip(
+            let clipped = Tiles3DClipper.clip(
                 descriptors: parsed.meshDescriptors,
                 placement: localTransform,
                 to: clipPrism
             )
+            descriptors = clipped.descriptors
+            cutEdges = clipped.cutEdges
             guard !descriptors.isEmpty else {
                 // Worth logging the geometry's position against the prism: a tileset whose tiles
                 // are coarser than the diorama's radius will clip away entirely, which looks like
@@ -145,6 +146,12 @@ public struct Tile3DLoader: Sendable {
         let mesh = try MeshResource.generate(from: descriptors)
         let entity = ModelEntity(mesh: mesh, materials: [material])
         entity.transform = Transform(matrix: entityTransform)
+
+        // Carried on the tile so the cut wall can be rebuilt from whatever is currently visible.
+        if !cutEdges.isEmpty {
+            _ = Tiles3DCutEdgeRegistration.perform
+            entity.components.set(Tiles3DCutEdgeComponent(edges: cutEdges))
+        }
 
         return entity
     }

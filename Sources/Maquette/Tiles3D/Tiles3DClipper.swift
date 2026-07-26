@@ -10,10 +10,23 @@ import simd
 /// outline's edges. Projecting triangles onto the horizontal plane first would collapse every
 /// facade to a line and delete it.
 ///
-/// Cut faces are left open rather than capped. Capping arbitrary sliced geometry is the expensive
-/// part of mesh clipping and is unnecessary here, because the diorama's base sits directly beneath
-/// the cut and hides it.
+/// Cut faces are left open rather than capped. Capping arbitrary sliced geometry — working out
+/// which of the open loops bound solid and triangulating them — is the expensive and fragile part
+/// of mesh clipping, and photogrammetry does not give the closed manifold that would make it
+/// well-defined in the first place.
+///
+/// Instead the clip reports the segments it cut along, and `Tiles3DCutWall` extrudes those straight
+/// down to the tray. That closes the silhouette, which is the only part anyone sees, without ever
+/// having to decide what is inside the shell.
 enum Tiles3DClipper {
+    /// What a clip produced: the surviving geometry, and where it was cut.
+    struct Result {
+        var descriptors: [MeshDescriptor] = []
+        var cutEdges: [Tiles3DCutEdge] = []
+
+        var isEmpty: Bool { descriptors.isEmpty }
+    }
+
     /// A vertex carrying everything that must survive interpolation along a clipped edge.
     private struct Vertex {
         var position: SIMD3<Float>
@@ -35,12 +48,13 @@ enum Tiles3DClipper {
     /// carries rotation: a prism that is vertical in diorama space would be tilted in the tile's
     /// own space. Callers should therefore leave the resulting entity's transform as identity.
     ///
-    /// - Returns: The clipped mesh parts, or an empty array when nothing survives.
+    /// - Returns: The clipped mesh parts and the segments they were cut along. Empty when nothing
+    ///   survives.
     static func clip(
         descriptors: [MeshDescriptor],
         placement: simd_float4x4,
         to prism: BoundaryPrism
-    ) -> [MeshDescriptor] {
+    ) -> Result {
         // Normals transform by the inverse-transpose; for the rigid transforms 3D Tiles uses, the
         // upper-left block is enough.
         let normalMatrix = simd_float3x3(
@@ -49,13 +63,18 @@ enum Tiles3DClipper {
             SIMD3(placement.columns.2.x, placement.columns.2.y, placement.columns.2.z)
         )
 
-        var clipped: [MeshDescriptor] = []
+        var result = Result()
         for descriptor in descriptors {
-            if let result = clipPart(descriptor, placement: placement, normalMatrix: normalMatrix, prism: prism) {
-                clipped.append(result)
-            }
+            guard let part = clipPart(
+                descriptor,
+                placement: placement,
+                normalMatrix: normalMatrix,
+                prism: prism,
+                cutEdges: &result.cutEdges
+            ) else { continue }
+            result.descriptors.append(part)
         }
-        return clipped
+        return result
     }
 
     // MARK: - Per-Part Clipping
@@ -64,7 +83,8 @@ enum Tiles3DClipper {
         _ descriptor: MeshDescriptor,
         placement: simd_float4x4,
         normalMatrix: simd_float3x3,
-        prism: BoundaryPrism
+        prism: BoundaryPrism,
+        cutEdges: inout [Tiles3DCutEdge]
     ) -> MeshDescriptor? {
         let sourcePositions = descriptor.positions.elements
         guard !sourcePositions.isEmpty else { return nil }
@@ -137,7 +157,12 @@ enum Tiles3DClipper {
             }
 
             for piece in prism.pieces(overlapping: lower, upper) {
-                emit(clip(triangle: triangle, against: piece))
+                let polygon = clip(triangle: triangle, against: piece)
+                // Only the clipped path can produce a cut. A triangle kept whole was never sliced,
+                // and the outline is tested rather than the piece so that the interior splits a
+                // concave outline is broken into do not become walls through the middle.
+                collectCutEdges(of: polygon, prism: prism, into: &cutEdges)
+                emit(polygon)
             }
         }
 
@@ -151,6 +176,24 @@ enum Tiles3DClipper {
         }
         result.primitives = .triangles(indices)
         return result
+    }
+
+    /// Records the edges of a clipped polygon that ended up lying on the outline.
+    private static func collectCutEdges(
+        of polygon: [Vertex],
+        prism: BoundaryPrism,
+        into cutEdges: inout [Tiles3DCutEdge]
+    ) {
+        guard polygon.count >= 3 else { return }
+        for index in polygon.indices {
+            let a = polygon[index]
+            let b = polygon[(index + 1) % polygon.count]
+            guard let edge = prism.boundaryEdge(
+                along: SIMD2(a.position.x, a.position.z),
+                SIMD2(b.position.x, b.position.z)
+            ) else { continue }
+            cutEdges.append(Tiles3DCutEdge(a: a.position, b: b.position, boundaryEdge: edge))
+        }
     }
 
     /// Clips a polygon against one convex piece's vertical planes.

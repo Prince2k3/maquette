@@ -330,7 +330,14 @@ public struct GLBParser: Sendable {
         // Texture coordinates
         if let uvIndex = primitive.attributes["TEXCOORD_0"],
            uvIndex < accessors.count {
+            // glTF puts the texture origin at the top-left and RealityKit at the bottom-left, so V
+            // has to be flipped. Getting this wrong is not obviously wrong on a square texture —
+            // the image is merely mirrored, and aerial imagery still reads as aerial imagery. It
+            // shows up on the tiles Google pads to a taller power of two: their content sits at the
+            // top with black filling the bottom, so an unflipped V samples the padding and the tile
+            // renders as a solid black slab.
             let uvs = try extractVec2(accessor: accessors[uvIndex], bufferViews: bufferViews, bin: bin)
+                .map { SIMD2<Float>($0.x, 1 - $0.y) }
             descriptor.textureCoordinates = MeshBuffers.TextureCoordinates(uvs)
         }
 
@@ -551,22 +558,32 @@ struct GLTFImage: Codable {
 
 // MARK: - Data Reading Helpers
 
+/// Scalar reads for the GLB byte stream.
+///
+/// Every one of these goes through `loadUnaligned`, never `load`. glTF aligns its own offsets, but
+/// that says nothing about where the buffer sits in memory: `load` traps unless the *address* is
+/// aligned for the type, and the address is whatever the allocator handed the response — shifted
+/// again for a b3dm, whose glTF body starts after variable-length feature and batch tables. The
+/// resulting crash is a trap inside the standard library with the file's own bytes looking
+/// perfectly valid, and it fires only on the tiles that happen to land at an odd address.
+///
+/// They are bounds-checked for the same reason. A truncated or empty response is a broken tile,
+/// not a reason to take the app down.
 extension Data {
     func readUInt32(at offset: Int) -> UInt32 {
-        withUnsafeBytes { buffer in
-            buffer.load(fromByteOffset: offset, as: UInt32.self).littleEndian
-        }
+        read(at: offset, as: UInt32.self)?.littleEndian ?? 0
     }
 
     func readUInt16(at offset: Int) -> UInt16 {
-        withUnsafeBytes { buffer in
-            buffer.load(fromByteOffset: offset, as: UInt16.self).littleEndian
-        }
+        read(at: offset, as: UInt16.self)?.littleEndian ?? 0
     }
 
     func readFloat(at offset: Int) -> Float {
-        withUnsafeBytes { buffer in
-            buffer.load(fromByteOffset: offset, as: Float.self)
-        }
+        read(at: offset, as: Float.self) ?? 0
+    }
+
+    private func read<T>(at offset: Int, as type: T.Type) -> T? {
+        guard offset >= 0, offset + MemoryLayout<T>.size <= count else { return nil }
+        return withUnsafeBytes { $0.loadUnaligned(fromByteOffset: offset, as: type) }
     }
 }

@@ -45,6 +45,13 @@ struct BoundaryPrism {
     /// Total length of the outline.
     let perimeter: Float
 
+    /// Centre of the inscribed and circumscribed circles used to answer containment cheaply.
+    private let centroid: SIMD2<Float>
+    /// Radius² of the largest circle about `centroid` that is wholly inside the outline.
+    private let innerRadiusSquared: Float
+    /// Radius² of the smallest circle about `centroid` that encloses the outline.
+    private let outerRadiusSquared: Float
+
     /// Builds a prism from an outline, scaled into the space the geometry lives in.
     ///
     /// - Parameters:
@@ -86,11 +93,59 @@ struct BoundaryPrism {
         }
         self.cumulativeEdgeLengths = lengths
         self.perimeter = running
+
+        // Containment is asked once per triangle corner of every streamed tile, so a crossing-number
+        // walk over the outline — 128 vertices for a circle — dominates the clip. Two circles about
+        // the centroid answer almost every query in constant time instead: inside the inscribed one
+        // is certainly inside, outside the circumscribed one is certainly outside, and only the
+        // annulus between them needs the exact test. For a circular outline, which is the default,
+        // the two radii differ by cos(π/128) and virtually nothing reaches the fallback.
+        let centre = scaled.reduce(SIMD2<Float>.zero, +) / Float(max(scaled.count, 1))
+        self.centroid = centre
+
+        var farthest: Float = 0
+        for vertex in scaled {
+            farthest = max(farthest, simd_length_squared(vertex - centre))
+        }
+        self.outerRadiusSquared = farthest
+
+        // Valid only when the centroid is itself inside: the disc reaching the nearest boundary
+        // point crosses no edge, so a centre inside puts all of it inside. A concave outline can
+        // put its centroid outside, and then there is no inscribed circle to lean on.
+        if scaledBoundary.contains(centre) {
+            var nearest = Float.greatestFiniteMagnitude
+            for index in 0..<scaledBoundary.edgeCount {
+                let (a, b) = scaledBoundary.edge(index)
+                nearest = min(nearest, Self.distanceSquaredToSegment(centre, a, b))
+            }
+            self.innerRadiusSquared = nearest
+        } else {
+            self.innerRadiusSquared = 0
+        }
+    }
+
+    /// Squared distance from a point to a line segment.
+    private static func distanceSquaredToSegment(
+        _ point: SIMD2<Float>,
+        _ a: SIMD2<Float>,
+        _ b: SIMD2<Float>
+    ) -> Float {
+        let span = b - a
+        let lengthSquared = simd_length_squared(span)
+        guard lengthSquared > 0 else { return simd_length_squared(point - a) }
+        let t = simd_clamp(simd_dot(point - a, span) / lengthSquared, 0, 1)
+        return simd_length_squared(point - (a + span * t))
     }
 
     /// Whether a horizontal position lies inside the outline.
     func contains(_ point: SIMD2<Float>) -> Bool {
-        boundary.contains(point)
+        let distanceSquared = simd_length_squared(point - centroid)
+        // Strictly inside the inscribed circle, because the circle touches the outline: a point at
+        // exactly that radius is *on* the boundary, where containment is ambiguous and only the
+        // exact test's answer will do.
+        if distanceSquared < innerRadiusSquared { return true }
+        if distanceSquared > outerRadiusSquared { return false }
+        return boundary.contains(point)
     }
 
     // MARK: - Cut Edges

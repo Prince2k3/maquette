@@ -752,7 +752,14 @@ public final class Tiles3DLODManager {
             framesSinceVisible[uri] = visibleURIs.contains(uri) ? 0 : (framesSinceVisible[uri] ?? 0) + 1
         }
 
-        guard loadedEntities.count > maxRetainedTiles else { return }
+        // Only hidden tiles are evictable, so the budget has to be read against them. A visible set
+        // larger than the budget would otherwise put this on a treadmill: each pass evicts the few
+        // hidden tiles, the next asks for them again, and nothing is reclaimed because the tiles
+        // holding the memory are the ones being drawn. The Pan 3D preset renders 699 against a
+        // budget of 600, so it sits exactly in that regime once settled. Raising the floor to the
+        // visible count costs nothing — those tiles were staying either way.
+        let effectiveBudget = max(maxRetainedTiles, visibleURIs.count)
+        guard loadedEntities.count > effectiveBudget else { return }
 
         let hidden = framesSinceVisible
             .filter { !visibleURIs.contains($0.key) && loadedEntities[$0.key] != nil }
@@ -760,7 +767,7 @@ public final class Tiles3DLODManager {
 
         var removed = 0
         for (uri, age) in hidden {
-            guard loadedEntities.count > maxRetainedTiles else { break }
+            guard loadedEntities.count > effectiveBudget else { break }
             // Past the threshold this is routine ageing. Under it, the budget is being enforced,
             // which is worth saying: a view evicting tiles it saw moments ago will reload them, and
             // that is the flicker the threshold exists to avoid.

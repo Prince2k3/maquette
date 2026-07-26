@@ -33,6 +33,14 @@ public final class Tiles3DLODManager {
     /// enabled — an entity with no mesh draws nothing, and enabling it would only confuse the
     /// visible-tile scans the datum and the cut wall are built from.
     private var clippedAway: Set<String> = []
+    /// The tiles the last traversal chose to draw, whether or not they currently hold geometry.
+    ///
+    /// Retained because a pan changes which of them survive the outline without running a traversal:
+    /// the camera has not moved, so nothing recomputes what should be on screen. Re-cutting alone
+    /// cannot show a tile — `apply` hides one that clips to nothing but never reveals one that comes
+    /// back — so without this a pan could only ever eat the model away, never slide new ground into
+    /// it, which is the entire point of the gesture.
+    private var selectedURIs: Set<String> = []
     /// Bumped every time the outline moves, so a tile that was being cut while it moved can tell.
     private var clipGeneration = 0
     private var framesSinceVisible: [String: Int] = [:]
@@ -667,8 +675,10 @@ public final class Tiles3DLODManager {
             recut += 1
             apply(prism, to: entity, from: source, uri: uri)
         }
+        // Re-decide what is on screen: the re-cut above has just changed which tiles hold geometry.
+        applyVisibility(selectedURIs)
         if recut > 0 {
-            let elapsed = Double((ContinuousClock.now - started).components.attoseconds) / 1e15
+            let elapsed = (ContinuousClock.now - started).milliseconds
             logger.debug("""
                 Re-cut \(recut) of \(self.sourceGeometry.count) tiles \
                 against the moved outline in \(String(format: "%.1f", elapsed)) ms
@@ -729,6 +739,7 @@ public final class Tiles3DLODManager {
     /// of the very detail it was standing in for, which looks like the tileset never refines.
     /// Hidden tiles stay loaded, so switching back is free.
     private func applyVisibility(_ visibleURIs: Set<String>) {
+        selectedURIs = visibleURIs
         for (uri, entity) in loadedEntities {
             let shouldShow = visibleURIs.contains(uri) && !clippedAway.contains(uri)
             if entity.isEnabled != shouldShow {
@@ -778,6 +789,7 @@ public final class Tiles3DLODManager {
             framesSinceVisible.removeValue(forKey: uri)
             sourceGeometry.removeValue(forKey: uri)
             clippedAway.remove(uri)
+            selectedURIs.remove(uri)
             removed += 1
         }
         if removed > 0 {
@@ -816,5 +828,17 @@ extension simd_double4x4 {
             SIMD4<Double>(a[8], a[9], a[10], a[11]),
             SIMD4<Double>(a[12], a[13], a[14], a[15])
         )
+    }
+}
+
+extension Duration {
+    /// This duration in milliseconds.
+    ///
+    /// `components` splits a duration into whole seconds *and* the attosecond remainder, so reading
+    /// the remainder alone silently discards every whole second. That is a quiet way to be wrong:
+    /// a measurement only crosses a second when something is slow, so the readings that matter most
+    /// are exactly the ones that come back short — a ten-second pan step logged as 871 ms.
+    var milliseconds: Double {
+        Double(components.seconds) * 1000 + Double(components.attoseconds) / 1e15
     }
 }

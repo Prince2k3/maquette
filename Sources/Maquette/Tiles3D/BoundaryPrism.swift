@@ -45,6 +45,16 @@ struct BoundaryPrism {
     /// Total length of the outline.
     let perimeter: Float
 
+    /// Cells of `boundaryGrid` across the prism's bounds, in each direction.
+    private static let gridResolution = 64
+    /// Which cells of the prism's bounds the outline passes through.
+    ///
+    /// A triangle touching no marked cell touches no boundary edge, so it is wholly inside or
+    /// wholly outside and one containment test settles it. See `mayCrossOutline`.
+    private let boundaryGrid: [Bool]
+    /// Reciprocal cell size, for mapping a position into the grid.
+    private let gridCellScale: SIMD2<Float>
+
     /// Centre of the inscribed and circumscribed circles used to answer containment cheaply.
     private let centroid: SIMD2<Float>
     /// Radius² of the largest circle about `centroid` that is wholly inside the outline.
@@ -94,6 +104,59 @@ struct BoundaryPrism {
         self.cumulativeEdgeLengths = lengths
         self.perimeter = running
 
+        // Mark every cell the outline passes through, one column of cells at a time: within a
+        // column the edge spans a known range of rows, so only those are marked.
+        //
+        // Marking each edge's bounding box instead would be simpler and equally safe, but useless
+        // on a straight-sided outline — a hexagon's six long diagonals have bounding boxes covering
+        // most of the grid between them, so nearly every cell would be marked and no triangle would
+        // ever take the fast path. Slack still goes one way only: a column is evaluated over its
+        // full width, so the marked band always contains the edge.
+        //
+        // The band is padded by a thousandth of a cell before it is rounded to whole cells. The
+        // rasterization is exact in principle but runs in floating point, and an edge grazing a cell
+        // boundary that rounds the wrong way would drop that cell — under-reporting, which decides a
+        // straddling triangle from a single corner and silently deletes geometry. The padding is
+        // orders of magnitude above the rounding error and far below a cell, so it buys that safety
+        // without widening the band; dilating by a whole cell instead measured 15% off the pan.
+        let resolution = Self.gridResolution
+        let span = simd_max(high - low, SIMD2(repeating: .leastNormalMagnitude))
+        let cell = span / Float(resolution)
+        let padding = cell / 1000
+        self.gridCellScale = 1 / cell
+        var grid = [Bool](repeating: false, count: resolution * resolution)
+        for index in 0..<scaledBoundary.edgeCount {
+            let (a, b) = scaledBoundary.edge(index)
+            let minX = min(a.x, b.x)
+            let maxX = max(a.x, b.x)
+            let run = b.x - a.x
+            let firstColumn = Self.axis((minX - padding.x - low.x) / cell.x, resolution)
+            let lastColumn = Self.axis((maxX + padding.x - low.x) / cell.x, resolution)
+            for column in firstColumn...lastColumn {
+                let xLow = max(minX, low.x + Float(column) * cell.x)
+                let xHigh = min(maxX, low.x + Float(column + 1) * cell.x)
+                let yLow: Float
+                let yHigh: Float
+                if abs(run) > .leastNormalMagnitude {
+                    let slope = (b.y - a.y) / run
+                    let y0 = a.y + (xLow - a.x) * slope
+                    let y1 = a.y + (xHigh - a.x) * slope
+                    yLow = min(y0, y1)
+                    yHigh = max(y0, y1)
+                } else {
+                    // Vertical: the column carries the whole edge.
+                    yLow = min(a.y, b.y)
+                    yHigh = max(a.y, b.y)
+                }
+                let firstRow = Self.axis((yLow - padding.y - low.y) / cell.y, resolution)
+                let lastRow = Self.axis((yHigh + padding.y - low.y) / cell.y, resolution)
+                for row in firstRow...lastRow {
+                    grid[row * resolution + column] = true
+                }
+            }
+        }
+        self.boundaryGrid = grid
+
         // Containment is asked once per triangle corner of every streamed tile, so a crossing-number
         // walk over the outline — 128 vertices for a circle — dominates the clip. Two circles about
         // the centroid answer almost every query in constant time instead: inside the inscribed one
@@ -124,6 +187,22 @@ struct BoundaryPrism {
         }
     }
 
+    /// Clamps a fractional cell coordinate into the grid.
+    ///
+    /// Clamped as floating point before the conversion: a stray tile vertex an Earth radius away
+    /// makes the raw coordinate far larger than `Int` can hold, and converting that would trap.
+    private static func cell(_ coordinate: SIMD2<Float>, _ resolution: Int) -> SIMD2<Int> {
+        let limit = Float(resolution - 1)
+        let clamped = coordinate.replacing(with: SIMD2<Float>.zero, where: coordinate .!= coordinate)
+        return SIMD2<Int>(simd_clamp(clamped, SIMD2<Float>(repeating: 0), SIMD2(repeating: limit)))
+    }
+
+    /// Clamps one fractional cell coordinate into the grid.
+    private static func axis(_ coordinate: Float, _ resolution: Int) -> Int {
+        guard coordinate == coordinate else { return 0 }
+        return Int(min(max(coordinate, 0), Float(resolution - 1)))
+    }
+
     /// Squared distance from a point to a line segment.
     private static func distanceSquaredToSegment(
         _ point: SIMD2<Float>,
@@ -146,6 +225,32 @@ struct BoundaryPrism {
         if distanceSquared < innerRadiusSquared { return true }
         if distanceSquared > outerRadiusSquared { return false }
         return boundary.contains(point)
+    }
+
+    /// Whether the outline can pass through the given horizontal box.
+    ///
+    /// The clip is exact but not cheap: a convex outline is one piece, and a circle's is 128 edges,
+    /// so every triangle handed to Sutherland-Hodgman is classified against 128 half-planes. The
+    /// overwhelming majority of them are simply *outside* the outline and produce nothing —
+    /// measured on the Pan 3D preset, 169k of the 175k triangles clipped per pan step came back
+    /// empty — and paying 128 planes to learn that is where a pan step's time went.
+    ///
+    /// A box the outline misses entirely contains no boundary point, so the triangle inside it
+    /// cannot span both sides: it is wholly inside or wholly outside, and a single containment test
+    /// settles which. Only boxes the outline actually crosses need the real clip.
+    ///
+    /// Conservative in the safe direction — it may report a crossing where there is none, which
+    /// costs an unnecessary exact clip and never loses geometry.
+    func mayCrossOutline(_ lower: SIMD2<Float>, _ upper: SIMD2<Float>) -> Bool {
+        let resolution = Self.gridResolution
+        let from = Self.cell((lower - lowerBound) * gridCellScale, resolution)
+        let to = Self.cell((upper - lowerBound) * gridCellScale, resolution)
+        for y in from.y...to.y {
+            for x in from.x...to.x where boundaryGrid[y * resolution + x] {
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: - Cut Edges

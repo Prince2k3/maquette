@@ -129,20 +129,20 @@ enum Tiles3DClipper {
             }
         }
 
+        var scratch = Scratch()
+
         for start in stride(from: 0, to: sourceIndices.count - 2, by: 3) {
-            let triangle = [
+            let triangle = (
                 vertices[Int(sourceIndices[start])],
                 vertices[Int(sourceIndices[start + 1])],
-                vertices[Int(sourceIndices[start + 2])],
-            ]
+                vertices[Int(sourceIndices[start + 2])]
+            )
 
-            let footprint = triangle.map { SIMD2($0.position.x, $0.position.z) }
-            var lower = footprint[0]
-            var upper = footprint[0]
-            for point in footprint.dropFirst() {
-                lower = simd_min(lower, point)
-                upper = simd_max(upper, point)
-            }
+            let a = SIMD2(triangle.0.position.x, triangle.0.position.z)
+            let b = SIMD2(triangle.1.position.x, triangle.1.position.z)
+            let c = SIMD2(triangle.2.position.x, triangle.2.position.z)
+            let lower = simd_min(a, simd_min(b, c))
+            let upper = simd_max(a, simd_max(b, c))
 
             // Wholly outside the outline's extent.
             if upper.x < prism.lowerBound.x || lower.x > prism.upperBound.x
@@ -150,14 +150,26 @@ enum Tiles3DClipper {
                 continue
             }
 
-            // Wholly inside: the overwhelmingly common case, kept without touching it.
-            if footprint.allSatisfy(prism.contains) {
-                emit(triangle)
+            // The outline misses this triangle entirely, so it cannot span both sides of it: one
+            // corner decides whether the whole thing is kept or dropped. This is the path almost
+            // every triangle takes — a rim tile is mostly ground the outline has moved past — and
+            // it exists to keep those off the exact clip, which costs 128 half-plane tests to reach
+            // the same answer.
+            if !prism.mayCrossOutline(lower, upper) {
+                guard prism.contains(a) else { continue }
+                emit([triangle.0, triangle.1, triangle.2])
+                continue
+            }
+
+            // Wholly inside, but close enough to the outline that the grid could not tell.
+            if prism.contains(a) && prism.contains(b) && prism.contains(c) {
+                emit([triangle.0, triangle.1, triangle.2])
                 continue
             }
 
             for piece in prism.pieces(overlapping: lower, upper) {
-                let polygon = clip(triangle: triangle, against: piece)
+                let polygon = clip(triangle: triangle, against: piece, scratch: &scratch)
+                guard !polygon.isEmpty else { continue }
                 // Only the clipped path can produce a cut. A triangle kept whole was never sliced,
                 // and the outline is tested rather than the piece so that the interior splits a
                 // concave outline is broken into do not become walls through the middle.
@@ -196,49 +208,86 @@ enum Tiles3DClipper {
         }
     }
 
-    /// Clips a polygon against one convex piece's vertical planes.
+    /// Buffers reused across every triangle of a mesh part.
+    ///
+    /// Sutherland-Hodgman is written as "read the polygon, write a new one" per plane, and a
+    /// circular outline is a 128-gon — so the obvious implementation heap-allocates 128 times per
+    /// triangle, which on a tile of a few thousand triangles is where the entire cost of a pan step
+    /// turned out to live. These are allocated once per mesh part and reused.
+    private struct Scratch {
+        var polygon: [Vertex] = []
+        var next: [Vertex] = []
+        var sides: [Float] = []
+    }
+
+    /// Clips a triangle against one convex piece's vertical planes.
     ///
     /// The inside test uses only X and Z, since the planes are vertical, but interpolation runs over
     /// the full vertex so height, shading, and texture survive the cut.
-    private static func clip(triangle: [Vertex], against piece: BoundaryPrism.Piece) -> [Vertex] {
-        var output = triangle
+    ///
+    /// Each plane is classified before it is applied, which is what makes a many-sided outline
+    /// affordable. A triangle is small next to the outline, so it lies wholly inside almost every
+    /// one of the 128 half-planes, and clipping against those is the identity — worth detecting for
+    /// the cost of three dot products rather than paying for a full rewrite of the polygon. The
+    /// converse ends the work outright: a triangle wholly outside any *one* plane of a convex region
+    /// is outside the region, which is what a straddling tile's exterior triangles hit. Before this,
+    /// they walked every remaining plane to arrive at the same answer.
+    private static func clip(
+        triangle: (Vertex, Vertex, Vertex),
+        against piece: BoundaryPrism.Piece,
+        scratch: inout Scratch
+    ) -> [Vertex] {
+        scratch.polygon.removeAll(keepingCapacity: true)
+        scratch.polygon.append(triangle.0)
+        scratch.polygon.append(triangle.1)
+        scratch.polygon.append(triangle.2)
 
         for edge in piece.edges {
-            guard output.count >= 3 else { return [] }
             let direction = edge.b - edge.a
 
-            func side(_ vertex: Vertex) -> Float {
-                let point = SIMD2(vertex.position.x, vertex.position.z)
-                return direction.x * (point.y - edge.a.y) - direction.y * (point.x - edge.a.x)
+            scratch.sides.removeAll(keepingCapacity: true)
+            var anyInside = false
+            var anyOutside = false
+            for vertex in scratch.polygon {
+                let side = direction.x * (vertex.position.z - edge.a.y)
+                    - direction.y * (vertex.position.x - edge.a.x)
+                scratch.sides.append(side)
+                if side <= 0 { anyInside = true } else { anyOutside = true }
             }
 
-            let input = output
-            output = []
-            output.reserveCapacity(input.count + 1)
+            if !anyOutside { continue }
+            if !anyInside { return [] }
 
-            var previous = input[input.count - 1]
-            var previousSide = side(previous)
+            scratch.next.removeAll(keepingCapacity: true)
+            scratch.next.reserveCapacity(scratch.polygon.count + 1)
 
-            for current in input {
-                let currentSide = side(current)
+            var previous = scratch.polygon[scratch.polygon.count - 1]
+            var previousSide = scratch.sides[scratch.sides.count - 1]
+
+            for index in scratch.polygon.indices {
+                let current = scratch.polygon[index]
+                let currentSide = scratch.sides[index]
                 let currentInside = currentSide <= 0
                 let previousInside = previousSide <= 0
 
                 if currentInside {
                     if !previousInside {
-                        output.append(crossing(previous, current, previousSide, currentSide))
+                        scratch.next.append(crossing(previous, current, previousSide, currentSide))
                     }
-                    output.append(current)
+                    scratch.next.append(current)
                 } else if previousInside {
-                    output.append(crossing(previous, current, previousSide, currentSide))
+                    scratch.next.append(crossing(previous, current, previousSide, currentSide))
                 }
 
                 previous = current
                 previousSide = currentSide
             }
+
+            swap(&scratch.polygon, &scratch.next)
+            if scratch.polygon.count < 3 { return [] }
         }
 
-        return output.count >= 3 ? output : []
+        return scratch.polygon.count >= 3 ? scratch.polygon : []
     }
 
     private static func crossing(

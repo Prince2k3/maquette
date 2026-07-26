@@ -325,9 +325,13 @@ public class Tiles3DEntity: Entity {
     /// the model, so every tile the outline's edge now crosses has to be cut somewhere it was not
     /// cut before — and the cut is what discarded the geometry needed to do it, which is why the
     /// pre-clip geometry is retained. Interior and exterior tiles are untouched, so the cost tracks
-    /// the rim rather than the model: measured on downtown San Francisco at 700 m, 165–196 rim tiles
-    /// out of ~650, taking 169–925 ms on the main actor. That is a stepped jump, not a drag. Treat
-    /// this as a discrete move rather than something to drive every frame.
+    /// the rim rather than the model: measured on downtown San Francisco at 700 m, 153–185 rim tiles
+    /// out of ~700, taking 175–211 ms on the main actor in a release build. That is a stepped jump,
+    /// not a drag. Treat this as a discrete move rather than something to drive every frame.
+    ///
+    /// A debug build is another matter entirely — the same step measures 2.3–4.1 s there, because
+    /// the clip is arithmetic in a tight loop and unoptimised Swift bounds-checks and retains its way
+    /// through all of it. Panning is only usable in a release build; measure it in one too.
     public func setPanOffset(_ offset: SIMD2<Float>) {
         guard canPan, offset != panOffset else { return }
         panOffset = offset

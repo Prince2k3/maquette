@@ -40,7 +40,8 @@ struct TerrainRollerTests {
     private func roller(
         identifier: String,
         provider: (any TileProvider)? = nil,
-        margin: Int = 1
+        margin: Int = 1,
+        chunkMax: SIMD2<Float> = SIMD2(1, 1)
     ) -> TerrainRoller {
         let tiles = provider ?? IdentifyingTileProvider(providerIdentifier: identifier, size: 8)
         return TerrainRoller(
@@ -49,7 +50,7 @@ struct TerrainRollerTests {
             elevationScale: 1,
             baselineElevation: 0,
             chunkMin: SIMD2(0, 0),
-            chunkMax: SIMD2(1, 1),
+            chunkMax: chunkMax,
             marginTiles: SIMD2(margin, margin),
             terrainProvider: tiles,
             satelliteProvider: IdentifyingTileProvider(
@@ -119,6 +120,100 @@ struct TerrainRollerTests {
         #expect(east.maxX == 110)
     }
 
+    // MARK: - Pan Limits
+
+    @Test("The pan stops where the resident tiles do")
+    func panLimitsKeepTheChunkOnResidentGround() {
+        let roller = roller(identifier: "roll-limits")
+        let window = TerrainTileWindow(minX: 7, minY: 7, maxX: 10, maxY: 10)
+        let limits = roller.panLimits(within: window)
+
+        // The chunk spans one tile-width; the window spans four, so there are three to slide in.
+        #expect(limits.low == SIMD2<Float>(-1, -1))
+        #expect(limits.high == SIMD2<Float>(2, 2))
+
+        // At either extreme the chunk still sits entirely on tiles the window holds.
+        for offset in [limits.low, limits.high] {
+            let west = roller.anchor.tilePoint(
+                forDioramaX: Double(offset.x), z: Double(offset.y)
+            )
+            let east = roller.anchor.tilePoint(
+                forDioramaX: Double(1 + offset.x), z: Double(1 + offset.y)
+            )
+            #expect(west.x >= Double(window.minX))
+            #expect(west.y >= Double(window.minY))
+            #expect(east.x <= Double(window.maxX + 1))
+            #expect(east.y <= Double(window.maxY + 1))
+        }
+
+        // A step past the extreme hangs the chunk off the edge, which is what the clamp exists to
+        // prevent: sampling out there smears the border and then snaps when the roll lands.
+        let overhang = roller.anchor.tilePoint(
+            forDioramaX: Double(1 + limits.high.x + 0.5), z: 0
+        )
+        #expect(overhang.x > Double(window.maxX + 1))
+    }
+
+    @Test("A window narrower than the chunk pins it rather than inverting the range")
+    func panLimitsCollapseOnATooSmallWindow() {
+        // Three tiles of chunk over one tile of ground: no offset puts it entirely on resident
+        // tiles, so the range would come back inverted if it were taken at face value.
+        let roller = roller(identifier: "roll-narrow", chunkMax: SIMD2(3, 3))
+        let limits = roller.panLimits(within: TerrainTileWindow(minX: 8, minY: 8, maxX: 8, maxY: 8))
+
+        #expect(limits.low.x <= limits.high.x)
+        #expect(limits.low.y <= limits.high.y)
+        // Pinned to the middle of what there is: the chunk's centre over the tile's centre.
+        #expect(limits.low == limits.high)
+        #expect(limits.low == SIMD2<Float>(-1, -1))
+    }
+
+    @Test("Clamping stops the pan at the frontier and lets it come back")
+    func clampHoldsTheChunkOnResidentGround() {
+        let roller = roller(identifier: "roll-clamp")
+        let window = TerrainTileWindow(minX: 7, minY: 7, maxX: 10, maxY: 10)
+
+        // Inside the range, the target is taken as given.
+        #expect(roller.clamp(SIMD2(0.5, 0.5), from: .zero, within: window) == SIMD2<Float>(0.5, 0.5))
+
+        // Past it, the pan stops at the edge of the tiles rather than sampling off them.
+        #expect(roller.clamp(SIMD2(9, 9), from: SIMD2(1.9, 1.9), within: window) == SIMD2<Float>(2, 2))
+        #expect(roller.clamp(SIMD2(-9, -9), from: SIMD2(-0.9, -0.9), within: window) == SIMD2<Float>(-1, -1))
+    }
+
+    @Test("A window that no longer covers the chunk does not move it")
+    func clampNeverRelocatesTheGroundAlreadyShown() {
+        // The offset a drag reached, against a window that does not reach it — which is what a
+        // failed tile fetch or a drag that outran the roll leaves behind. Clamping to the bare
+        // limits would haul the chunk back to 2, and the ground would jump on the next touch.
+        let roller = roller(identifier: "roll-stranded")
+        let window = TerrainTileWindow(minX: 7, minY: 7, maxX: 10, maxY: 10)
+        let stranded = SIMD2<Float>(5, 5)
+        #expect(roller.panLimits(within: window).high == SIMD2<Float>(2, 2))
+
+        // Standing still stays still, and so does the smallest movement outward.
+        #expect(roller.clamp(stranded, from: stranded, within: window) == stranded)
+        #expect(roller.clamp(SIMD2(5.001, 5.001), from: stranded, within: window) == stranded)
+
+        // Coming back toward the resident ground is never obstructed.
+        #expect(roller.clamp(SIMD2(4, 4), from: stranded, within: window) == SIMD2<Float>(4, 4))
+        #expect(roller.clamp(SIMD2(-9, -9), from: stranded, within: window) == SIMD2<Float>(-1, -1))
+    }
+
+    @Test("A window narrower than the chunk pins the pan without teleporting it")
+    func clampOnATooSmallWindowDoesNotTeleport() {
+        // The collapse case: the limits are a single point, so an absolute clamp would drop the
+        // chunk onto it from wherever it happened to be.
+        let roller = roller(identifier: "roll-narrow-clamp", chunkMax: SIMD2(3, 3))
+        let window = TerrainTileWindow(minX: 8, minY: 8, maxX: 8, maxY: 8)
+        let current = SIMD2<Float>(0.75, 0.75)
+        #expect(roller.panLimits(within: window).low == SIMD2<Float>(-1, -1))
+
+        #expect(roller.clamp(current, from: current, within: window) == current)
+        #expect(roller.clamp(SIMD2(0.8, 0.8), from: current, within: window) == current)
+        #expect(roller.clamp(SIMD2(0.5, 0.5), from: current, within: window) == SIMD2<Float>(0.5, 0.5))
+    }
+
     // MARK: - Loading
 
     @Test("Rolling in more ground does not move the ground already there")
@@ -149,6 +244,99 @@ struct TerrainRollerTests {
                 )
             }
         }
+    }
+
+    @Test("Rolling in more ground does not move the imagery already there")
+    func rollingDoesNotShiftTheImagery() async throws {
+        // The elevation invariant above has a twin that is easy to forget, because it is the one
+        // the eye actually reads: a diorama point must keep naming the same *pixel*, not merely the
+        // same height. Texture coordinates are window-relative — 0...1 across whatever mosaic is
+        // resident — so the number legitimately changes on every roll. What must not change is the
+        // ground it lands on, which is the coordinate scaled back into absolute tile space.
+        let roller = roller(identifier: "roll-imagery-stable")
+
+        let narrow = try #require(
+            await roller.load(window: roller.window(forPanOffset: .zero), have: TerrainTileSet())
+        )
+        // Off-centre and a different *shape* (4x4 becomes 5x5), because the shape is the divisor.
+        let rolled = try #require(
+            await roller.load(
+                window: TerrainTileWindow(minX: 8, minY: 6, maxX: 12, maxY: 10),
+                have: narrow.tiles
+            )
+        )
+
+        for x in [Float(0.25), 0.5, 1.5, 1.75] {
+            for z in [Float(0.25), 0.5, 1.5, 1.75] {
+                let before = Self.sampledTilePoint(of: narrow.heightField, atX: x, z: z)
+                let after = Self.sampledTilePoint(of: rolled.heightField, atX: x, z: z)
+                #expect(
+                    abs(before.x - after.x) < 1e-4 && abs(before.y - after.y) < 1e-4,
+                    "imagery moved at (\(x), \(z)): \(before) became \(after)"
+                )
+            }
+        }
+    }
+
+    @Test("A point's imagery comes from the same tile as its elevation")
+    func imageryNamesTheSameTileAsElevation() async throws {
+        // The two halves of the surface are sampled through different conventions and only agree by
+        // construction: the height field indexes grids from the north, while RealityKit reads a
+        // texture from the bottom of the image up. A mosaic drawn north-up is therefore sampled
+        // upside down unless V is flipped, and the mirror is nearly invisible on its own — aerial
+        // imagery still reads as aerial imagery — which is the same trap `GLBParser` documents.
+        //
+        // It stops being invisible the moment the window's *rows* move. The mirror reflects about
+        // the window's middle row, so shifting the window one tile north moves the ground the
+        // texture samples two tiles south. Columns are unaffected, which is exactly why panning
+        // east for five kilometres looked perfect and panning north jumped.
+        let roller = roller(identifier: "roll-uv-tile")
+        let roll = try #require(
+            await roller.load(window: roller.window(forPanOffset: .zero), have: TerrainTileSet())
+        )
+
+        for x in [Float(0.5), 1.5] {
+            for z in [Float(0.5), 1.5] {
+                // The provider encodes the tile it came from as `x * 100 + y`.
+                let elevation = Int(roll.heightField.rawElevation(atX: x, z: z).rounded())
+                let elevationTile = (x: elevation / 100, y: elevation % 100)
+                let imageryTile = Self.sampledTile(of: roll.heightField, atX: x, z: z)
+                #expect(
+                    imageryTile == elevationTile,
+                    "at (\(x), \(z)) imagery reads tile \(imageryTile) but the ground is \(elevationTile)"
+                )
+            }
+        }
+    }
+
+    /// The ground, in absolute tile coordinates, whose pixels RealityKit actually draws at a
+    /// diorama point.
+    ///
+    /// A texture coordinate is relative to the resident mosaic, so recovering the ground means
+    /// undoing both the window — scale by its size, shift by its corner — and the vertical
+    /// convention: the mosaic is composited north-up while RealityKit's texture origin is the
+    /// *bottom* left, so V counts up from the image's southern edge.
+    private static func sampledTilePoint(
+        of field: TerrainHeightField,
+        atX x: Float,
+        z: Float
+    ) -> SIMD2<Float> {
+        let minTileX = field.tilePositions.map(\.x).min() ?? 0
+        let minTileY = field.tilePositions.map(\.y).min() ?? 0
+        let wide = Float((field.tilePositions.map(\.x).max() ?? 0) - minTileX + 1)
+        let tall = Float((field.tilePositions.map(\.y).max() ?? 0) - minTileY + 1)
+        let uv = field.textureCoordinate(atX: x, z: z)
+        return SIMD2(uv.x * wide + Float(minTileX), (1 - uv.y) * tall + Float(minTileY))
+    }
+
+    /// The tile whose pixels RealityKit actually draws at a diorama point.
+    private static func sampledTile(
+        of field: TerrainHeightField,
+        atX x: Float,
+        z: Float
+    ) -> (x: Int, y: Int) {
+        let point = sampledTilePoint(of: field, atX: x, z: z)
+        return (x: Int(point.x.rounded(.down)), y: Int(point.y.rounded(.down)))
     }
 
     @Test("A rolled surface reads the tiles the window asked for")
@@ -201,6 +389,36 @@ struct TerrainRollerTests {
         #expect(roll.window == TerrainTileWindow(minX: 7, minY: 7, maxX: 9, maxY: 10))
         #expect(roll.tiles.grids[TileCoordinate(x: 10, y: 8)] == nil)
         #expect(abs(roll.heightField.rawElevation(atX: 0.5, z: 0.5) - 808) < 1)
+    }
+
+    @Test("A tile that fails inside the window leaves a hole rather than shrinking it")
+    func failedInteriorTilesLeaveAHole() async throws {
+        // The edge case above shrinks the window, which is harmless. A column that refuses from the
+        // middle cannot shrink anything: the bounding box still spans it, so the mosaic keeps a slot
+        // nothing was ever drawn into.
+        let failing = FailingColumnProvider(
+            providerIdentifier: "roll-hole-terrain",
+            size: 8,
+            failingX: 8
+        )
+        let roller = roller(identifier: "roll-hole", provider: failing)
+        let roll = try #require(
+            await roller.load(window: roller.window(forPanOffset: .zero), have: TerrainTileSet())
+        )
+
+        #expect(roll.window == TerrainTileWindow(minX: 7, minY: 7, maxX: 10, maxY: 10))
+        #expect(roll.tiles.grids[TileCoordinate(x: 8, y: 8)] == nil)
+
+        // Tile 8 is diorama X 0...1, so the chunk sits directly over the gap. Elevation there falls
+        // back to the field's minimum while its neighbours carry real ground.
+        let inHole = roll.heightField.rawElevation(atX: 0.5, z: 0.5)
+        let beside = roll.heightField.rawElevation(atX: 1.5, z: 0.5)
+        #expect(inHole < beside)
+
+        // The imagery has the same gap, and nothing was drawn into it.
+        #expect(roll.tiles.imagery[TileCoordinate(x: 8, y: 8)] == nil)
+        let mosaic = try #require(roll.imagery)
+        #expect(mosaic.width == 4 * 8)
     }
 
     // MARK: - Fixtures

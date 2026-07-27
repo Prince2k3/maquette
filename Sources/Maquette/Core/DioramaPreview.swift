@@ -1,4 +1,5 @@
 import CoreLocation
+import Foundation
 import SwiftUI
 
 // MARK: - Previews
@@ -198,24 +199,42 @@ private struct RoutePreviewDemoView: View {
 //     .frame(minWidth: 400, minHeight: 400)
 // }
 
-// Uncomment and add your Cesium ion access token to test Cesium 3D tiles:
+/// A credential supplied to a preview through the scheme's environment rather than through source.
+///
+/// Previews of the photorealistic path need a provider credential, and a credential written into a
+/// source file is published the moment it is committed — deleting it later does not help, because
+/// the commit that added it keeps serving it. Xcode passes the active scheme's environment through
+/// to previews, so `Product ▸ Scheme ▸ Edit Scheme… ▸ Run ▸ Arguments ▸ Environment Variables` is
+/// enough to make these run without putting anything in the repository.
+private func previewCredential(_ name: String) -> String? {
+    let value = ProcessInfo.processInfo.environment[name]
+    return (value?.isEmpty ?? true) ? nil : value
+}
+
+// Set MAQUETTE_CESIUM_ION_TOKEN in the scheme's environment to run this preview.
 // 37.7749° N, 122.4194° W
- #Preview("Cesium Ion 3D Tiles — Grand Canyon") {
-     DioramaView(
-         configuration: DioramaConfiguration(
-             center: CLLocationCoordinate2D(latitude: 37.773972, longitude: -122.431297),
-             radiusMeters: 5000,
-             presentation: .photorealistic(
-                 provider: CesiumIonTiles3DProvider(
-                     accessToken: "***REMOVED-CESIUM-ION-TOKEN***",
-                     assetId: 2275207
-                 ),
-                 style: .standard
-             )
-         )
-     )
-     .frame(minWidth: 400, minHeight: 400)
- }
+#Preview("Cesium Ion 3D Tiles — San Francisco") {
+    if let token = previewCredential("MAQUETTE_CESIUM_ION_TOKEN") {
+        DioramaView(
+            configuration: DioramaConfiguration(
+                center: CLLocationCoordinate2D(latitude: 37.773972, longitude: -122.431297),
+                radiusMeters: 5000,
+                presentation: .photorealistic(
+                    provider: CesiumIonTiles3DProvider(
+                        accessToken: token,
+                        assetId: 2275207
+                    ),
+                    style: .standard
+                )
+            )
+        )
+        .frame(minWidth: 400, minHeight: 400)
+    } else {
+        Text("Set MAQUETTE_CESIUM_ION_TOKEN in the scheme's environment to run this preview.")
+            .padding()
+            .frame(minWidth: 400, minHeight: 400)
+    }
+}
 
 let coordinates: [CLLocationCoordinate2D] = [
     .init(latitude: 36.05293, longitude: -112.08394),

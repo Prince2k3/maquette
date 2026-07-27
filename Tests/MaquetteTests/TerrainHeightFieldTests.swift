@@ -231,13 +231,18 @@ struct TerrainHeightFieldTests {
     func textureCoordinatesFollowResidency() {
         // Imagery is composited over the resident tiles, so its 0...1 space has to track them —
         // otherwise a rolling fetch slides the imagery off the terrain it belongs to.
+        //
+        // V runs the other way from Z. Rows count southward from the window's northern tile while
+        // RealityKit reads a texture from the bottom of the image up, so the north-west corner of
+        // the mosaic is (0, 1) and the south-east is (1, 0). This test used to assert the corners
+        // straight through, which is what let the imagery ship mirrored north–south.
         let field = anchoredField(
             tiles: (100...101).flatMap { x in (100...101).map { (x: x, y: $0) } },
             anchor: testAnchor
         )
 
-        #expect(simd_distance(field.textureCoordinate(atX: 0, z: 0), SIMD2(0, 0)) < 1e-6)
-        #expect(simd_distance(field.textureCoordinate(atX: 2, z: 2), SIMD2(1, 1)) < 1e-6)
+        #expect(simd_distance(field.textureCoordinate(atX: 0, z: 0), SIMD2(0, 1)) < 1e-6)
+        #expect(simd_distance(field.textureCoordinate(atX: 2, z: 2), SIMD2(1, 0)) < 1e-6)
         #expect(simd_distance(field.textureCoordinate(atX: 1, z: 1), SIMD2(0.5, 0.5)) < 1e-6)
     }
 }

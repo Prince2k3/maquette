@@ -101,8 +101,14 @@ public struct DioramaConfiguration: Sendable {
     ///
     /// On a terrain chunk this is a *margin*, not a limit: panning past it rolls new tiles in and
     /// drops the ones left behind, so the ground runs as far as the user cares to drag it. What the
-    /// margin buys is that an ordinary drag is served from tiles already in hand rather than
-    /// waiting on the network — a larger value fetches more up front and rolls less often.
+    /// margin buys is headroom — a drag is served from tiles already in hand until it reaches the
+    /// edge of them, and only then does it wait. A larger value fetches more up front, keeps a
+    /// wider ring as it rolls, and so waits less often.
+    ///
+    /// It does not buy an unbounded drag. On the built-in Pan preset the ring works out at one tile,
+    /// about 0.36 diorama meters, while a brisk flick moves the offset further than that — so a
+    /// flick can still reach the frontier and pause there. It resumes from where it stopped rather
+    /// than jumping ahead.
     ///
     /// On a photorealistic model it is still a hard limit. That ground is streamed and cut away
     /// like everything else outside the outline, and panning re-cuts it — which is the more

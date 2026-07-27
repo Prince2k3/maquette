@@ -1,6 +1,9 @@
 import CoreGraphics
 import Foundation
+import os
 import simd
+
+private let rollerLogger = Logger(subsystem: "com.maquette", category: "TerrainRoller")
 
 /// A rectangle of tiles, in absolute tile coordinates at a single zoom.
 ///
@@ -132,6 +135,60 @@ struct TerrainRoller: Sendable {
         return window
     }
 
+    /// The furthest the terrain can slide in each direction while the chunk still sits entirely on
+    /// the tiles `window` holds.
+    ///
+    /// Sampling past the resident tiles clamps to their edge, so an offset that runs ahead of the
+    /// fetch draws a smeared border and then snaps to real ground when the roll lands. That snap is
+    /// the whole discontinuity: measured on the Pan preset, terrain at points the previous field did
+    /// not hold moved by up to 448 m in one frame, while every point it *did* hold moved by under a
+    /// millimetre. Holding the offset at the frontier instead means the chunk only ever shows ground
+    /// it has, and carries on from where it stopped once more arrives.
+    func panLimits(within window: TerrainTileWindow) -> (low: SIMD2<Float>, high: SIMD2<Float>) {
+        let west = anchor.dioramaPoint(
+            forTilePoint: SIMD2(Double(window.minX), Double(window.minY))
+        )
+        let east = anchor.dioramaPoint(
+            forTilePoint: SIMD2(Double(window.maxX + 1), Double(window.maxY + 1))
+        )
+        var low = SIMD2(Float(west.x), Float(west.y)) - chunkMin
+        var high = SIMD2(Float(east.x), Float(east.y)) - chunkMax
+
+        // A window narrower than the chunk cannot hold it at any offset. Pin the chunk to the middle
+        // of what there is rather than handing back an inverted range.
+        if low.x > high.x {
+            let middle = (low.x + high.x) / 2
+            low.x = middle
+            high.x = middle
+        }
+        if low.y > high.y {
+            let middle = (low.y + high.y) / 2
+            low.y = middle
+            high.y = middle
+        }
+        return (low, high)
+    }
+
+    /// Clamps a target offset to the ground `window` holds, without relocating ground the chunk is
+    /// already showing.
+    ///
+    /// The clamp is there to refuse movement onto tiles that are not in hand. That is not the same
+    /// as pulling the chunk back to where it would have been allowed to stop, and the two come
+    /// apart whenever the window fails to cover the offset already in effect — a tile that did not
+    /// fetch narrows the loaded window, and a drag that outruns the roll leaves the offset beyond
+    /// the window the roll was issued for. Clamping to the bare limits then moves the terrain on
+    /// the next touch however small it is, which reads as the ground jumping somewhere else of its
+    /// own accord. Admitting the current offset into the range leaves it where it is and only
+    /// forbids going further out; coming back is unaffected.
+    func clamp(
+        _ target: SIMD2<Float>,
+        from current: SIMD2<Float>,
+        within window: TerrainTileWindow
+    ) -> SIMD2<Float> {
+        let limits = panLimits(within: window)
+        return simd_clamp(target, simd_min(limits.low, current), simd_max(limits.high, current))
+    }
+
     /// Fetches whatever `window` needs that `have` does not, and builds the surface from the result.
     ///
     /// Returns `nil` only if nothing at all could be loaded, which leaves the caller on the ground
@@ -154,6 +211,19 @@ struct TerrainRoller: Sendable {
         }
 
         guard let loaded = TerrainTileWindow.covering(set.grids.keys) else { return nil }
+
+        // A tile absent from the *edge* of the window only shrinks it, which is harmless. One absent
+        // from inside it cannot shrink anything, so it stays as a gap in both the mosaic and the
+        // height field.
+        let holes = loaded.tiles.filter { set.grids[$0] == nil }
+        if !holes.isEmpty {
+            rollerLogger.debug(
+                """
+                Rolled window \(loaded.minX)...\(loaded.maxX), \(loaded.minY)...\(loaded.maxY) \
+                has \(holes.count) tile(s) missing from inside it
+                """
+            )
+        }
 
         // Row-major, so the stitcher and the composite walk the mosaic the same way.
         let ordered = set.grids.keys.sorted { $0.y == $1.y ? $0.x < $1.x : $0.y < $1.y }
@@ -187,6 +257,21 @@ struct TerrainRoller: Sendable {
             tilesWide: loaded.tilesWide,
             tilesTall: loaded.tilesTall
         )
+
+        // The mosaic takes its per-tile pixel size from whichever tile happens to be first, so a
+        // provider that answers at mixed resolutions would rescale every cell the moment the
+        // window's corner moves onto a differently-sized tile. Say the resolution out loud rather
+        // than inferring it from how the ground looks.
+        if let imagery {
+            rollerLogger.debug(
+                """
+                Composited \(imagery.width)x\(imagery.height) over \
+                \(loaded.tilesWide)x\(loaded.tilesTall) tiles \
+                (\(imagery.width / max(loaded.tilesWide, 1)) px/tile) \
+                from \(imageryTiles.count) image(s)
+                """
+            )
+        }
 
         return TerrainRoll(tiles: set, window: loaded, heightField: heightField, imagery: imagery)
     }
@@ -255,7 +340,13 @@ struct TerrainRoller: Sendable {
             return (tile: tile, grid: grid, imagery: imagery)
         } catch {
             // A tile that fails simply stays absent: the height field clamps across the gap and the
-            // next roll asks for it again.
+            // next roll asks for it again. Absent is not free, though — a tile missing from the
+            // middle of a window leaves the mosaic with a cell nothing was drawn into and the height
+            // field with a slot that reads as its minimum, so this is worth saying out loud rather
+            // than inferring from a patch on screen.
+            rollerLogger.debug(
+                "Tile \(tile.x), \(tile.y) at zoom \(self.zoom) did not load: \(error.localizedDescription)"
+            )
             return nil
         }
     }

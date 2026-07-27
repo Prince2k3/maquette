@@ -417,8 +417,8 @@ public final class DioramaStore {
     /// How far the terrain can slide before it reaches ground that was not fetched up front.
     ///
     /// A terrain chunk rolls past this rather than stopping at it, so it reads as the margin held
-    /// in reserve rather than a limit. It still bounds a photorealistic model, which has only what
-    /// it streamed.
+    /// in reserve rather than a limit — the frontier moves with the tiles. It still bounds a
+    /// photorealistic model, which has only what it streamed.
     public var maximumPanOffset: SIMD2<Float> {
         configuration.maximumPanOffset
     }
@@ -435,20 +435,56 @@ public final class DioramaStore {
     /// The chunk keeps its shape and position; only the ground beneath it moves. Markers and
     /// polylines are repositioned so they stay attached to the terrain they sit on.
     ///
-    /// A terrain chunk rolls new tiles in as the offset grows, so nothing bounds it — pan far
-    /// enough and the ground under the chunk is somewhere else entirely. A photorealistic model
-    /// still has only what it streamed, so that path stays clamped to its fetched region.
+    /// A terrain chunk rolls new tiles in as the offset grows, so nothing bounds it in the long run
+    /// — pan far enough and the ground under the chunk is somewhere else entirely. What does bound
+    /// it moment to moment is the ground actually in hand: the offset stops at the edge of the
+    /// resident tiles and moves again as soon as more land. Letting it run ahead instead smears the
+    /// border and then snaps it into place when the roll finishes, which is a jump proportional to
+    /// however long the fetch took. A photorealistic model has only what it streamed, so that path
+    /// stays clamped to its fetched region.
+    ///
+    /// That bound only ever refuses movement; it never produces any. Nothing here moves the terrain
+    /// except the caller's own offset, which is what keeps the ground still once the finger lifts.
     ///
     /// - Parameter offset: The target offset in diorama meters.
     public func setPanOffset(_ offset: SIMD2<Float>) {
         guard configuration.panRange > 0 else { return }
 
         let target: SIMD2<Float>
-        if rolling != nil {
-            target = offset
+        if let state = rolling {
+            target = state.roller.clamp(offset, from: panOffset, within: state.window)
+
+            // The chunk standing outside its own limits is the case an absolute clamp turns into a
+            // jump, so it is worth naming when it happens rather than inferring it after the fact.
+            let limits = state.roller.panLimits(within: state.window)
+            let current = panOffset
+            if simd_clamp(current, limits.low, limits.high) != current {
+                logger.debug(
+                    """
+                    Pan offset is outside the loaded window: at \
+                    \(current.x, format: .fixed(precision: 4)), \
+                    \(current.y, format: .fixed(precision: 4)) against \
+                    \(limits.low.x, format: .fixed(precision: 4))...\
+                    \(limits.high.x, format: .fixed(precision: 4)), \
+                    \(limits.low.y, format: .fixed(precision: 4))...\
+                    \(limits.high.y, format: .fixed(precision: 4)); holding rather than pulling back
+                    """
+                )
+            }
         } else {
             let limit = configuration.maximumPanOffset
             target = simd_clamp(offset, -limit, limit)
+        }
+        // The frontier is invisible on screen — the ground simply stops following the finger — so
+        // it is worth saying out loud which of the two is happening when a pan feels wrong.
+        if target != offset {
+            logger.debug(
+                """
+                Pan held at the frontier: asked \(offset.x, format: .fixed(precision: 4)), \
+                \(offset.y, format: .fixed(precision: 4)); gave \
+                \(target.x, format: .fixed(precision: 4)), \(target.y, format: .fixed(precision: 4))
+                """
+            )
         }
         guard target != panOffset else { return }
 
@@ -475,12 +511,14 @@ public final class DioramaStore {
     private var rolling: TerrainRollState?
     private var rollTask: Task<Void, Never>?
 
-    /// Fetches more ground if the chunk has panned past what is loaded.
+    /// Fetches more ground once the chunk comes within the margin ring of what is loaded.
     ///
-    /// Sampling past the resident tiles clamps to their edge rather than failing, so the pan itself
-    /// never waits on this: the gesture stays smooth and the smeared border is replaced when the
-    /// tiles land. One roll runs at a time and re-checks the offset when it finishes, because the
-    /// offset it started from is stale by then.
+    /// This runs ahead of the frontier rather than at it: the window a pan offset requires is the
+    /// chunk's footprint *plus* the margin, so the fetch starts while there is still ground to slide
+    /// onto and the pan usually never notices. When a drag does outrun it the offset holds at the
+    /// frontier instead of smearing, so the cost is a pause rather than a jump. One roll runs at a
+    /// time and re-checks the offset when it finishes, because the offset it started from is stale
+    /// by then.
     private func rollTerrainIfNeeded() {
         guard rollTask == nil, let state = rolling else { return }
         guard !state.window.contains(state.roller.window(forPanOffset: panOffset)) else { return }
@@ -497,15 +535,36 @@ public final class DioramaStore {
                 }
                 guard !Task.isCancelled, rolling != nil else { return }
 
+                // The window is what the clamp lets the chunk pan across, so it may only advance
+                // once the ground behind it is actually on screen. Recording a roll that was
+                // declined would licence panning onto terrain nothing ever drew.
+                guard applyRoll(roll) else { return }
                 rolling?.tiles = roll.tiles
                 rolling?.window = roll.window
-                applyRoll(roll)
             }
         }
     }
 
-    private func applyRoll(_ roll: TerrainRoll) {
-        let material = roll.imagery.flatMap { try? DioramaMaterials.satelliteMaterial(from: $0) }
+    /// Swaps in the ground a roll loaded, reporting whether it could.
+    @discardableResult
+    private func applyRoll(_ roll: TerrainRoll) -> Bool {
+        // The ground and its picture share one mapping, so they have to move together. `setTerrain`
+        // resamples the surface's texture coordinates against the new window whether or not a new
+        // texture comes with them, so applying a roll whose imagery did not composite would leave
+        // the previous window's pixels stretched over the new window's coordinates — the picture
+        // visibly sliding off the terrain it belongs to, and staying wrong until some later roll
+        // happened to succeed. Declining the roll keeps the chunk on ground it can still draw.
+        guard let image = roll.imagery,
+              let material = try? DioramaMaterials.satelliteMaterial(from: image) else {
+            logger.debug(
+                """
+                Declined a roll to tiles x \(roll.window.minX)...\(roll.window.maxX), \
+                y \(roll.window.minY)...\(roll.window.maxY): its imagery did not composite
+                """
+            )
+            return false
+        }
+
         (dioramaEntity as? DioramaEntity)?.terrain?.setTerrain(
             roll.heightField,
             surfaceMaterial: material
@@ -520,8 +579,12 @@ public final class DioramaStore {
         applyContent(appliedContent)
 
         logger.debug(
-            "Rolled terrain to tiles x \(roll.window.minX)...\(roll.window.maxX), y \(roll.window.minY)...\(roll.window.maxY)"
+            """
+            Rolled terrain to tiles x \(roll.window.minX)...\(roll.window.maxX), \
+            y \(roll.window.minY)...\(roll.window.maxY)
+            """
         )
+        return true
     }
 
     // MARK: - Content Application

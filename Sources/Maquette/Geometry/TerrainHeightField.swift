@@ -201,12 +201,26 @@ public struct TerrainHeightField: Sendable {
     ///
     /// The imagery mosaic and the elevation mosaic cover the same tiles, so one mapping serves
     /// both — and both follow the anchor, so a rolling fetch moves them together.
+    ///
+    /// **V is flipped.** The two mosaics are indexed from opposite ends: rows count southward from
+    /// the window's northern tile, while RealityKit's texture origin is the bottom left, so V
+    /// counts up from the image's southern edge. `GLBParser` documents the same trap on the
+    /// photorealistic path. Without the flip the imagery is mirrored north–south, which on its own
+    /// is nearly invisible — mirrored aerial imagery still reads as aerial imagery — and stays
+    /// invisible for as long as the window holds still.
+    ///
+    /// It becomes very visible the moment a roll moves the window's *rows*. The mirror reflects
+    /// about the window's middle row, so the ground a point samples is `2·minY + height − row`:
+    /// shifting the window one tile north moves the picture two tiles south, in one frame. Columns
+    /// are exactly invariant, which is why panning east for kilometres looked perfect and panning
+    /// north popped to different ground. `TerrainRollerTests.rollingDoesNotShiftTheImagery`
+    /// measured that jump at a full tile of ground per row rolled, against zero on the X axis.
     @inline(__always)
     public func textureCoordinate(atX x: Float, z: Float) -> SIMD2<Float> {
         let point = windowPoint(atX: x, z: z)
         return SIMD2(
             tilesWideFloat > 0 ? point.x / tilesWideFloat : 0,
-            tilesTallFloat > 0 ? point.y / tilesTallFloat : 0
+            tilesTallFloat > 0 ? 1 - point.y / tilesTallFloat : 0
         )
     }
 

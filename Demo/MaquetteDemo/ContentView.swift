@@ -172,7 +172,9 @@ enum DemoPresets {
         }(),
 
         {
-            // Fetches a region 80% wider than the chunk, so the terrain has room to slide.
+            // Fetches a region 80% wider than the chunk, so the first drag is served without a
+            // fetch. Dragging past that rolls new tiles in rather than stopping, so the Grand
+            // Canyon is only where this one starts.
             var configuration = DioramaConfiguration(
                 center: CLLocationCoordinate2D(latitude: 36.0544, longitude: -112.1401),
                 radiusMeters: 5000,

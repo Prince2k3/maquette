@@ -15,6 +15,49 @@ public enum ContourInterval: Sendable, Equatable {
     case elevationMeters(Double)
 }
 
+/// The plate a hologram is projected from.
+///
+/// A chunk with its earth removed reads as floating, which is the point — but floating from *nowhere*
+/// reads as an object that has simply lost its bottom. The plate gives the projection a source: a
+/// disc below the chunk, ringed with light, with a faint column of light standing between the two.
+///
+/// Every length here is a fraction of the chunk's largest horizontal extent, as everywhere else in
+/// this style, rather than a multiple of how deep the chunk's earth was cut. That distinction is
+/// load-bearing: a chunk styled with no earth at all — `ChunkBaseDepth.absolute(0)`, which the
+/// Surface preset uses — would otherwise put its plate inside its own terrain.
+public struct HologramPedestal: Sendable, Equatable {
+    /// How far the plate sits below the chunk's lowest ground.
+    public var drop: Float
+    /// Opacity of the plate itself, in `0...1`.
+    public var plateOpacity: Float
+    /// How many rings of light are drawn on the plate, working inwards from its rim.
+    public var rings: Int
+    /// Opacity of the column of light between the plate and the chunk, in `0...1`. `0` draws none.
+    ///
+    /// Has to be far lower than it looks like it should be. The column is a closed prism drawn with
+    /// culling off, so every ray through it crosses four surfaces — near wall and far wall, each
+    /// front and back — and what arrives on screen is roughly four times this number. At 0.06 it
+    /// stops reading as light and starts reading as a drum, which is the one thing the effect is
+    /// meant not to have.
+    public var beamOpacity: Float
+
+    /// Creates a pedestal.
+    public init(
+        drop: Float = 0.3,
+        plateOpacity: Float = 0.38,
+        rings: Int = 3,
+        beamOpacity: Float = 0.02
+    ) {
+        self.drop = max(0, drop)
+        self.plateOpacity = max(0, min(1, plateOpacity))
+        self.rings = max(0, rings)
+        self.beamOpacity = max(0, min(1, beamOpacity))
+    }
+
+    /// A plate a little wider than the chunk, three rings, and a faint column. The default.
+    public static let standard = HologramPedestal()
+}
+
 /// The look of the `.hologram` effect.
 ///
 /// Every length here is a fraction of the chunk's largest horizontal extent rather than an absolute
@@ -26,10 +69,12 @@ public struct HologramStyle: Sendable, Equatable {
     public var surfaceColor: Color
     /// Opacity of the chunk's body, in `0...1`.
     ///
-    /// Values below about `0.9` let the far side of the chunk show through, which reads as a
-    /// projected volume — but RealityKit sorts transparent geometry per-object rather than
-    /// per-triangle, so the lower it goes the more the walls and surface visibly fight over which is
-    /// in front. The default keeps the body nearly opaque and lets the lines do the work.
+    /// Low by default, so the contours on the far side of the chunk show through the ground in front
+    /// of them — which is what makes the thing read as projected light rather than as a painted
+    /// object. It is only low because `earthOpacity` is zero: RealityKit sorts transparent geometry
+    /// per-object rather than per-triangle, and with cut walls in the scene a see-through surface
+    /// spends the whole time arguing with them over which is in front. Raise `earthOpacity` and this
+    /// should come back up with it.
     public var surfaceOpacity: Float
     /// Opacity of the chunk's earth mass — its cut walls, its bottom face, and any plinth — in
     /// `0...1`. `0`, the default, removes them.
@@ -57,6 +102,8 @@ public struct HologramStyle: Sendable, Equatable {
     public var glowOpacity: Float
     /// Number of graticule lines per horizontal axis, draped over the terrain. `0` draws none.
     public var graticuleDivisions: Int
+    /// The plate the chunk is projected from, or `nil` to leave it hanging from nothing.
+    public var pedestal: HologramPedestal?
     /// Whether to keep the satellite imagery beneath the effect instead of replacing it with
     /// `surfaceColor`.
     public var showsImagery: Bool
@@ -65,13 +112,14 @@ public struct HologramStyle: Sendable, Equatable {
     public init(
         tint: Color = Color(red: 0.25, green: 0.95, blue: 0.94),
         surfaceColor: Color = Color(red: 0.012, green: 0.055, blue: 0.085),
-        surfaceOpacity: Float = 0.92,
+        surfaceOpacity: Float = 0.3,
         earthOpacity: Float = 0,
         contours: ContourInterval = .automatic(count: 22),
         lineWidth: Float = 0.0035,
         glowWidth: Float = 3.5,
         glowOpacity: Float = 0.18,
         graticuleDivisions: Int = 12,
+        pedestal: HologramPedestal? = .standard,
         showsImagery: Bool = false
     ) {
         self.tint = tint
@@ -83,6 +131,7 @@ public struct HologramStyle: Sendable, Equatable {
         self.glowWidth = max(1, glowWidth)
         self.glowOpacity = max(0, min(1, glowOpacity))
         self.graticuleDivisions = max(0, graticuleDivisions)
+        self.pedestal = pedestal
         self.showsImagery = showsImagery
     }
 

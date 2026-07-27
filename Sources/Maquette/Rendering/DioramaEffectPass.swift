@@ -72,6 +72,9 @@ final class HologramEffectPass: DioramaEffectPass {
     private var glow: HologramLayer?
     private var core: HologramLayer?
     private var graticule: HologramLayer?
+    private var plate: HologramLayer?
+    private var rings: HologramLayer?
+    private var beam: HologramLayer?
 
     /// Reused between refreshes so a pan step does not reallocate the whole line set.
     private var glowMesh = HologramMesh()
@@ -88,6 +91,16 @@ final class HologramEffectPass: DioramaEffectPass {
     /// the eye a frame, so it is thinner, dimmer, and carries no halo of its own.
     private static let graticuleWidthFactor: Float = 0.5
     private static let graticuleOpacity: Float = 0.3
+
+    /// How much wider than the chunk the pedestal's plate is drawn.
+    ///
+    /// Wider on purpose. A plate exactly the chunk's own size is hidden by the chunk from every
+    /// angle above the horizon, which is every angle anyone actually looks from — the projection
+    /// would go back to hanging from nothing for all the geometry it cost.
+    private static let plateScale: Float = 1.10
+
+    /// How far in from the plate's rim the innermost ring is drawn, as a fraction of the plate.
+    private static let innermostRing: Float = 0.55
 
     init(style: HologramStyle) {
         self.style = style
@@ -137,6 +150,7 @@ final class HologramEffectPass: DioramaEffectPass {
         self.graticule = graticule
         self.core = core
 
+        buildPedestal(in: container, context: context)
         refresh(on: root, context: context)
     }
 
@@ -198,6 +212,9 @@ final class HologramEffectPass: DioramaEffectPass {
         core = nil
         glow = nil
         graticule = nil
+        plate = nil
+        rings = nil
+        beam = nil
 
         for entity in hiddenEntities {
             entity.isEnabled = true
@@ -299,6 +316,86 @@ final class HologramEffectPass: DioramaEffectPass {
             let baseline = context.baselineElevation * context.elevationScale
             return .spaced(step, from: lower + baseline, to: upper + baseline)
                 .shifted(by: -baseline)
+        }
+    }
+
+    // MARK: - Pedestal
+
+    /// Builds the plate the projection stands on, and the column of light between the two.
+    ///
+    /// Built once at `apply` rather than on every refresh, because none of it moves: the outline is
+    /// fixed in diorama space and the plate's height is measured off that outline, so a pan slides
+    /// the ground beneath a pedestal that stays exactly where it is. That is the same reason the
+    /// graticule's *spacing* is taken from the boundary — a pedestal that drifted with the terrain
+    /// would read as the projector sliding out from under its own projection.
+    private func buildPedestal(in container: Entity, context: DioramaEffectContext) {
+        guard let pedestal = style.pedestal else { return }
+
+        let extent = max(context.boundary.extent.x, context.boundary.extent.y)
+        // Y = 0 is the region's lowest ground, so the chunk's underside is the plane the drop hangs
+        // from — not the terrain currently on screen, which a pan changes.
+        let plateY = -pedestal.drop * extent
+        let outline = HologramGeometry.scaled(context.boundary.vertices, by: Self.plateScale)
+
+        if pedestal.plateOpacity > 0 {
+            var material = DioramaMaterials.hologramBodyMaterial(
+                color: style.surfaceColor,
+                opacity: pedestal.plateOpacity
+            )
+            // Seen from below as readily as from above once the chunk can be orbited under.
+            material.faceCulling = .none
+
+            let plate = HologramLayer(name: "HologramPlate", material: material)
+            container.addChild(plate.entity)
+            var mesh = HologramMesh()
+            HologramGeometry.addPlate(outline, y: plateY, into: &mesh)
+            plate.update(with: mesh)
+            self.plate = plate
+        }
+
+        if pedestal.rings > 0, style.lineWidth > 0 {
+            let rings = HologramLayer(
+                name: "HologramPedestalRings",
+                material: DioramaMaterials.hologramLineMaterial(color: style.tint, opacity: 1)
+            )
+            container.addChild(rings.entity)
+
+            var segments: [ContourExtractor.Segment] = []
+            for index in 0..<pedestal.rings {
+                let inset = Self.innermostRing * Float(index) / Float(pedestal.rings)
+                segments += HologramGeometry.loop(
+                    HologramGeometry.scaled(outline, by: 1 - inset),
+                    y: plateY
+                )
+            }
+
+            var mesh = HologramMesh()
+            HologramGeometry.addRibbons(
+                segments,
+                width: style.lineWidth * extent,
+                // Clear of the plate by the same margin the contours clear the terrain.
+                yOffset: extent * 0.0008,
+                into: &mesh
+            )
+            rings.update(with: mesh)
+            self.rings = rings
+        }
+
+        if pedestal.beamOpacity > 0 {
+            let beam = HologramLayer(
+                name: "HologramBeam",
+                material: DioramaMaterials.hologramLineMaterial(
+                    color: style.tint,
+                    opacity: pedestal.beamOpacity
+                )
+            )
+            container.addChild(beam.entity)
+            var mesh = HologramMesh()
+            // Rising from the chunk's own footprint rather than the plate's rim, so the column ends
+            // flush with the ground it is projecting instead of flaring past its edge.
+            HologramGeometry.addBeam(context.boundary.vertices, from: plateY, to: 0, into: &mesh)
+            beam.update(with: mesh)
+            self.beam = beam
         }
     }
 

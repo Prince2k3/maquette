@@ -46,8 +46,91 @@ struct HologramMesh {
     }
 }
 
-/// Builds the hologram's drawable pieces: the ribbons that carry every line.
+/// Builds the hologram's drawable pieces: the ribbons that carry every line, and the plate the
+/// projection stands on.
 enum HologramGeometry {
+    /// A closed outline, scaled about the centre of its own bounding box.
+    ///
+    /// The box centre rather than the vertex average, because the average drifts towards whichever
+    /// side of a shape carries more points — a rounded rectangle puts most of its vertices in the
+    /// corners — and a plate that is not concentric with the chunk above it reads as a mistake.
+    static func scaled(_ outline: [SIMD2<Float>], by factor: Float) -> [SIMD2<Float>] {
+        guard !outline.isEmpty else { return [] }
+        var lo = outline[0], hi = outline[0]
+        for point in outline.dropFirst() {
+            lo = simd_min(lo, point)
+            hi = simd_max(hi, point)
+        }
+        let centre = (lo + hi) / 2
+        return outline.map { centre + ($0 - centre) * factor }
+    }
+
+    /// A closed outline as segments at one height, for `addRibbons` to draw as a ring of light.
+    static func loop(_ outline: [SIMD2<Float>], y: Float) -> [ContourExtractor.Segment] {
+        guard outline.count >= 2 else { return [] }
+        return outline.indices.map { index in
+            let a = outline[index]
+            let b = outline[(index + 1) % outline.count]
+            return ContourExtractor.Segment(a: SIMD3(a.x, y, a.y), b: SIMD3(b.x, y, b.y))
+        }
+    }
+
+    /// Fills a closed outline with a flat plate.
+    ///
+    /// Ear clipping rather than a fan, for the same reason the chunk's own clipped cells use it: an
+    /// outline is allowed to be concave, and a fan from one vertex triangulates straight across the
+    /// notch. Each triple is then wound to face up by measuring it, rather than by trusting the
+    /// boundary's winding to have survived being scaled.
+    static func addPlate(_ outline: [SIMD2<Float>], y: Float, into mesh: inout HologramMesh) {
+        guard outline.count >= 3 else { return }
+        let up = SIMD3<Float>(0, 1, 0)
+        let triangles = PolygonClipping.triangulate(outline, minimumArea: 0)
+        guard !triangles.isEmpty else { return }
+
+        var indices: [UInt32] = []
+        indices.reserveCapacity(outline.count)
+        for point in outline {
+            indices.append(mesh.append(position: SIMD3(point.x, y, point.y), normal: up, uv: .zero))
+        }
+
+        for (a, b, c) in triangles {
+            let pa = outline[a], pb = outline[b], pc = outline[c]
+            // The (x, z) plane seen from +Y is left-handed, so a counter-clockwise turn here is a
+            // downward-facing triangle.
+            let turn = (pb.x - pa.x) * (pc.y - pa.y) - (pb.y - pa.y) * (pc.x - pa.x)
+            if turn < 0 {
+                mesh.appendTriangle(indices[a], indices[b], indices[c])
+            } else {
+                mesh.appendTriangle(indices[a], indices[c], indices[b])
+            }
+        }
+    }
+
+    /// Raises a closed outline into a vertical band: the column of light between plate and chunk.
+    static func addBeam(
+        _ outline: [SIMD2<Float>],
+        from lower: Float,
+        to upper: Float,
+        into mesh: inout HologramMesh
+    ) {
+        guard outline.count >= 3, upper > lower else { return }
+
+        for index in outline.indices {
+            let a = outline[index]
+            let b = outline[(index + 1) % outline.count]
+            guard simd_distance(a, b) > 1e-7 else { continue }
+            let normal = DioramaBoundary.outwardNormal(forEdgeFrom: a, to: b)
+
+            let v0 = mesh.append(position: SIMD3(a.x, lower, a.y), normal: normal, uv: SIMD2(0, 0))
+            let v1 = mesh.append(position: SIMD3(b.x, lower, b.y), normal: normal, uv: SIMD2(1, 0))
+            let v2 = mesh.append(position: SIMD3(a.x, upper, a.y), normal: normal, uv: SIMD2(0, 1))
+            let v3 = mesh.append(position: SIMD3(b.x, upper, b.y), normal: normal, uv: SIMD2(1, 1))
+
+            mesh.appendTriangle(v0, v1, v2)
+            mesh.appendTriangle(v1, v3, v2)
+        }
+    }
+
     /// Turns isoline segments into flat ribbons lying just above the surface they came from.
     ///
     /// Each segment becomes its own quad. Segments that meet at a shared endpoint therefore leave a

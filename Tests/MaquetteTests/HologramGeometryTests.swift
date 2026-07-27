@@ -126,6 +126,106 @@ struct HologramGeometryTests {
         #expect(mesh.isEmpty)
         #expect(mesh.vertices.isEmpty)
     }
+
+    // MARK: - Pedestal
+
+    /// A concave outline is the case that separates ear clipping from a fan, and the plate is the
+    /// one piece of the effect that fills an outline rather than tracing it. A fan across the star's
+    /// notches would cover more than the star does, which no vertex count would show.
+    @Test("A concave plate covers its outline's area and no more")
+    func plateCoversAConcaveOutline() {
+        // A five-pointed star, the same outline that surfaced the reflex-vertex notches on screen.
+        let points: [SIMD2<Float>] = (0..<10).map { index in
+            let radius: Float = index.isMultiple(of: 2) ? 0.45 : 0.19
+            let angle = Float(index) / 10 * 2 * .pi - .pi / 2
+            return SIMD2(radius * cos(angle), radius * sin(angle))
+        }
+        let boundary = DioramaBoundary.make(shape: .custom(points: points), extent: SIMD2(1, 1))
+
+        var mesh = HologramMesh()
+        HologramGeometry.addPlate(boundary.vertices, y: -0.3, into: &mesh)
+
+        var covered: Float = 0
+        for (a, b, c) in Self.triangles(of: mesh) {
+            covered += abs(simd_cross(b - a, c - a).y) / 2
+            #expect(abs(a.y + 0.3) < 1e-6)
+        }
+        #expect(abs(covered - PolygonClipping.area(boundary.vertices)) < 1e-4)
+    }
+
+    /// The plate is drawn with culling off so it survives being seen from beneath, which means a
+    /// plate wound face-down would look right and only be wrong. Nothing on screen would say so.
+    @Test("Plate triangles face up")
+    func plateFacesUp() {
+        let boundary = DioramaBoundary.make(shape: .circular, extent: SIMD2(1, 1))
+        var mesh = HologramMesh()
+        HologramGeometry.addPlate(boundary.vertices, y: 0, into: &mesh)
+
+        #expect(!mesh.isEmpty)
+        for (a, b, c) in Self.triangles(of: mesh) {
+            #expect(simd_cross(b - a, c - a).y > 0)
+        }
+    }
+
+    /// Scaling has to leave the plate concentric with the chunk it sits under. Taking the centre
+    /// from the vertices' average instead would drift towards whichever side carries more points.
+    @Test("A scaled outline stays centred on the one it came from")
+    func scalingKeepsTheOutlineConcentric() {
+        let boundary = DioramaBoundary.make(
+            shape: .roundedRectangular(width: 1, depth: 0.6, cornerRadius: 0.2),
+            extent: SIMD2(1, 0.6)
+        )
+        let wider = HologramGeometry.scaled(boundary.vertices, by: 1.16)
+
+        func box(_ points: [SIMD2<Float>]) -> (SIMD2<Float>, SIMD2<Float>) {
+            var lo = points[0], hi = points[0]
+            for point in points.dropFirst() { lo = simd_min(lo, point); hi = simd_max(hi, point) }
+            return ((lo + hi) / 2, hi - lo)
+        }
+
+        let (centre, size) = box(boundary.vertices)
+        let (widerCentre, widerSize) = box(wider)
+        #expect(simd_distance(centre, widerCentre) < 1e-5)
+        #expect(abs(widerSize.x / size.x - 1.16) < 1e-4)
+        #expect(abs(widerSize.y / size.y - 1.16) < 1e-4)
+    }
+
+    /// The beam is a wall, and the library's walls all face away from the interior. Photogrammetry
+    /// aside, a normal taken from the edge's own direction points outward only by luck.
+    @Test("Beam faces spans the gap and points away from the interior")
+    func beamStandsBetweenPlateAndChunk() {
+        let boundary = DioramaBoundary.make(shape: .hexagonal, extent: SIMD2(1, 1))
+        var mesh = HologramMesh()
+        HologramGeometry.addBeam(boundary.vertices, from: -0.3, to: 0, into: &mesh)
+
+        #expect(!mesh.isEmpty)
+        let centre = boundary.minCorner + boundary.extent / 2
+        for vertex in mesh.vertices {
+            #expect(vertex.position.y >= -0.3 - 1e-6)
+            #expect(vertex.position.y <= 1e-6)
+            #expect(abs(vertex.normal.y) < 1e-6)
+
+            let outward = SIMD2(vertex.position.x, vertex.position.z) - centre
+            #expect(simd_dot(outward, SIMD2(vertex.normal.x, vertex.normal.z)) > 0)
+        }
+
+        var empty = HologramMesh()
+        HologramGeometry.addBeam(boundary.vertices, from: 0, to: 0, into: &empty)
+        #expect(empty.isEmpty)
+    }
+
+    @Test("A ring closes back on itself")
+    func loopClosesTheOutline() {
+        let square: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(1, 0), SIMD2(1, 1), SIMD2(0, 1)]
+        let segments = HologramGeometry.loop(square, y: -0.5)
+
+        #expect(segments.count == 4)
+        #expect(segments.last?.b == segments.first?.a)
+        for segment in segments {
+            #expect(segment.a.y == -0.5)
+            #expect(segment.b.y == -0.5)
+        }
+    }
 }
 
 /// The style's numbers reach geometry directly — a negative width or an opacity above one would

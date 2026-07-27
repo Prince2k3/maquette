@@ -29,6 +29,26 @@ public final class Tiles3DLODManager {
     private var sourceGeometry: [String: Tiles3DSourceGeometry] = [:]
     /// Each tile's drawable buffer, rewritten in place every time the outline moves past it.
     private var tileMeshes: [String: Tiles3DMeshBuffer] = [:]
+
+    /// The horizontal extent of every tile held in hand, cut or not, in the geometry's own space.
+    ///
+    /// This is the ground a pan can actually reach, and it is deliberately *not* what is on screen.
+    /// The drawn meshes have been cut to the outline, so their extent is the outline's — measuring
+    /// those to decide how far the outline may travel asks the outline how far it may move from
+    /// itself, and the answer is always nowhere. The tiles beyond the edge are loaded and retained;
+    /// they are simply clipped to nothing until the outline arrives over them.
+    var retainedGroundBounds: (lower: SIMD2<Float>, upper: SIMD2<Float>)? {
+        var lower = SIMD2<Float>(repeating: .greatestFiniteMagnitude)
+        var upper = SIMD2<Float>(repeating: -.greatestFiniteMagnitude)
+        var found = false
+        for source in sourceGeometry.values where source.lowerBound.x <= source.upperBound.x {
+            lower = simd_min(lower, source.lowerBound)
+            upper = simd_max(upper, source.upperBound)
+            found = true
+        }
+
+        return found ? (lower, upper) : nil
+    }
     /// Where the cut is assembled, held across tiles so its buffers are allocated once rather than
     /// once per tile per pan step.
     private var clipResult = Tiles3DClipper.Result()
@@ -142,6 +162,7 @@ public final class Tiles3DLODManager {
         self.center = center
         self.radiusMeters = radiusMeters
         self.clipPrism = clipPrism
+        self.cullCenterMeters = Self.cullCenter(of: clipPrism)
         self.panRange = max(0, panRange)
     }
 
@@ -154,6 +175,26 @@ public final class Tiles3DLODManager {
     private var cullRadiusMeters: Double {
         radiusMeters * Double(1 + panRange)
     }
+
+    /// Where the cull column stands, in this manager's local frame — the outline's centre, not the
+    /// origin the diorama was placed at.
+    ///
+    /// A fixed column is what made the photorealistic pan a bounded region rather than a gesture.
+    /// The outline moves and the tiles do not, so panning walks the outline towards the column's
+    /// edge; a tile beyond it is never requested, and the model runs out in the direction of travel
+    /// while the margin behind is still fully stocked. Moving the column with the outline is what
+    /// turns `panRange` from the limit into the ring that keeps the frontier ahead of the drag.
+    ///
+    /// Derived from the prism rather than tracked alongside it, so the ground that is requested and
+    /// the ground that survives the clip cannot come apart: a column that lagged the outline would
+    /// cull exactly the tiles about to slide into view.
+    static func cullCenter(of prism: BoundaryPrism?) -> SIMD2<Float> {
+        guard let prism else { return .zero }
+        return (prism.lowerBound + prism.upperBound) / 2
+    }
+
+    /// Cached because the traversal asks per tile, thousands of times a pass.
+    private var cullCenterMeters: SIMD2<Float>
 
     /// Whether tiles keep their pre-clip geometry, so a pan can cut them somewhere new.
     private var canPan: Bool { panRange > 0 && clipPrism != nil }
@@ -359,7 +400,11 @@ public final class Tiles3DLODManager {
         let bv = BoundingVolume(from: tile.boundingVolume, transform: tileTransform, ecefConverter: ecefConverter)
 
         // Outside the diorama footprint entirely — nothing to draw, and no hole either.
-        if let bv, !bv.intersects(center: center, radiusMeters: cullRadiusMeters) {
+        if let bv, !bv.intersects(
+            center: center,
+            radiusMeters: cullRadiusMeters,
+            offsetMeters: cullCenterMeters
+        ) {
             stats.culled += 1
             return true
         }
@@ -684,6 +729,7 @@ public final class Tiles3DLODManager {
     func setClipPrism(_ prism: BoundaryPrism?) {
         let previous = clipPrism
         clipPrism = prism
+        cullCenterMeters = Self.cullCenter(of: prism)
         tileLoader?.clipPrism = prism
         clipGeneration &+= 1
 

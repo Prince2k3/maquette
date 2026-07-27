@@ -84,6 +84,28 @@ struct Tiles3DPanningTests {
         #expect(needsRecut(SIMD2(51, -10), SIMD2(54, 10)))
     }
 
+    /// The column and the clip have to be reading the same outline.
+    ///
+    /// They are separate mechanisms — one decides what is fetched, the other what survives — and a
+    /// column that lagged the outline would cull exactly the tiles about to slide into view, which
+    /// looks identical to the stream simply being slow. Deriving the centre from the prism rather
+    /// than tracking it alongside is what makes them unable to disagree.
+    @Test("The cull column sits at the outline's centre, wherever the pan has put it")
+    @MainActor
+    func cullColumnIsDerivedFromTheOutline() {
+        #expect(Tiles3DLODManager.cullCenter(of: BoundaryPrism(boundary: Self.square(), scale: 1)) == .zero)
+
+        let panned = BoundaryPrism(boundary: Self.square(offset: SIMD2(30, -10)), scale: 1)
+        #expect(Tiles3DLODManager.cullCenter(of: panned) == SIMD2(30, -10))
+
+        // Scale divides the outline into the geometry's space, and the column is measured there too.
+        let scaled = BoundaryPrism(boundary: Self.square(offset: SIMD2(30, -10)), scale: 0.5)
+        #expect(Tiles3DLODManager.cullCenter(of: scaled) == SIMD2(60, -20))
+
+        // No outline, no travel: an unbounded model keeps the column where the diorama was placed.
+        #expect(Tiles3DLODManager.cullCenter(of: nil) == .zero)
+    }
+
     @Test("An unbounded model has nothing to re-cut")
     func noPrismMeansNoWork() {
         let prism = BoundaryPrism(boundary: Self.square(), scale: 1)
@@ -94,5 +116,82 @@ struct Tiles3DPanningTests {
         #expect(Tiles3DSourceGeometry.needsRecut(
             lower: SIMD2(200, 200), upper: SIMD2(220, 220), from: nil, to: prism
         ))
+    }
+
+    /// The frontier is where the visible answer stops being trustworthy.
+    ///
+    /// Panning past streamed geometry does not smear the way clamped height sampling does — tile
+    /// vertices never move — but the datum does: it is measured over whatever is on screen, so an
+    /// outline standing over empty space measures nothing, and the moment tiles arrive there the
+    /// tray and the cut wall move with it.
+    @Test("The outline may travel to the edge of the loaded ground and no further")
+    func limitsStopAtTheEdgeOfLoadedGround() {
+        // 300 m of ground centred on the origin, under a 100 m outline: 100 m of slack each way.
+        let limits = Tiles3DPanFrontier.limits(
+            groundLow: SIMD2(-150, -150),
+            groundHigh: SIMD2(150, 150),
+            outline: Self.square()
+        )
+        #expect(limits.low == SIMD2(-100, -100))
+        #expect(limits.high == SIMD2(100, 100))
+    }
+
+    /// Ground arrives unevenly, so the two ends of an axis are independent.
+    @Test("Ground loaded on one side alone only permits travel that way")
+    func limitsFollowLopsidedGround() {
+        // Ground reaching 250 m east but only 50 m west of the outline's own edges.
+        let limits = Tiles3DPanFrontier.limits(
+            groundLow: SIMD2(-100, -150),
+            groundHigh: SIMD2(300, 150),
+            outline: Self.square()
+        )
+        #expect(limits.low.x == -50)
+        #expect(limits.high.x == 250)
+        // The other axis is untouched by that asymmetry.
+        #expect(limits.low.y == -100)
+        #expect(limits.high.y == 100)
+    }
+
+    /// The ordinary state early in a stream, and the one that produces an inverted range.
+    ///
+    /// Handed back as-is, `simd_clamp` would return whichever bound it reached first — so the model
+    /// would snap to one edge of the ground it has rather than sitting on the middle of it.
+    @Test("Less ground than the outline covers pins it to the middle rather than inverting")
+    func lessGroundThanTheOutlinePinsToTheMiddle() {
+        // 40 m of ground, offset east, under a 100 m outline.
+        let limits = Tiles3DPanFrontier.limits(
+            groundLow: SIMD2(80, -20),
+            groundHigh: SIMD2(120, 20),
+            outline: Self.square()
+        )
+        #expect(limits.low.x == limits.high.x)
+        #expect(limits.low.y == limits.high.y)
+        // The outline's centre lands on the ground's centre: 100 m east, and level on the other axis.
+        #expect(limits.low.x == 100)
+        #expect(limits.low.y == 0)
+    }
+
+    /// A clamp exists to refuse movement, and must never produce it.
+    ///
+    /// Streaming strands the offset outside its own limits routinely — a refinement round that
+    /// retires a coarse ancestor shrinks the measured bounds under a model that has not moved.
+    /// Clamping absolutely would haul it back on the next touch of any size, which reads as the
+    /// model jumping while the finger barely moved.
+    @Test("A stranded offset stays where it is and can only come back")
+    func clampNeverProducesMovement() {
+        let limits = (low: SIMD2<Float>(-100, -100), high: SIMD2<Float>(100, 100))
+
+        // Ordinary refusal: a drag past the frontier stops at it.
+        #expect(Tiles3DPanFrontier.clamp(SIMD2(180, 0), to: limits, current: SIMD2(90, 0)) == SIMD2(100, 0))
+
+        // Stranded 40 m beyond the frontier. A touch that moves nothing must move nothing.
+        let stranded = SIMD2<Float>(140, 0)
+        #expect(Tiles3DPanFrontier.clamp(stranded, to: limits, current: stranded) == stranded)
+
+        // Further out is still refused, while any movement back is allowed in full — including
+        // straight past the frontier and back into the range.
+        #expect(Tiles3DPanFrontier.clamp(SIMD2(200, 0), to: limits, current: stranded) == stranded)
+        #expect(Tiles3DPanFrontier.clamp(SIMD2(120, 0), to: limits, current: stranded) == SIMD2(120, 0))
+        #expect(Tiles3DPanFrontier.clamp(SIMD2(0, 0), to: limits, current: stranded) == SIMD2(0, 0))
     }
 }

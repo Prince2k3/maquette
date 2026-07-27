@@ -156,4 +156,73 @@ struct BoundingVolumeTests {
         let core = BoundingVolume.sphere(center: SIMD3<Float>(0, -earthDiameter / 2, 0), radius: 500)
         #expect(!core.intersects(center: center, radiusMeters: radiusMeters))
     }
+
+    /// The column has to travel with the outline, or the pan is a bounded region rather than a
+    /// gesture.
+    ///
+    /// The tiles never move; the outline does. A column left at the placement origin therefore
+    /// walks towards its own edge as the user drags, and the tiles ahead of the outline are culled
+    /// before they are ever requested — so the model simply ends in the direction of travel while
+    /// the margin behind it stays fully stocked. That is what bounded the photorealistic pan.
+    @Test("The cull column follows the outline rather than the placement origin")
+    func offsetMovesTheCullColumn() {
+        let center = CLLocationCoordinate2D(latitude: 37.7459, longitude: -119.5332)
+        let radiusMeters: Double = 1_400
+
+        // Ground 2 km east: beyond the radius from the origin, well within it once the outline has
+        // been dragged 2 km east.
+        let ahead = BoundingVolume.sphere(center: SIMD3<Float>(2_000, 0, 0), radius: 50)
+        #expect(!ahead.intersects(center: center, radiusMeters: radiusMeters))
+        #expect(ahead.intersects(center: center, radiusMeters: radiusMeters, offsetMeters: SIMD2(2_000, 0)))
+
+        // And the same statement from behind: ground at the origin drops out once the outline has
+        // left it far enough behind. Culling what is no longer wanted is what keeps the stream from
+        // growing without bound as the pan runs on.
+        let behind = BoundingVolume.sphere(center: .zero, radius: 50)
+        #expect(behind.intersects(center: center, radiusMeters: radiusMeters))
+        #expect(!behind.intersects(center: center, radiusMeters: radiusMeters, offsetMeters: SIMD2(2_000, 0)))
+    }
+
+    /// The offset's second component is RealityKit's z, which runs south — so a positive value moves
+    /// the column towards lower latitudes. Getting the sign backwards culls precisely the tiles the
+    /// drag was reaching for, and does it symmetrically enough to look like no movement at all.
+    @Test("The column's north-south axis runs the way RealityKit's z does")
+    func offsetSignFollowsRealityKitZ() {
+        let center = CLLocationCoordinate2D(latitude: 37.7459, longitude: -119.5332)
+        let radiusMeters: Double = 1_400
+
+        let south = BoundingVolume.sphere(center: SIMD3<Float>(0, 0, 2_000), radius: 50)
+        #expect(!south.intersects(center: center, radiusMeters: radiusMeters))
+        #expect(south.intersects(center: center, radiusMeters: radiusMeters, offsetMeters: SIMD2(0, 2_000)))
+        #expect(!south.intersects(center: center, radiusMeters: radiusMeters, offsetMeters: SIMD2(0, -2_000)))
+    }
+
+    /// Region volumes are geographic, so the column's offset has to be converted before it can be
+    /// compared — and the two branches have to agree about which way is which, since a tileset may
+    /// mix them.
+    @Test("A region volume's cull follows the column too")
+    func offsetMovesTheCullColumnForRegions() {
+        // A degree is roughly 111 km, so a region a tenth of a degree east is about 11 km out.
+        let center = CLLocationCoordinate2D(latitude: 0, longitude: 0)
+        let radiusMeters: Double = 1_000
+        let tenth = 0.1 * .pi / 180.0
+
+        let east = BoundingVolume.region(
+            west: tenth * 0.99, south: -tenth * 0.01,
+            east: tenth * 1.01, north: tenth * 0.01,
+            minHeight: 0, maxHeight: 100
+        )
+        #expect(!east.intersects(center: center, radiusMeters: radiusMeters))
+        #expect(east.intersects(center: center, radiusMeters: radiusMeters, offsetMeters: SIMD2(11_119, 0)))
+
+        // Southward, where the sign is the one that is easy to invert.
+        let south = BoundingVolume.region(
+            west: -tenth * 0.01, south: -tenth * 1.01,
+            east: tenth * 0.01, north: -tenth * 0.99,
+            minHeight: 0, maxHeight: 100
+        )
+        #expect(!south.intersects(center: center, radiusMeters: radiusMeters))
+        #expect(south.intersects(center: center, radiusMeters: radiusMeters, offsetMeters: SIMD2(0, 11_119)))
+        #expect(!south.intersects(center: center, radiusMeters: radiusMeters, offsetMeters: SIMD2(0, -11_119)))
+    }
 }

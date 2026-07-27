@@ -416,9 +416,10 @@ public final class DioramaStore {
 
     /// How far the terrain can slide before it reaches ground that was not fetched up front.
     ///
-    /// A terrain chunk rolls past this rather than stopping at it, so it reads as the margin held
-    /// in reserve rather than a limit — the frontier moves with the tiles. It still bounds a
-    /// photorealistic model, which has only what it streamed.
+    /// Both pipelines roll past this rather than stopping at it, so it reads as the margin held in
+    /// reserve rather than a limit — the frontier moves with the ground. A terrain chunk fetches
+    /// more tiles; a photorealistic model carries its cull column along with the outline and streams
+    /// what the column now covers.
     public var maximumPanOffset: SIMD2<Float> {
         configuration.maximumPanOffset
     }
@@ -435,13 +436,16 @@ public final class DioramaStore {
     /// The chunk keeps its shape and position; only the ground beneath it moves. Markers and
     /// polylines are repositioned so they stay attached to the terrain they sit on.
     ///
-    /// A terrain chunk rolls new tiles in as the offset grows, so nothing bounds it in the long run
-    /// — pan far enough and the ground under the chunk is somewhere else entirely. What does bound
-    /// it moment to moment is the ground actually in hand: the offset stops at the edge of the
-    /// resident tiles and moves again as soon as more land. Letting it run ahead instead smears the
-    /// border and then snaps it into place when the roll finishes, which is a jump proportional to
-    /// however long the fetch took. A photorealistic model has only what it streamed, so that path
-    /// stays clamped to its fetched region.
+    /// Neither pipeline is bounded in the long run — pan far enough and the ground under the chunk
+    /// is somewhere else entirely. A terrain chunk rolls new tiles in as the offset grows; a
+    /// photorealistic model carries its cull column with the outline, so it streams ground ahead of
+    /// the drag and drops what is left behind.
+    ///
+    /// What bounds both moment to moment is the ground actually in hand: the offset stops at the
+    /// edge of what has arrived and moves again as soon as more does. Letting it run ahead is what
+    /// produces a jump — on the raster path the border smears and then snaps into place when the
+    /// roll lands, and on the photorealistic path the outline stands over nothing, so the datum the
+    /// tray and the cut wall are measured from moves the moment tiles reach it.
     ///
     /// That bound only ever refuses movement; it never produces any. Nothing here moves the terrain
     /// except the caller's own offset, which is what keeps the ground still once the finger lifts.
@@ -471,6 +475,8 @@ public final class DioramaStore {
                     """
                 )
             }
+        } else if let tiles3D = (dioramaEntity as? DioramaEntity)?.tiles3D, tiles3D.canPan {
+            target = tiles3D.clampPanOffset(offset)
         } else {
             let limit = configuration.maximumPanOffset
             target = simd_clamp(offset, -limit, limit)

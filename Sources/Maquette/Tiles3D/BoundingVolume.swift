@@ -92,28 +92,46 @@ public enum BoundingVolume: Sendable {
     }
 
     /// Tests if this volume intersects with the diorama's geographic region.
-    public func intersects(center: CLLocationCoordinate2D, radiusMeters: Double) -> Bool {
+    ///
+    /// - Parameters:
+    ///   - center: Where the diorama was placed.
+    ///   - radiusMeters: How far out from the column's centre tiles are still wanted.
+    ///   - offsetMeters: Where the column stands *now*, relative to `center`, in the local frame's
+    ///     horizontal axes — x east, y matching RealityKit's z, which runs south. Panning slides the
+    ///     outline across the model, so the ground the diorama cares about is no longer the ground
+    ///     it started on; a column left at the origin stops requesting tiles in the direction of
+    ///     travel and the model simply ends, however much further the user drags.
+    public func intersects(
+        center: CLLocationCoordinate2D,
+        radiusMeters: Double,
+        offsetMeters: SIMD2<Float> = .zero
+    ) -> Bool {
         switch self {
         case .region(let west, let south, let east, let north, _, _):
-            let centerLatRad = center.latitude * .pi / 180.0
+            // Region volumes are geographic, so the column's offset has to be as well. Small-angle
+            // conversion is enough: this is a cull radius, not a placement.
+            let metersPerRadian = 6_371_000.0
+            let centerLatRad = center.latitude * .pi / 180.0 - Double(offsetMeters.y) / metersPerRadian
+            let cosLat = max(cos(centerLatRad), 1e-6)
             let centerLonRad = center.longitude * .pi / 180.0
-            let radiusRad = radiusMeters / 6_371_000.0
+                + Double(offsetMeters.x) / (metersPerRadian * cosLat)
+            let radiusRad = radiusMeters / metersPerRadian
 
             let latOverlap = south <= centerLatRad + radiusRad && north >= centerLatRad - radiusRad
             let lonOverlap = west <= centerLonRad + radiusRad && east >= centerLonRad - radiusRad
             return latOverlap && lonOverlap
 
         case .box, .sphere:
-            // The diorama's footprint is a vertical column about the local origin, not a sphere —
-            // the same shape `BoundaryPrism` clips to, which has vertical sides and no caps. So
-            // this measures horizontal distance rather than the full 3D distance.
+            // The diorama's footprint is a vertical column, not a sphere — the same shape
+            // `BoundaryPrism` clips to, which has vertical sides and no caps. So this measures
+            // horizontal distance rather than the full 3D distance.
             //
             // Testing the 3D distance instead ties how much terrain survives to how far the ground
             // sits above the ellipsoid, because the origin is at ellipsoid height zero. At sea
             // level the vertical term is nil and the two agree, which is why it went unnoticed; in
             // the mountains it culls everything. Half Dome's summit is ~2,700 m up, so a 1,400 m
             // chunk there rejected every tile it was made of, dead centre included.
-            guard horizontalDistanceFromOrigin() < Float(radiusMeters) else { return false }
+            guard horizontalDistance(from: offsetMeters) < Float(radiusMeters) else { return false }
 
             // The column still has to end. Extended without limit it does not stop at bedrock — it
             // runs through the planet and out the far side, where the antipode's east and north
@@ -160,16 +178,16 @@ public enum BoundingVolume: Sendable {
         }
     }
 
-    /// Horizontal distance from the local origin to the nearest point of this volume, ignoring
-    /// height. Zero when the origin lies within the volume's footprint.
-    private func horizontalDistanceFromOrigin() -> Float {
+    /// Horizontal distance from a point in the local frame to the nearest point of this volume,
+    /// ignoring height. Zero when the point lies within the volume's footprint.
+    private func horizontalDistance(from point: SIMD2<Float>) -> Float {
         switch self {
         case .region:
             return 0
 
         case .sphere(let center, let radius):
             // A sphere projects to a disc of the same radius, so this is exact.
-            return max(simd_length(SIMD2(center.x, center.z)) - radius, 0)
+            return max(simd_length(SIMD2(center.x, center.z) - point) - radius, 0)
 
         case .box(let center, let halfAxes):
             // An oriented box projects to a hexagon in general. Its bounding rectangle stands in:
@@ -182,7 +200,7 @@ public enum BoundingVolume: Sendable {
                 extent += SIMD2(abs(axis.x), abs(axis.z))
             }
 
-            let offset = SIMD2(abs(center.x), abs(center.z))
+            let offset = abs(SIMD2(center.x, center.z) - point)
             return simd_length(simd_max(offset - extent, .zero))
         }
     }

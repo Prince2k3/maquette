@@ -162,29 +162,54 @@ public class Tiles3DEntity: Entity {
         )
     }
 
-    /// The underside of the model that is actually on screen, in this entity's local space.
+    /// The extent of the model that is actually on screen, in the tiles' own unpanned space.
     ///
     /// Three things make the naive measurement wrong. Measuring every child includes the tray and
     /// the cut wall, which are built *from* this measurement — so each update would chase its own
     /// output downward by a thickness. Measuring
     /// tiles that are loaded but hidden includes superseded coarse ancestors, which span far more
     /// ground — and therefore reach far lower — than the detail that replaced them. And because
-    /// this is a minimum, a single child in the wrong place decides it on its own.
+    /// the underside is a minimum, a single child in the wrong place decides it on its own.
     ///
     /// So implausible ground is discarded rather than trusted. Geometry cannot be kilometres below
     /// the ellipsoid and still be terrain, and taking `min` over it unguarded once dropped the
     /// datum by an Earth diameter on the strength of one tile.
-    private func lowestVisibleY() -> Float? {
-        var candidate = Float.greatestFiniteMagnitude
+    ///
+    /// Measured against the container rather than against this entity so panning does not move it:
+    /// tile vertices never change, so these bounds describe the same ground however far the model
+    /// has been slid, which is what lets `panLimits` compare an offset against them.
+    private func visibleBounds() -> BoundingBox? {
+        var low = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var high = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        var found = false
         for child in tileContainer.children where child.isEnabled && child.name != Self.cutWallName {
-            let bounds = child.visualBounds(relativeTo: self)
+            let bounds = child.visualBounds(relativeTo: tileContainer)
             guard bounds.min.y.isFinite,
                   bounds.min.y > -BoundingVolume.terrainElevationBound else { continue }
-            candidate = min(candidate, bounds.min.y)
+            low = simd_min(low, bounds.min)
+            high = simd_max(high, bounds.max)
+            found = true
         }
 
-        return candidate < .greatestFiniteMagnitude ? candidate : nil
+        return found ? BoundingBox(min: low, max: high) : nil
     }
+
+    /// What the last scan found, so one pan step measures once rather than four times.
+    ///
+    /// The datum, the tray, the wall and the pan frontier are all read off the same geometry, and a
+    /// scan walks every visible tile — around 700 on the Pan 3D preset. Sharing one measurement also
+    /// means they cannot disagree about where the model's underside is within a single step.
+    private var measuredBounds: BoundingBox?
+
+    /// Re-measures the visible model. Call once per step, before anything that reads it.
+    @discardableResult
+    private func measureVisibleGeometry() -> BoundingBox? {
+        measuredBounds = visibleBounds()
+        return measuredBounds
+    }
+
+    /// The underside of the model that is actually on screen, in this entity's local space.
+    private func lowestVisibleY() -> Float? { measuredBounds?.min.y }
 
     /// Drops the model so its lowest ground sits at diorama Y = 0.
     ///
@@ -339,12 +364,61 @@ public class Tiles3DEntity: Entity {
 
     // MARK: - Panning
 
+    /// The furthest the model can slide while the outline still stands entirely on geometry that
+    /// has arrived, in diorama meters.
+    ///
+    /// The photorealistic analogue of `TerrainRoller.panLimits`, and it exists for the same reason:
+    /// the frontier is where the visible answer stops being trustworthy. Panning past the streamed
+    /// geometry does not smear the way clamped height sampling does — tile vertices never move — but
+    /// the datum does. `lowestVisibleY` is measured over whatever is on screen, so an outline
+    /// standing over empty space measures nothing, and the moment tiles arrive there the datum,
+    /// the tray and the cut wall all move together. Holding at the frontier keeps the outline over
+    /// ground that has already been measured.
+    ///
+    /// Measured over the tiles held in hand rather than the ones being drawn. Every drawn mesh has
+    /// been cut to the outline, so their combined extent *is* the outline — asking them how far the
+    /// outline may travel asks how far it may move from itself, and the answer is always nowhere.
+    /// Panning was refused outright until this measured the retained geometry instead; the ground
+    /// the pan is reaching for is loaded the whole time, just clipped to nothing until the outline
+    /// arrives over it.
+    ///
+    /// It is a single bounding box over all of them, so it is generous while coarse ancestors are
+    /// still standing in: they span far more ground than the detail replacing them. Generous is the
+    /// right direction to be wrong in. Too tight refuses a pan onto ground the user can see; too
+    /// loose allows a pan onto ground that is merely coarse, which the moving cull is already
+    /// streaming detail for.
+    public func panLimits() -> (low: SIMD2<Float>, high: SIMD2<Float>)? {
+        guard let ground = lodManager.retainedGroundBounds else { return nil }
+
+        // The tiles are in the geometry's own space, the outline in diorama meters.
+        return Tiles3DPanFrontier.limits(
+            groundLow: ground.lower * geographicScale,
+            groundHigh: ground.upper * geographicScale,
+            outline: boundary
+        )
+    }
+
+    /// Clamps a target offset to the ground that has arrived, without relocating ground already on
+    /// screen.
+    ///
+    /// Relative for exactly the reason `TerrainRoller.clamp` is: the clamp exists to refuse movement
+    /// onto geometry that is not there, and it must never *produce* movement. Streaming makes the
+    /// two come apart routinely — a refinement round that hides a coarse ancestor shrinks the
+    /// measured bounds, and the model is then standing outside its own limits through no action of
+    /// the user's. Clamping absolutely would haul it back on the next touch of any size, which reads
+    /// as the model jumping while the finger barely moved.
+    public func clampPanOffset(_ target: SIMD2<Float>) -> SIMD2<Float> {
+        guard let limits = panLimits() else { return target }
+        return Tiles3DPanFrontier.clamp(target, to: limits, current: panOffset)
+    }
+
     /// Slides the model beneath its outline.
     ///
     /// Same convention as the raster chunk: the outline is fixed in diorama space and the ground
-    /// moves under it, so a positive offset shows the ground that lies in that direction. The
-    /// caller is expected to have clamped the offset to what was streamed;
-    /// `DioramaConfiguration.maximumPanOffset` is that limit.
+    /// moves under it, so a positive offset shows the ground that lies in that direction. Nothing
+    /// bounds this in the long run: the cull column travels with the outline, so panning requests
+    /// ground ahead of it and drops what is left behind. What bounds it moment to moment is the
+    /// geometry actually in hand; see `clampPanOffset`.
     ///
     /// Unlike the raster path this is not free, and not by a little. A pan moves the outline across
     /// the model, so every tile the outline's edge now crosses has to be cut somewhere it was not
@@ -374,9 +448,18 @@ public class Tiles3DEntity: Entity {
         // outline moves across ground of similar shape — so it is retired explicitly rather than
         // left to notice.
         placedWall = nil
+        measureVisibleGeometry()
         updateCutWall()
         anchorGround()
         updateBase()
+
+        // The cull column has just moved with the outline, so the traversal has a different answer
+        // than it did — but nothing else will ask for it. Level of detail is driven from camera
+        // changes, and a pan does not move the camera: the view body that calls `requestLODUpdate`
+        // reads the camera transform, so SwiftUI has no reason to re-run it. Without this the moving
+        // column is inert and the model still runs out in the direction of travel, exactly as it did
+        // when the column was nailed to the origin.
+        requestLODRefresh()
 
         logger.debug("""
             Pan offset \(offset.x, format: .fixed(precision: 4)), \
@@ -384,6 +467,19 @@ public class Tiles3DEntity: Entity {
             -> container \(self.tileContainer.position.x, format: .fixed(precision: 1)), \
             \(self.tileContainer.position.z, format: .fixed(precision: 1))
             """)
+    }
+
+    /// Re-runs the traversal because the region of interest moved, rather than the camera.
+    ///
+    /// Bypasses the throttle that `requestLODUpdate` applies to a moving camera. That throttle
+    /// exists to stop a camera flooding the traversal with near-identical requests several times a
+    /// frame; a pan step is a discrete move that genuinely changes which tiles are wanted, and it is
+    /// already far more expensive than a traversal, so there is nothing to protect here. Dropping
+    /// the request instead would silently defer streaming until the next camera move — which on a
+    /// one-finger drag may never come.
+    private func requestLODRefresh() {
+        lastLODUpdateTime = nil
+        driveRefinement()
     }
 
     @MainActor
@@ -434,10 +530,15 @@ public class Tiles3DEntity: Entity {
             fov: fov
         )
 
-        guard !isLODUpdating else { return }
         if let last = lastLODUpdateTime, Date().timeIntervalSince(last) < Self.lodUpdateInterval {
             return
         }
+        driveRefinement()
+    }
+
+    /// Refines towards the latest viewpoint until the model stops improving.
+    private func driveRefinement() {
+        guard !isLODUpdating, latestViewpoint != nil else { return }
         isLODUpdating = true
 
         Task { @MainActor [weak self] in
@@ -452,6 +553,7 @@ public class Tiles3DEntity: Entity {
                     screenHeight: viewpoint.screenHeight,
                     fov: viewpoint.fov
                 )
+                self.measureVisibleGeometry()
                 self.anchorGround()
                 self.updateBase()
                 self.updateCutWall()

@@ -82,6 +82,12 @@ public class Tiles3DEntity: Entity {
     public private(set) var cutWall: Entity?
     /// What the wall currently standing was built from, so it is not rebuilt for nothing.
     private var placedWall: (edgeCount: Int, floorY: Float)?
+    /// The wall's vertex buffer, kept so a rebuild rewrites it rather than compiling a new mesh.
+    private var cutWallMesh: Tiles3DMeshBuffer?
+    /// Built once and kept. The style cannot change, and a strata material means generating the
+    /// procedural cross-section texture — measured at 8–18 ms, which was the largest single cost in
+    /// a wall rebuild and was being paid again on every pan step for an identical result.
+    private lazy var cutWallMaterial: RealityKit.Material? = DioramaMaterials.wallMaterial(for: style.wall)
     /// Lowest point seen across loaded tiles, in this entity's local space.
     ///
     /// Photogrammetry has no known floor until geometry arrives, and level-of-detail refinement
@@ -278,31 +284,50 @@ public class Tiles3DEntity: Entity {
             return
         }
 
-        // Built before the old one is taken away, and nothing committed until it succeeds — the
-        // other order loses the wall outright on a failed build and then never tries again, because
-        // the signature has already moved.
-        let rebuilt: ModelEntity?
+        guard let material = cutWallMaterial else { return }
+
+        let buffer: Tiles3DMeshBuffer
+        if let existing = cutWallMesh {
+            buffer = existing
+        } else if let created = try? Tiles3DMeshBuffer(vertexCapacity: 1, indexCapacity: 1) {
+            buffer = created
+            cutWallMesh = created
+        } else {
+            logger.error("Could not create the cut wall's buffer; keeping the wall already placed")
+            return
+        }
+
+        // Written into the buffer the wall is already drawn from, so nothing is taken away and
+        // nothing has to be put back — the geometry simply changes underneath. A failed write
+        // leaves the previous wall standing and the signature unmoved, so the next pan tries again.
+        let outcome: Tiles3DMeshBuffer.Outcome
         do {
-            rebuilt = try Tiles3DCutWall.generate(
+            outcome = try Tiles3DCutWall.write(
                 edges: edges,
                 floorY: floorY,
                 prism: prism,
-                style: style.wall
+                into: buffer
             )
         } catch {
             logger.error("Could not rebuild the cut wall; keeping the one already placed")
             return
         }
-        guard let rebuilt else { return }
+        guard outcome != .empty else { return }
 
         placedWall = (edges.count, floorY)
-        cutWall?.removeFromParent()
-        rebuilt.name = Self.cutWallName
-        // In the container rather than on this entity, because its geometry comes from the prism
-        // the tiles were cut against — which pans with them. The tray does not: it is built in
-        // diorama space from the outline, which is exactly what stays still.
-        tileContainer.addChild(rebuilt)
-        cutWall = rebuilt
+        // Only a buffer that had to grow hands back a new `MeshResource`; otherwise the entity
+        // already points at the mesh that was just rewritten.
+        if let cutWall = cutWall as? ModelEntity, outcome == .regrown {
+            cutWall.model = ModelComponent(mesh: buffer.resource, materials: [material])
+        } else if cutWall == nil {
+            let wall = ModelEntity(mesh: buffer.resource, materials: [material])
+            wall.name = Self.cutWallName
+            // In the container rather than on this entity, because its geometry comes from the
+            // prism the tiles were cut against — which pans with them. The tray does not: it is
+            // built in diorama space from the outline, which is exactly what stays still.
+            tileContainer.addChild(wall)
+            cutWall = wall
+        }
     }
 
     /// Name used to keep the tray out of its own measurement.

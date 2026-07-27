@@ -53,13 +53,18 @@ enum Tiles3DCutEdgeRegistration {
 enum Tiles3DCutWall {
     /// Raw buffers, separated from mesh creation so the geometry can be exercised without a
     /// RealityKit device context.
+    ///
+    /// Packed into the same vertex layout the tiles use, so the wall reaches the GPU the same way
+    /// they do — as a bulk copy into a buffer that outlives the pan step.
     struct Geometry {
-        var positions: [SIMD3<Float>] = []
-        var normals: [SIMD3<Float>] = []
-        var uvs: [SIMD2<Float>] = []
+        var vertices: [Tiles3DVertex] = []
         var indices: [UInt32] = []
+        /// Accumulated as the wall is emitted, so nothing has to walk it again to find them.
+        var lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
 
         var isEmpty: Bool { indices.isEmpty }
+        var bounds: BoundingBox { BoundingBox(min: lower, max: upper) }
     }
 
     /// Extrudes cut edges downward into a wall.
@@ -89,9 +94,7 @@ enum Tiles3DCutWall {
         let uRepeat = perimeter > 0 ? max(1, (perimeter / wallHeight).rounded()) : 1
 
         var geometry = Geometry()
-        geometry.positions.reserveCapacity(standing.count * 4)
-        geometry.normals.reserveCapacity(standing.count * 4)
-        geometry.uvs.reserveCapacity(standing.count * 4)
+        geometry.vertices.reserveCapacity(standing.count * 4)
         geometry.indices.reserveCapacity(standing.count * 6)
 
         for edge in standing {
@@ -120,42 +123,44 @@ enum Tiles3DCutWall {
                 ((y - floorY) / wallHeight).clampedToUnitRange
             }
 
-            let base = UInt32(geometry.positions.count)
+            let base = UInt32(geometry.vertices.count)
             append(&geometry, SIMD3(a.x, max(a.y, floorY), a.z), normal, SIMD2(uA, v(a.y)))
             append(&geometry, SIMD3(a.x, floorY, a.z), normal, SIMD2(uA, 0))
             append(&geometry, SIMD3(b.x, max(b.y, floorY), b.z), normal, SIMD2(uB, v(b.y)))
             append(&geometry, SIMD3(b.x, floorY, b.z), normal, SIMD2(uB, 0))
 
-            geometry.indices.append(contentsOf: [base, base + 1, base + 3])
-            geometry.indices.append(contentsOf: [base, base + 3, base + 2])
+            geometry.indices.append(base)
+            geometry.indices.append(base + 1)
+            geometry.indices.append(base + 3)
+            geometry.indices.append(base)
+            geometry.indices.append(base + 3)
+            geometry.indices.append(base + 2)
         }
 
         return geometry.isEmpty ? nil : geometry
     }
 
-    /// Builds the wall as a renderable entity.
+    /// Rebuilds the wall into a buffer the renderer is already drawing from.
     ///
-    /// - Returns: The wall, or `nil` when the style asks for none or nothing survives.
+    /// A pan retires the wall and asks for it again, so this runs as often as the re-cut does and
+    /// must not compile an asset to do it — see `Tiles3DMeshBuffer`.
+    ///
+    /// - Returns: What the write left behind, or `.empty` when there is no wall to build.
     @MainActor
-    static func generate(
+    static func write(
         edges: [Tiles3DCutEdge],
         floorY: Float,
         prism: BoundaryPrism,
-        style: ChunkWallStyle
-    ) throws -> ModelEntity? {
-        guard let material = DioramaMaterials.wallMaterial(for: style),
-              let geometry = buildGeometry(edges: edges, floorY: floorY, prism: prism) else {
-            return nil
+        into buffer: Tiles3DMeshBuffer
+    ) throws -> Tiles3DMeshBuffer.Outcome {
+        guard let geometry = buildGeometry(edges: edges, floorY: floorY, prism: prism) else {
+            return .empty
         }
-
-        var descriptor = MeshDescriptor(name: "tiles3DCutWall")
-        descriptor.positions = MeshBuffers.Positions(geometry.positions)
-        descriptor.normals = MeshBuffers.Normals(geometry.normals)
-        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates(geometry.uvs)
-        descriptor.primitives = .triangles(geometry.indices)
-
-        let mesh = try MeshResource.generate(from: [descriptor])
-        return ModelEntity(mesh: mesh, materials: [material])
+        return try buffer.write(
+            vertices: geometry.vertices,
+            indices: geometry.indices,
+            bounds: geometry.bounds
+        )
     }
 
     // MARK: - Private
@@ -166,9 +171,9 @@ enum Tiles3DCutWall {
         _ normal: SIMD3<Float>,
         _ uv: SIMD2<Float>
     ) {
-        geometry.positions.append(position)
-        geometry.normals.append(normal)
-        geometry.uvs.append(uv)
+        geometry.vertices.append(Tiles3DVertex(position: position, normal: normal, uv: uv))
+        geometry.lower = simd_min(geometry.lower, position)
+        geometry.upper = simd_max(geometry.upper, position)
     }
 
     /// The vertical span the strata are normalized against.

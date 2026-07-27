@@ -28,7 +28,7 @@ public final class Tiles3DLODManager {
     /// Each tile's geometry as it arrived, kept only while the diorama can pan.
     private var sourceGeometry: [String: Tiles3DSourceGeometry] = [:]
     /// Each tile's drawable buffer, rewritten in place every time the outline moves past it.
-    private var tileMeshes: [String: Tiles3DTileMesh] = [:]
+    private var tileMeshes: [String: Tiles3DMeshBuffer] = [:]
     /// Where the cut is assembled, held across tiles so its buffers are allocated once rather than
     /// once per tile per pan step.
     private var clipResult = Tiles3DClipper.Result()
@@ -719,10 +719,10 @@ public final class Tiles3DLODManager {
         // Written into a buffer RealityKit already holds rather than compiled into a new asset. A
         // pan re-cuts a couple of hundred tiles at once, and `MeshResource.generate` measured about
         // half the cost of a step doing exactly that work over again every time.
-        let buffer: Tiles3DTileMesh
+        let buffer: Tiles3DMeshBuffer
         if let existing = tileMeshes[uri] {
             buffer = existing
-        } else if let created = try? Tiles3DTileMesh(vertexCapacity: 1, indexCapacity: 1) {
+        } else if let created = try? Tiles3DMeshBuffer(vertexCapacity: 1, indexCapacity: 1) {
             buffer = created
             tileMeshes[uri] = created
         } else {

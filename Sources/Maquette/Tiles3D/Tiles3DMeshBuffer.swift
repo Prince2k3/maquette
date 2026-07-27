@@ -28,22 +28,24 @@ struct Tiles3DVertex {
     }
 
     var position: SIMD3<Float> { SIMD3(px, py, pz) }
+    var normal: SIMD3<Float> { SIMD3(nx, ny, nz) }
+    var uv: SIMD2<Float> { SIMD2(u, v) }
 }
 
-/// One streamed tile's drawable geometry, held as a buffer that can be rewritten in place.
+/// Geometry that is rebuilt as the outline moves, held as a buffer that can be rewritten in place.
 ///
 /// `MeshResource.generate` compiles an asset every time it is called, which is the wrong cost to pay
 /// for geometry that changes on every pan step — the raster path measured 12 ms against 0.14 ms for
-/// writing a vertex buffer directly, and this path calls it once per rim tile. A `LowLevelMesh` is
-/// the same escape hatch: RealityKit keeps rendering from the buffer, so rewriting its contents
-/// replaces the compile with a copy.
+/// writing a vertex buffer directly, and a pan calls it once per rim tile plus once for the cut
+/// wall. A `LowLevelMesh` is the same escape hatch: RealityKit keeps rendering from the buffer, so
+/// rewriting its contents replaces the compile with a copy.
 ///
 /// The capacity is the wrinkle. A `LowLevelMesh` fixes its capacity when it is created, but a clip
 /// against a moved outline yields a different number of vertices every time. So the buffer is grown
 /// with headroom and only recreated when a cut genuinely needs more room than it has — after a few
 /// steps the rim tiles have all reached a size that fits, and the recreations stop.
 @MainActor
-final class Tiles3DTileMesh {
+final class Tiles3DMeshBuffer {
     /// Fraction of extra capacity taken when the buffer has to grow, so a cut that creeps up by a
     /// few vertices a step does not recreate the mesh every step.
     private static let headroom = 1.25

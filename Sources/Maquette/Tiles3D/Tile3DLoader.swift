@@ -35,7 +35,7 @@ public struct Tile3DLoader: Sendable {
         let source: Tiles3DSourceGeometry?
         /// The buffer the entity draws from, so a later re-cut can rewrite it in place. Absent when
         /// the outline left nothing to draw.
-        let mesh: Tiles3DTileMesh?
+        let mesh: Tiles3DMeshBuffer?
     }
 
     private let logger = Logger(subsystem: "com.maquette", category: "Tile3DLoader")
@@ -187,7 +187,7 @@ public struct Tile3DLoader: Sendable {
 
         // The same buffer the pan path rewrites, so a tile that is later re-cut writes into the
         // mesh it is already being drawn from rather than compiling a replacement.
-        let buffer = try Tiles3DTileMesh(
+        let buffer = try Tiles3DMeshBuffer(
             vertexCapacity: geometry.vertices.count,
             indexCapacity: geometry.indices.count
         )

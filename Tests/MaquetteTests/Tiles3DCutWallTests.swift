@@ -110,9 +110,9 @@ struct Tiles3DCutWallTests {
         let floorY: Float = -20
         let geometry = Self.wall(of: prism, floorY: floorY)
 
-        let bottoms = geometry.positions.filter { abs($0.y - floorY) < 1e-4 }
-        #expect(bottoms.count == geometry.positions.count / 2)
-        #expect(geometry.positions.allSatisfy { $0.y >= floorY - 1e-4 })
+        let bottoms = geometry.vertices.filter { abs($0.py - floorY) < 1e-4 }
+        #expect(bottoms.count == geometry.vertices.count / 2)
+        #expect(geometry.vertices.allSatisfy { $0.py >= floorY - 1e-4 })
     }
 
     @Test("Wall normals are horizontal and face away from the model")
@@ -123,11 +123,12 @@ struct Tiles3DCutWallTests {
         let prism = Self.square()
         let geometry = Self.wall(of: prism, floorY: -20)
 
-        for (index, normal) in geometry.normals.enumerated() {
+        for vertex in geometry.vertices {
+            let normal = vertex.normal
             #expect(abs(normal.y) < 1e-5)
             #expect(abs(simd_length(normal) - 1) < 1e-4)
 
-            let position = geometry.positions[index]
+            let position = vertex.position
             let outward = simd_dot(SIMD2(normal.x, normal.z), SIMD2(position.x, position.z))
             #expect(outward > 0)
         }
@@ -142,10 +143,10 @@ struct Tiles3DCutWallTests {
         let floorY: Float = -20
         let geometry = Self.wall(of: prism, floorY: floorY)
 
-        for (index, uv) in geometry.uvs.enumerated() {
-            #expect(uv.y >= 0 && uv.y <= 1)
-            if abs(geometry.positions[index].y - floorY) < 1e-4 {
-                #expect(uv.y == 0)
+        for vertex in geometry.vertices {
+            #expect(vertex.v >= 0 && vertex.v <= 1)
+            if abs(vertex.py - floorY) < 1e-4 {
+                #expect(vertex.v == 0)
             }
         }
     }
@@ -177,9 +178,9 @@ struct Tiles3DCutWallTests {
 
         // The ground walls still reach the top of the texture rather than being crushed by the
         // tower, which clamps.
-        let groundTops = zip(geometry.positions, geometry.uvs)
-            .filter { abs($0.0.y - 10) < 1e-4 }
-            .map(\.1.y)
+        let groundTops = geometry.vertices
+            .filter { abs($0.py - 10) < 1e-4 }
+            .map(\.v)
         #expect(!groundTops.isEmpty)
         #expect(groundTops.allSatisfy { $0 > 0.9 })
     }

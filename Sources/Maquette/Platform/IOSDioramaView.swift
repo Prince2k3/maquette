@@ -21,6 +21,7 @@ struct IOSDioramaView: View {
     @Environment(\.routePreviewController) private var routePreviewController
     @Environment(\.enabledDioramaGestures) private var enabledGestures
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.dioramaEffect) private var effect
 
     init(configuration: DioramaConfiguration, content: DioramaContentGroup?) {
         self.configuration = configuration
@@ -40,6 +41,9 @@ struct IOSDioramaView: View {
                     updateEntityScale()
                 }
         }
+        // An effect that draws its own light needs darkness behind it, or the contours are no
+        // longer the brightest thing on screen.
+        .background(effect.backgroundColor ?? .clear)
         .dioramaLoadingOverlay(
             state: store.loadingState,
             streamingProgress: store.streamingProgress
@@ -58,9 +62,13 @@ struct IOSDioramaView: View {
             if let distance = configuration.cameraDistance {
                 cameraController.distance = distance
             }
+            store.setEffect(effect)
             await store.load()
             store.applyContent(content)
             frameLoadedChunk()
+        }
+        .onChange(of: effect) { _, newEffect in
+            store.setEffect(newEffect)
         }
         .onChange(of: routePreviewController?.playbackState) { _, newState in
             RouteAnimationHelper.handlePlaybackStateChange(

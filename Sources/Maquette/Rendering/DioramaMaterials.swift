@@ -187,6 +187,43 @@ public enum DioramaMaterials {
         #endif
     }
 
+    // MARK: - Effect Materials
+
+    /// Creates the material a hologram's lines and motes are drawn with.
+    ///
+    /// Unlit because the whole conceit is that the lines emit rather than reflect — a lit material
+    /// would darken them wherever the terrain happened to face away from the scene's light. Culling
+    /// is off because a ribbon lying on a slope is seen from underneath as readily as from above,
+    /// and a line that vanished when the chunk was tilted would read as a rendering fault.
+    ///
+    /// - Parameters:
+    ///   - color: The line color.
+    ///   - opacity: How solid the line is, in `0...1`. The halo behind each line is the same
+    ///     material at a low value, which is what stands in for a bloom pass: RealityKit exposes no
+    ///     post-process bloom that works on all four platforms.
+    @MainActor
+    public static func hologramLineMaterial(color: Color, opacity: Float) -> UnlitMaterial {
+        var material = unlitMaterial(color: color)
+        material.faceCulling = .none
+        if opacity < 1 {
+            material.blending = .transparent(opacity: .init(floatLiteral: max(0, opacity)))
+        }
+        return material
+    }
+
+    /// Creates the material a hologram's body is painted with.
+    ///
+    /// Unlit for the same reason the lines are: the chunk is meant to read as projected light rather
+    /// than as a lump of earth, and shading it would put the sun back into a scene that has none.
+    @MainActor
+    public static func hologramBodyMaterial(color: Color, opacity: Float) -> UnlitMaterial {
+        var material = unlitMaterial(color: color)
+        if opacity < 1 {
+            material.blending = .transparent(opacity: .init(floatLiteral: max(0, opacity)))
+        }
+        return material
+    }
+
     // MARK: - Private
 
     private static func cgImage(from imageData: Data) -> CGImage? {

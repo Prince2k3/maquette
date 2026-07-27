@@ -14,6 +14,7 @@ struct VisionOSDioramaView: View {
 
     @Environment(\.routePreviewController) private var routePreviewController
     @Environment(\.enabledDioramaGestures) private var enabledGestures
+    @Environment(\.dioramaEffect) private var effect
 
     init(configuration: DioramaConfiguration, content: DioramaContentGroup?) {
         self.configuration = configuration
@@ -35,8 +36,14 @@ struct VisionOSDioramaView: View {
                     }
                 }
                 .task {
+                    store.setEffect(effect)
                     await store.load()
                     store.applyContent(content)
+                }
+                // No backdrop here: a volumetric window has the user's own room behind it, which is
+                // the point of the platform. `backgroundColor` is for the flat presentations.
+                .onChange(of: effect) { _, newEffect in
+                    store.setEffect(newEffect)
                 }
                 .gestureIf(enabledGestures.contains(.rotate),
                     DragGesture()

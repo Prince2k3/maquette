@@ -110,6 +110,7 @@ public final class DioramaStore {
 
             dioramaEntity = rootEntity
             loadingState = .loaded
+            rebuildEffect()
             logger.info("Diorama loaded successfully")
 
         } catch let error as DioramaError {
@@ -127,11 +128,64 @@ public final class DioramaStore {
         rollTask = nil
         rolling = nil
         samplerTemplate = nil
+        effectPass = nil
         loadingState = .idle
         dioramaEntity = nil
         elevationSampler = nil
         routePreviewEntity = nil
         panOffset = .zero
+    }
+
+    // MARK: - Effects
+
+    /// The visual effect painted over the built diorama.
+    public private(set) var effect: DioramaEffect = .none
+
+    private var effectPass: (any DioramaEffectPass)?
+
+    /// Applies a visual effect, or `.none` to put the diorama back as its configuration describes it.
+    ///
+    /// An effect is a restyle of the finished scene, so changing one never refetches a tile or
+    /// rebuilds the chunk. Setting it before the diorama has loaded is fine — it is applied as soon
+    /// as there is something to apply it to.
+    public func setEffect(_ effect: DioramaEffect) {
+        guard effect != self.effect else { return }
+        self.effect = effect
+        rebuildEffect()
+    }
+
+    private var effectContext: DioramaEffectContext {
+        DioramaEffectContext(
+            boundary: configuration.boundary,
+            elevationScale: configuration.geographicScale * (samplerTemplate?.exaggeration ?? 1),
+            baselineElevation: samplerTemplate?.globalMinElev ?? 0
+        )
+    }
+
+    private func rebuildEffect() {
+        guard let root = dioramaEntity as? DioramaEntity else { return }
+        effectPass?.revert(from: root)
+        effectPass = effect.makePass()
+        effectPass?.apply(to: root, context: effectContext)
+    }
+
+    /// Re-traces an effect after the ground beneath the outline has changed.
+    ///
+    /// Contours are isolines of the surface's own height, so every pan step moves every one of them.
+    private func refreshEffect() {
+        guard let root = dioramaEntity as? DioramaEntity else { return }
+        effectPass?.refresh(on: root, context: effectContext)
+    }
+
+    /// Re-takes an effect over a scene whose own materials have been replaced beneath it.
+    ///
+    /// A roll hands the chunk fresh imagery, which is both the material the effect had painted over
+    /// and the one it has to hand back when it is switched off. Reverting first would put the
+    /// *previous* window's picture on the new window's ground, so the pass re-reads what is there
+    /// now instead.
+    private func reapplyEffect() {
+        guard let root = dioramaEntity as? DioramaEntity else { return }
+        effectPass?.reapply(to: root, context: effectContext)
     }
 
     // MARK: - Terrain Mesh Pipeline
@@ -496,8 +550,23 @@ public final class DioramaStore {
 
         panOffset = target
         elevationSampler?.panOffset = target
+
+        // Split, because the two halves of a pan step are paid for differently: the resample is
+        // fixed by the chunk's vertex count, while an effect's cost rides on what it traces. Logging
+        // one total would hide which of them a slow pan is.
+        let started = ContinuousClock.now
         (dioramaEntity as? DioramaEntity)?.terrain?.setPanOffset(target)
         (dioramaEntity as? DioramaEntity)?.tiles3D?.setPanOffset(target)
+        let resampled = ContinuousClock.now
+        refreshEffect()
+        let finished = ContinuousClock.now
+        if effectPass != nil {
+            logger.debug("""
+                Pan step: resample \
+                \(String(format: "%.1f", (resampled - started).milliseconds)) ms, \
+                effect \(String(format: "%.1f", (finished - resampled).milliseconds)) ms
+                """)
+        }
 
         // Content is anchored to geography, so it has to move with the ground.
         applyContent(appliedContent)
@@ -575,6 +644,9 @@ public final class DioramaStore {
             roll.heightField,
             surfaceMaterial: material
         )
+        // New ground means new heights, and the roll has just handed the chunk a fresh surface
+        // material — which paints the imagery back over a chunk the effect had darkened.
+        reapplyEffect()
 
         // The sampler reads the same ground, so it moves with it or markers drift off the terrain.
         setElevationSampler(

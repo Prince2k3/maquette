@@ -25,7 +25,7 @@ public class TerrainEntity: Entity {
     /// How far the terrain has slid beneath the chunk's outline, in diorama meters.
     public private(set) var panOffset: SIMD2<Float> = .zero
 
-    /// Retained geometry and the terrain it samples, kept only when the chunk can pan.
+    /// Retained geometry, and the terrain it samples when the chunk can pan.
     private var geometry: TerrainSolidGenerator.Geometry?
     private var heightField: TerrainHeightField?
     /// Directly-writable meshes, used in place of regenerating resources on every pan.
@@ -40,7 +40,7 @@ public class TerrainEntity: Entity {
     ///   - wallMaterial: Material for the cut walls. Pass `nil` to omit the walls.
     ///   - bottomMaterial: Material for the bottom face. Pass `nil` to omit the bottom.
     ///   - pannableTerrain: The terrain to re-sample when the chunk pans. Pass `nil` for a fixed
-    ///     chunk, which avoids retaining a CPU-side copy of the geometry.
+    ///     chunk, which skips the directly-writable meshes a pan needs.
     public init(
         parts: TerrainSolidParts,
         surfaceMaterial: RealityKit.Material,
@@ -53,10 +53,13 @@ public class TerrainEntity: Entity {
         self.baseDepth = parts.baseDepth
         self.maxSurfaceY = parts.maxSurfaceY
 
-        // A pannable chunk is backed by directly-writable meshes so a pan is a buffer write
-        // rather than a fresh resource build.
+        // Kept whether or not the chunk pans: an effect reads the surface triangles to trace its
+        // contours from, and it can be switched on at any point after the chunk was built.
+        self.geometry = parts.geometry
+
+        // A pannable chunk is additionally backed by directly-writable meshes so a pan is a buffer
+        // write rather than a fresh resource build.
         if let pannableTerrain {
-            self.geometry = parts.geometry
             self.heightField = pannableTerrain
             self.surfaceMesh = try? ChunkSurfaceMesh(buffers: parts.geometry.top, name: "terrainTop")
             if !parts.geometry.walls.indices.isEmpty {
@@ -89,6 +92,13 @@ public class TerrainEntity: Entity {
 
     /// Whether this chunk retains what it needs to pan.
     public var canPan: Bool { geometry != nil && heightField != nil }
+
+    /// The chunk's top-surface triangles as they currently stand.
+    ///
+    /// Already clipped to the outline, and already re-sampled by whatever pan is in effect, which is
+    /// what lets an effect trace lines that stop exactly on the cut edge without repeating the
+    /// boundary clip for itself.
+    var surfaceBuffers: TerrainSolidGenerator.Buffers? { geometry?.top }
 
     /// Slides the terrain beneath the chunk's fixed outline.
     ///

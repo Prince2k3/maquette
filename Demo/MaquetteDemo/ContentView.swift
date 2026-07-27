@@ -9,6 +9,9 @@ struct DemoPreset: Identifiable {
     /// What this preset is meant to demonstrate.
     let caption: String
     let configuration: DioramaConfiguration
+    /// The visual treatment laid over the built chunk. An effect is a restyle rather than a
+    /// different configuration, which is why it sits beside one rather than inside it.
+    var effect: DioramaEffect = .none
 }
 
 enum DemoPresets {
@@ -212,6 +215,27 @@ enum DemoPresets {
                 configuration: configuration
             )
         }(),
+
+        {
+            // Deliberately the same ground as the Pan preset, and pannable, because the effect has
+            // to survive a pan: contours are re-traced from the chunk's re-sampled triangles on
+            // every step, and a roll hands the chunk a fresh surface material underneath them.
+            var configuration = DioramaConfiguration(
+                center: CLLocationCoordinate2D(latitude: 36.0544, longitude: -112.1401),
+                radiusMeters: 6000,
+                elevationExaggeration: 1.6,
+                chunk: .canyon,
+                panRange: 0.8
+            )
+            camera(&configuration)
+            return DemoPreset(
+                id: "hologram",
+                title: "Hologram",
+                caption: "Projected contours over the Grand Canyon",
+                configuration: configuration,
+                effect: .hologram
+            )
+        }(),
     ]
 }
 
@@ -228,6 +252,7 @@ struct ContentView: View {
                 header
 
                 DioramaView(configuration: preset.configuration)
+                    .dioramaEffect(preset.effect)
                     .id(preset.id)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 

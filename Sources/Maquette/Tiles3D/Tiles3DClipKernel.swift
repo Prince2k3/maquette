@@ -47,7 +47,7 @@ enum Tiles3DClipKernel {
     enum Slot {
         static let sourceVertices = 0
         static let sourceIndices = 1
-        static let tile = 2
+        static let tiles = 2
         static let prism = 3
         static let boundary = 4
         static let pieces = 5
@@ -57,6 +57,7 @@ enum Tiles3DClipKernel {
         static let outIndices = 9
         static let outCutEdges = 10
         static let counters = 11
+        static let groupTiles = 12
     }
 
     // MARK: - Shared Layouts
@@ -86,9 +87,16 @@ enum Tiles3DClipKernel {
         var edgeCount: UInt32
     }
 
-    /// Where one tile's geometry starts in the shared scratch buffers, and how much room it has.
+    /// Where one tile sits in the shared buffers on both sides of the clip.
+    ///
+    /// `vertexOffset` and `indexOffset` locate its source geometry in the arena every resident tile
+    /// shares; the rest is the room it was given in the output scratch. `firstGroup` is what lets a
+    /// thread find its way back here: the dispatch covers the whole batch at once, so a threadgroup
+    /// looks its tile up and subtracts to get its own triangle.
     struct Tile {
         var triangleCount: UInt32
+        var vertexOffset: UInt32
+        var indexOffset: UInt32
         var vertexBase: UInt32
         var vertexCapacity: UInt32
         var indexBase: UInt32
@@ -96,6 +104,7 @@ enum Tiles3DClipKernel {
         var cutBase: UInt32
         var cutCapacity: UInt32
         var counterBase: UInt32
+        var firstGroup: UInt32
     }
 
     /// A cut edge as the kernel writes it: three floats, three floats, one index.
@@ -178,6 +187,8 @@ enum Tiles3DClipKernel {
 
     struct Tile {
         uint triangleCount;
+        uint vertexOffset;
+        uint indexOffset;
         uint vertexBase;
         uint vertexCapacity;
         uint indexBase;
@@ -185,6 +196,7 @@ enum Tiles3DClipKernel {
         uint cutBase;
         uint cutCapacity;
         uint counterBase;
+        uint firstGroup;
     };
 
     /// Maps a float onto a uint of the same ordering, so atomic min and max can carry bounds.
@@ -365,7 +377,7 @@ enum Tiles3DClipKernel {
     /// happen to give, which is fine — triangles are independent and a mesh has no preferred order.
     static void emit(thread const ClipVertex *polygon,
                      uint count,
-                     constant Tile &tile,
+                     thread const Tile &tile,
                      device PackedVertex *outVertices,
                      device uint *outIndices,
                      device atomic_uint *counters) {
@@ -414,7 +426,7 @@ enum Tiles3DClipKernel {
     /// Records the edges of a clipped polygon that ended up lying on the outline.
     static void collectCutEdges(thread const ClipVertex *polygon,
                                 uint count,
-                                constant Tile &tile,
+                                thread const Tile &tile,
                                 constant Prism &prism,
                                 device const float2 *boundary,
                                 device CutEdge *outCutEdges,
@@ -444,7 +456,7 @@ enum Tiles3DClipKernel {
     kernel void \(functionName)(
         device const PackedVertex *sourceVertices [[buffer(\(Slot.sourceVertices))]],
         device const uint *sourceIndices          [[buffer(\(Slot.sourceIndices))]],
-        constant Tile &tile                       [[buffer(\(Slot.tile))]],
+        device const Tile *tiles                  [[buffer(\(Slot.tiles))]],
         constant Prism &prism                     [[buffer(\(Slot.prism))]],
         device const float2 *boundary             [[buffer(\(Slot.boundary))]],
         device const Piece *pieces                [[buffer(\(Slot.pieces))]],
@@ -454,13 +466,23 @@ enum Tiles3DClipKernel {
         device uint *outIndices                   [[buffer(\(Slot.outIndices))]],
         device CutEdge *outCutEdges               [[buffer(\(Slot.outCutEdges))]],
         device atomic_uint *counters              [[buffer(\(Slot.counters))]],
-        uint tid [[thread_position_in_grid]]
+        device const uint *groupTiles             [[buffer(\(Slot.groupTiles))]],
+        uint groupId   [[threadgroup_position_in_grid]],
+        uint localId   [[thread_position_in_threadgroup]],
+        uint groupSize [[threads_per_threadgroup]]
     ) {
+        // The dispatch covers every triangle of every tile in the batch at once, so a thread's first
+        // job is working out which tile it belongs to. Tile boundaries are aligned to threadgroups —
+        // a tile's triangle count is rounded up to a whole number of groups — which turns that into
+        // one lookup and a subtraction rather than a search.
+        Tile tile = tiles[groupTiles[groupId]];
+        uint tid = (groupId - tile.firstGroup) * groupSize + localId;
         if (tid >= tile.triangleCount) { return; }
 
         ClipVertex triangle[3];
         for (uint k = 0; k < 3; ++k) {
-            PackedVertex source = sourceVertices[sourceIndices[tid * 3 + k]];
+            uint index = sourceIndices[tile.indexOffset + tid * 3 + k];
+            PackedVertex source = sourceVertices[tile.vertexOffset + index];
             triangle[k].position = float3(source.position);
             triangle[k].normal = float3(source.normal);
             triangle[k].uv = float2(source.uv);

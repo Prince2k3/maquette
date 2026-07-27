@@ -31,6 +31,11 @@ import simd
 /// every thread whether it clips or not. So it is capped, and a tile that exceeds the cap sets an
 /// overflow flag and is re-cut exactly on the CPU. Nothing is lost; occasionally something is done
 /// twice.
+///
+/// **The whole batch goes out as one dispatch**, which is why the tiles share an arena rather than
+/// each holding its own buffer. Encoding a dispatch per tile meant rebinding two buffers and copying
+/// a `Tile` through the encoder ~180 times a step; with one dispatch the per-tile data is a buffer
+/// the kernel indexes instead of encoder state it replays.
 @MainActor
 final class Tiles3DGPUClipper {
     /// What the kernel made of one tile.
@@ -81,15 +86,15 @@ final class Tiles3DGPUClipper {
     private let threadsPerGroup: Int
     private let logger = Logger(subsystem: "com.maquette", category: "Tiles3DGPUClipper")
 
-    /// One tile's placement-baked geometry, resident until the tile is evicted.
+    /// Where one tile's placement-baked geometry sits in the arenas, until the tile is evicted.
     private final class Source {
-        let vertices: any MTLBuffer
-        let indices: any MTLBuffer
+        let vertices: Range<Int>
+        let indices: Range<Int>
         let triangleCount: Int
         /// Multiplies the output allowances. Doubles whenever a cut overruns what it was given.
         var growth = 1
 
-        init(vertices: any MTLBuffer, indices: any MTLBuffer, triangleCount: Int) {
+        init(vertices: Range<Int>, indices: Range<Int>, triangleCount: Int) {
             self.vertices = vertices
             self.indices = indices
             self.triangleCount = triangleCount
@@ -97,6 +102,8 @@ final class Tiles3DGPUClipper {
     }
 
     private var sources: [String: Source] = [:]
+    private let vertexArena: Arena
+    private let indexArena: Arena
 
     private var boundaryBuffer: (any MTLBuffer)?
     private var piecesBuffer: (any MTLBuffer)?
@@ -112,6 +119,8 @@ final class Tiles3DGPUClipper {
     private var indexScratch: (any MTLBuffer)?
     private var cutEdgeScratch: (any MTLBuffer)?
     private var counterScratch: (any MTLBuffer)?
+    private var tilesBuffer: (any MTLBuffer)?
+    private var groupTilesBuffer: (any MTLBuffer)?
 
     /// Builds the device, queue and pipeline, or returns `nil` if any of it is unavailable.
     ///
@@ -133,6 +142,10 @@ final class Tiles3DGPUClipper {
             // Each thread carries two scratch polygons and a side array, so a narrow threadgroup
             // keeps that within what the hardware can hold in registers.
             self.threadsPerGroup = max(1, min(pipeline.maxTotalThreadsPerThreadgroup, 64))
+            self.vertexArena = Arena(
+                device: device, stride: MemoryLayout<Tiles3DVertex>.stride
+            )
+            self.indexArena = Arena(device: device, stride: MemoryLayout<UInt32>.stride)
         } catch {
             return nil
         }
@@ -140,7 +153,9 @@ final class Tiles3DGPUClipper {
 
     /// Forgets a tile's uploaded geometry, for when the tile itself is evicted.
     func discard(_ uri: String) {
-        sources.removeValue(forKey: uri)
+        guard let source = sources.removeValue(forKey: uri) else { return }
+        vertexArena.release(source.vertices)
+        indexArena.release(source.indices)
     }
 
     // MARK: - Clipping
@@ -205,13 +220,17 @@ final class Tiles3DGPUClipper {
                 source: source,
                 tile: Tiles3DClipKernel.Tile(
                     triangleCount: UInt32(source.triangleCount),
+                    vertexOffset: UInt32(source.vertices.lowerBound),
+                    indexOffset: UInt32(source.indices.lowerBound),
                     vertexBase: UInt32(vertexTotal),
                     vertexCapacity: UInt32(vertexRoom),
                     indexBase: UInt32(indexTotal),
                     indexCapacity: UInt32(indexRoom),
                     cutBase: UInt32(cutEdgeTotal),
                     cutCapacity: UInt32(cutEdgeRoom),
-                    counterBase: UInt32(batch.count * Tiles3DClipKernel.countersPerTile)
+                    counterBase: UInt32(batch.count * Tiles3DClipKernel.countersPerTile),
+                    // Filled in when the batch is dispatched and the group layout is known.
+                    firstGroup: 0
                 )
             ))
             vertexTotal += vertexRoom
@@ -236,9 +255,28 @@ final class Tiles3DGPUClipper {
         cutEdges cutEdgeTotal: Int,
         handler: (Int, Outcome) -> Void
     ) {
-        guard ensureScratch(
-            vertices: vertexTotal, indices: indexTotal, cutEdges: cutEdgeTotal, tiles: batch.count
-        ),
+        // The batch goes out as one dispatch, so everything that used to be encoder state replayed
+        // per tile becomes a buffer the kernel indexes. Tile boundaries are aligned to threadgroups
+        // — a tile's triangles are rounded up to a whole number of groups — which is what lets a
+        // thread find its tile with a lookup rather than a search. The padding is at most one group
+        // short of full per tile, a few thousand idle threads in a dispatch of a hundred thousand.
+        var tiles: [Tiles3DClipKernel.Tile] = []
+        tiles.reserveCapacity(batch.count)
+        var groupTiles: [UInt32] = []
+        for (index, entry) in batch.enumerated() {
+            var tile = entry.tile
+            tile.firstGroup = UInt32(groupTiles.count)
+            tiles.append(tile)
+            let groups = (entry.source.triangleCount + threadsPerGroup - 1) / threadsPerGroup
+            groupTiles.append(contentsOf: repeatElement(UInt32(index), count: groups))
+        }
+
+        guard !groupTiles.isEmpty,
+            ensureScratch(
+                vertices: vertexTotal, indices: indexTotal, cutEdges: cutEdgeTotal, tiles: batch.count
+            ),
+            upload(tiles, into: &tilesBuffer),
+            upload(groupTiles, into: &groupTilesBuffer),
             let vertexScratch, let indexScratch, let cutEdgeScratch, let counterScratch,
             let commandBuffer = queue.makeCommandBuffer(),
             let encoder = commandBuffer.makeComputeCommandEncoder()
@@ -269,6 +307,10 @@ final class Tiles3DGPUClipper {
             length: MemoryLayout<Tiles3DClipKernel.Prism>.stride,
             index: Tiles3DClipKernel.Slot.prism
         )
+        encoder.setBuffer(vertexArena.buffer, offset: 0, index: Tiles3DClipKernel.Slot.sourceVertices)
+        encoder.setBuffer(indexArena.buffer, offset: 0, index: Tiles3DClipKernel.Slot.sourceIndices)
+        encoder.setBuffer(tilesBuffer, offset: 0, index: Tiles3DClipKernel.Slot.tiles)
+        encoder.setBuffer(groupTilesBuffer, offset: 0, index: Tiles3DClipKernel.Slot.groupTiles)
         encoder.setBuffer(boundaryBuffer, offset: 0, index: Tiles3DClipKernel.Slot.boundary)
         encoder.setBuffer(piecesBuffer, offset: 0, index: Tiles3DClipKernel.Slot.pieces)
         encoder.setBuffer(pieceEdgesBuffer, offset: 0, index: Tiles3DClipKernel.Slot.pieceEdges)
@@ -278,25 +320,10 @@ final class Tiles3DGPUClipper {
         encoder.setBuffer(cutEdgeScratch, offset: 0, index: Tiles3DClipKernel.Slot.outCutEdges)
         encoder.setBuffer(counterScratch, offset: 0, index: Tiles3DClipKernel.Slot.counters)
 
-        for entry in batch {
-            encoder.setBuffer(
-                entry.source.vertices, offset: 0, index: Tiles3DClipKernel.Slot.sourceVertices
-            )
-            encoder.setBuffer(
-                entry.source.indices, offset: 0, index: Tiles3DClipKernel.Slot.sourceIndices
-            )
-            var tile = entry.tile
-            encoder.setBytes(
-                &tile,
-                length: MemoryLayout<Tiles3DClipKernel.Tile>.stride,
-                index: Tiles3DClipKernel.Slot.tile
-            )
-            let groups = (entry.source.triangleCount + threadsPerGroup - 1) / threadsPerGroup
-            encoder.dispatchThreadgroups(
-                MTLSize(width: groups, height: 1, depth: 1),
-                threadsPerThreadgroup: MTLSize(width: threadsPerGroup, height: 1, depth: 1)
-            )
-        }
+        encoder.dispatchThreadgroups(
+            MTLSize(width: groupTiles.count, height: 1, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: threadsPerGroup, height: 1, depth: 1)
+        )
 
         encoder.endEncoding()
         commandBuffer.commit()
@@ -427,18 +454,14 @@ final class Tiles3DGPUClipper {
         }
 
         guard !vertices.isEmpty, indices.count >= 3 else { return nil }
-        guard let vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: vertices.count * MemoryLayout<Tiles3DVertex>.stride,
-            options: .storageModeShared
-        ), let indexBuffer = device.makeBuffer(
-            bytes: indices,
-            length: indices.count * MemoryLayout<UInt32>.stride,
-            options: .storageModeShared
-        ) else { return nil }
+        guard let vertexRange = vertexArena.write(vertices) else { return nil }
+        guard let indexRange = indexArena.write(indices) else {
+            vertexArena.release(vertexRange)
+            return nil
+        }
 
         let source = Source(
-            vertices: vertexBuffer, indices: indexBuffer, triangleCount: indices.count / 3
+            vertices: vertexRange, indices: indexRange, triangleCount: indices.count / 3
         )
         sources[uri] = source
         return source
@@ -474,6 +497,24 @@ final class Tiles3DGPUClipper {
         return true
     }
 
+    /// Refills a per-step buffer, reusing the allocation whenever it is already large enough.
+    ///
+    /// The tile table and the group-to-tile map are rebuilt every step because the rim is, but their
+    /// sizes settle after a step or two, so this stops allocating almost immediately.
+    private func upload<T>(_ values: [T], into slot: inout (any MTLBuffer)?) -> Bool {
+        let length = values.count * MemoryLayout<T>.stride
+        guard length > 0 else { return false }
+        if slot == nil || slot!.length < length {
+            slot = device.makeBuffer(length: length, options: .storageModeShared)
+        }
+        guard let buffer = slot else { return false }
+        values.withUnsafeBytes { source in
+            guard let base = source.baseAddress else { return }
+            buffer.contents().copyMemory(from: base, byteCount: source.count)
+        }
+        return true
+    }
+
     /// Grows the shared output scratch to hold a batch, keeping whatever is already big enough.
     private func ensureScratch(vertices: Int, indices: Int, cutEdges: Int, tiles: Int) -> Bool {
         func grow(
@@ -495,5 +536,96 @@ final class Tiles3DGPUClipper {
                 &counterScratch,
                 to: tiles * Tiles3DClipKernel.countersPerTile * MemoryLayout<UInt32>.stride
             )
+    }
+}
+
+/// A growable device buffer that every resident tile's source geometry is sub-allocated out of.
+///
+/// One dispatch reads from one source buffer, so a tile cannot keep its own — and re-uploading the
+/// rim each step would give back more than the single dispatch wins, since a tile's geometry in
+/// diorama space never changes when the outline moves. So tiles are allocated a range of a shared
+/// arena and keep it until they are evicted, at which point the range goes on a free list for the
+/// next tile to take.
+///
+/// Growing copies rather than re-uploading: the new buffer starts with the old one's contents at
+/// offset zero, so every range already handed out stays exactly where it was.
+@MainActor
+private final class Arena {
+    private let device: any MTLDevice
+    private let stride: Int
+    private(set) var buffer: (any MTLBuffer)?
+    /// Elements the buffer can hold.
+    private var capacity = 0
+    /// Elements handed out from the front, whether or not they are still in use.
+    private var end = 0
+    /// Ranges given back, kept sorted and merged with their neighbours.
+    private var free: [Range<Int>] = []
+
+    /// Elements to start at, so early tiles do not each trigger a copy.
+    private static let initialCapacity = 1 << 16
+
+    init(device: any MTLDevice, stride: Int) {
+        self.device = device
+        self.stride = stride
+    }
+
+    /// Copies values into the arena and reports the range they landed in.
+    func write<T>(_ values: [T]) -> Range<Int>? {
+        guard let range = allocate(values.count), let buffer else { return nil }
+        values.withUnsafeBytes { source in
+            guard let base = source.baseAddress else { return }
+            buffer.contents()
+                .advanced(by: range.lowerBound * stride)
+                .copyMemory(from: base, byteCount: source.count)
+        }
+        return range
+    }
+
+    func release(_ range: Range<Int>) {
+        guard !range.isEmpty else { return }
+        let slot = free.firstIndex { $0.lowerBound > range.lowerBound } ?? free.endIndex
+        free.insert(range, at: slot)
+        // Merging matters because tiles are evicted and reloaded continuously as the camera moves.
+        // Without it the arena would fragment into slivers none of which fits a tile, and the front
+        // would slide forward forever.
+        if slot + 1 < free.count, free[slot].upperBound == free[slot + 1].lowerBound {
+            free[slot] = free[slot].lowerBound..<free[slot + 1].upperBound
+            free.remove(at: slot + 1)
+        }
+        if slot > 0, free[slot - 1].upperBound == free[slot].lowerBound {
+            free[slot - 1] = free[slot - 1].lowerBound..<free[slot].upperBound
+            free.remove(at: slot)
+        }
+    }
+
+    private func allocate(_ count: Int) -> Range<Int>? {
+        guard count > 0 else { return nil }
+        if let slot = free.firstIndex(where: { $0.count >= count }) {
+            let start = free[slot].lowerBound
+            if free[slot].count == count {
+                free.remove(at: slot)
+            } else {
+                free[slot] = (start + count)..<free[slot].upperBound
+            }
+            return start..<(start + count)
+        }
+        guard reserve(end + count) else { return nil }
+        let start = end
+        end += count
+        return start..<(start + count)
+    }
+
+    private func reserve(_ needed: Int) -> Bool {
+        guard needed > capacity else { return true }
+        let grown = max(needed, capacity * 2, Self.initialCapacity)
+        guard let made = device.makeBuffer(
+            length: grown * stride, options: .storageModeShared
+        ) else { return false }
+        if let buffer, end > 0 {
+            made.contents().copyMemory(from: buffer.contents(), byteCount: end * stride)
+        }
+        buffer = made
+        capacity = grown
+        return true
     }
 }

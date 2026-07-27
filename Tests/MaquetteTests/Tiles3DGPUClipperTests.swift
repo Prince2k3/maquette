@@ -108,15 +108,107 @@ struct Tiles3DGPUClipperTests {
         #expect(result.bounds.min.x >= -1.001)
     }
 
+    // MARK: - Batching
+
+    @Test("A batch of tiles is cut as one dispatch without mixing them up")
+    func batchKeepsTilesApart() throws {
+        // The whole batch goes out as a single dispatch over one shared arena, so a tile's geometry
+        // is found by offset and its threads by arithmetic on the group index. Both are silent when
+        // wrong: a tile would come back holding a neighbour's triangles, or a slice of its own.
+        // Sizes are deliberately uneven, since a tile is padded up to a whole number of threadgroups
+        // and equal sizes would hide an off-by-one in that padding.
+        guard let gpu = Tiles3DGPUClipper() else { return }
+        let prism = Self.circle(radius: 1, sides: 128)
+        let geometries = [
+            Self.lattice(extent: 2, step: 0.1),
+            Self.lattice(extent: 0.7, step: 0.13),
+            Self.translated(Self.lattice(extent: 1.2, step: 0.11), by: SIMD3(0.4, 0, -0.3)),
+            Self.lattice(extent: 1.5, step: 0.17),
+            Self.translated(Self.lattice(extent: 0.5, step: 0.2), by: SIMD3(20, 0, 20)),
+        ]
+
+        var batched: [Int: Summary] = [:]
+        var unresolved: [Int] = []
+        gpu.clip(
+            geometries.enumerated().map { (uri: "tile-\($0.offset)", source: $0.element) },
+            to: prism
+        ) { index, outcome in
+            if let summary = Self.summarise(outcome) {
+                batched[index] = summary
+            } else {
+                unresolved.append(index)
+            }
+        }
+
+        #expect(unresolved.isEmpty)
+        #expect(batched.count == geometries.count)
+        for index in geometries.indices {
+            let onGPU = try #require(batched[index])
+            expect(onGPU, matches: Self.onCPU(geometries[index], to: prism))
+        }
+    }
+
+    @Test("Geometry too coarse for a thread's polygon is handed back, not cut wrong")
+    func coarseGeometryFallsBack() throws {
+        // A thread's working polygon is capped, and a triangle wide enough to swallow a stretch of
+        // the outline exceeds it. Measured here: against a 128-sided outline of radius 1, a lattice
+        // of 0.37 steps overflows while 0.25 does not. What matters is that the overflow is reported
+        // as `.unresolved` for the CPU to finish rather than quietly emitted half-clipped.
+        guard let gpu = Tiles3DGPUClipper() else { return }
+        let prism = Self.circle(radius: 1, sides: 128)
+
+        var coarse: Tiles3DGPUClipper.Outcome?
+        gpu.clip(
+            [(uri: "coarse", source: Self.lattice(extent: 1.5, step: 0.37))], to: prism
+        ) { _, outcome in coarse = outcome }
+        guard case .unresolved = try #require(coarse) else {
+            Issue.record("expected the cap to hand this tile back")
+            return
+        }
+
+        // And the tile just inside the cap is still cut on the GPU, so the fallback is a boundary
+        // rather than a blanket. The sliver band scales with the geometry: at these 0.25 steps the
+        // two sides disagree about one triangle at 1e-10 where finer lattices agree, so the
+        // threshold moves with them. Measured on this pair — CPU 272 triangles totalling
+        // 3.805579708, GPU 271 totalling 3.805579715 — the counts are identical from 1e-8 up.
+        let fine = Self.lattice(extent: 1.5, step: 0.25)
+        expect(
+            try clip(gpu: gpu, geometry: fine, to: prism, uri: "fine"),
+            matches: Self.onCPU(fine, to: prism),
+            ignoringSliversBelow: 1e-8
+        )
+    }
+
+    @Test("An evicted tile's space is reused without corrupting the tile that takes it")
+    func evictedSpaceIsReusable() throws {
+        // Eviction returns a tile's range to the arena's free list, and the next upload of a fitting
+        // size lands in it. A stale range or a bad reuse shows up as the new tile reading the old
+        // one's vertices, which is exactly the geometry that would still look plausible.
+        guard let gpu = Tiles3DGPUClipper() else { return }
+        let prism = Self.circle(radius: 1, sides: 128)
+        let first = Self.lattice(extent: 1.4, step: 0.12)
+        let second = Self.translated(Self.lattice(extent: 1.4, step: 0.12), by: SIMD3(0.3, 0.2, -0.1))
+
+        _ = try clip(gpu: gpu, geometry: first, to: prism, uri: "first")
+        gpu.discard("first")
+
+        let reused = try clip(gpu: gpu, geometry: second, to: prism, uri: "second")
+        expect(reused, matches: Self.onCPU(second, to: prism))
+    }
+
     // MARK: - Comparison
 
     private struct Summary {
-        var triangleCount = 0
-        /// Triangles big enough to draw something — see the note on the suite.
-        var drawnTriangleCount = 0
-        var area: Double = 0
+        /// Every triangle's area, kept rather than counted, so how small is too small stays a choice
+        /// the assertion makes — it moves with how coarse the geometry is.
+        var areas: [Double] = []
         var cutEdgeCount = 0
         var bounds = BoundingBox(min: .zero, max: .zero)
+
+        var triangleCount: Int { areas.count }
+        var area: Double { areas.reduce(0, +) }
+        /// Triangles big enough to draw something — see the note on the suite.
+        func drawnTriangleCount(above threshold: Double) -> Int { areas.count { $0 > threshold } }
     }
 
     /// Below this a triangle covers no pixel at any zoom and is only an artefact of where the cut
@@ -129,57 +221,68 @@ struct Tiles3DGPUClipperTests {
         geometry: Tiles3DSourceGeometry
     ) throws {
         let onGPU = try clip(gpu: gpu, geometry: geometry, to: prism)
-        let cpu = Tiles3DClipper.clip(
-            descriptors: geometry.descriptors,
-            placement: geometry.placement,
-            to: prism
-        )
-        let cpuAreas = Self.areas(vertices: cpu.vertices, indices: cpu.indices)
-        let onCPU = Summary(
-            triangleCount: cpuAreas.count,
-            drawnTriangleCount: cpuAreas.count { $0 > Self.degenerateArea },
-            area: cpuAreas.reduce(0, +),
-            cutEdgeCount: cpu.cutEdges.count,
-            bounds: cpu.bounds
-        )
+        expect(onGPU, matches: Self.onCPU(geometry, to: prism))
+    }
 
-        #expect(onGPU.drawnTriangleCount == onCPU.drawnTriangleCount)
+    private func expect(
+        _ onGPU: Summary,
+        matches onCPU: Summary,
+        ignoringSliversBelow threshold: Double = Self.degenerateArea
+    ) {
+        #expect(onGPU.drawnTriangleCount(above: threshold) == onCPU.drawnTriangleCount(above: threshold))
         #expect(onGPU.cutEdgeCount == onCPU.cutEdgeCount)
         // Surface area is the test that catches an inexact clip. Two clips can agree on triangle
         // counts while disagreeing about where the cut fell, and area is what notices.
         #expect(abs(onGPU.area - onCPU.area) <= onCPU.area * 1e-4)
+        // An empty cut has no bounds to compare — the CPU leaves the sentinel it started from.
+        guard onCPU.triangleCount > 0 else { return }
         #expect(simd_distance(onGPU.bounds.min, onCPU.bounds.min) < 1e-3)
         #expect(simd_distance(onGPU.bounds.max, onCPU.bounds.max) < 1e-3)
+    }
+
+    private static func onCPU(_ geometry: Tiles3DSourceGeometry, to prism: BoundaryPrism) -> Summary {
+        let cut = Tiles3DClipper.clip(
+            descriptors: geometry.descriptors,
+            placement: geometry.placement,
+            to: prism
+        )
+        return Summary(
+            areas: areas(vertices: cut.vertices, indices: cut.indices),
+            cutEdgeCount: cut.cutEdges.count,
+            bounds: cut.bounds
+        )
+    }
+
+    private static func summarise(_ outcome: Tiles3DGPUClipper.Outcome) -> Summary? {
+        switch outcome {
+        case .clipped(let vertices, let indices, let cutEdges, let bounds):
+            return Summary(
+                areas: areas(vertices: vertices, indices: indices),
+                cutEdgeCount: cutEdges.count,
+                bounds: bounds
+            )
+        case .empty:
+            return Summary()
+        case .unresolved:
+            // Falling back is legitimate at runtime but not in these tests — the tiles here are well
+            // inside what a thread's polygon can hold, so a fallback means the kernel failed rather
+            // than declined.
+            return nil
+        }
     }
 
     /// Runs one tile through the kernel and summarises what came back.
     private func clip(
         gpu: Tiles3DGPUClipper,
         geometry: Tiles3DSourceGeometry,
-        to prism: BoundaryPrism
+        to prism: BoundaryPrism,
+        uri: String = "test"
     ) throws -> Summary {
-        var summary = Summary()
-        var resolved = false
-        gpu.clip([(uri: "test", source: geometry)], to: prism) { _, outcome in
-            switch outcome {
-            case .clipped(let vertices, let indices, let cutEdges, let bounds):
-                resolved = true
-                let areas = Self.areas(vertices: vertices, indices: indices)
-                summary.triangleCount = areas.count
-                summary.drawnTriangleCount = areas.count { $0 > Self.degenerateArea }
-                summary.area = areas.reduce(0, +)
-                summary.cutEdgeCount = cutEdges.count
-                summary.bounds = bounds
-            case .empty:
-                resolved = true
-            case .unresolved:
-                resolved = false
-            }
+        var summary: Summary?
+        gpu.clip([(uri: uri, source: geometry)], to: prism) { _, outcome in
+            summary = Self.summarise(outcome)
         }
-        // Falling back is legitimate at runtime but not here — these tiles are well inside what a
-        // thread's polygon can hold, so a fallback means the kernel failed rather than declined.
-        #expect(resolved)
-        return summary
+        return try #require(summary)
     }
 
     // MARK: - Support

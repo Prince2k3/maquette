@@ -34,19 +34,26 @@ public struct HologramPedestal: Sendable, Equatable {
     public var rings: Int
     /// Opacity of the column of light between the plate and the chunk, in `0...1`. `0` draws none.
     ///
-    /// Has to be far lower than it looks like it should be. The column is a closed prism drawn with
-    /// culling off, so every ray through it crosses four surfaces — near wall and far wall, each
-    /// front and back — and what arrives on screen is roughly four times this number. At 0.06 it
-    /// stops reading as light and starts reading as a drum, which is the one thing the effect is
-    /// meant not to have.
+    /// Two things make this number read far brighter than it looks, which is why the default is so
+    /// much smaller than the rest of the style's opacities.
+    ///
+    /// The column is a closed prism, so drawn the way the rest of the effect is drawn — culling off,
+    /// both sides of every face — a single ray would cross four of its surfaces and land at roughly
+    /// four times this value. That is the difference between a faint column and a solid drum, so the
+    /// beam is the one piece of the effect that culls.
+    ///
+    /// And blending happens in linear space while the result is displayed in sRGB, so even one
+    /// surface arrives brighter than its blend factor. Measured against this style's tint on its own
+    /// backdrop, `0.12` sampled off the screen as an apparent `0.32`; the relationship is steep
+    /// enough near zero that the visible range worth tuning in is roughly `0.02...0.05`.
     public var beamOpacity: Float
 
     /// Creates a pedestal.
     public init(
-        drop: Float = 0.3,
-        plateOpacity: Float = 0.38,
+        drop: Float = 0.09,
+        plateOpacity: Float = 0.16,
         rings: Int = 3,
-        beamOpacity: Float = 0.02
+        beamOpacity: Float = 0.03
     ) {
         self.drop = max(0, drop)
         self.plateOpacity = max(0, min(1, plateOpacity))

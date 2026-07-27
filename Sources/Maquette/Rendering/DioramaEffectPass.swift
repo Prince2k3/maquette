@@ -382,13 +382,19 @@ final class HologramEffectPass: DioramaEffectPass {
         }
 
         if pedestal.beamOpacity > 0 {
-            let beam = HologramLayer(
-                name: "HologramBeam",
-                material: DioramaMaterials.hologramLineMaterial(
-                    color: style.tint,
-                    opacity: pedestal.beamOpacity
-                )
+            var material = DioramaMaterials.hologramLineMaterial(
+                color: style.tint,
+                opacity: pedestal.beamOpacity
             )
+            // The one place in this effect that culls. Everything else is a ribbon that has to
+            // survive being seen edge-on from beneath, but the column is a closed prism, and drawn
+            // with culling off a single ray crosses four of its surfaces — near wall and far wall,
+            // each front and back. The stated opacity would then arrive on screen at roughly four
+            // times its value, which is how a faint column turns into a solid drum. Culling leaves
+            // one wall standing, so the number means what it says.
+            material.faceCulling = .back
+
+            let beam = HologramLayer(name: "HologramBeam", material: material)
             container.addChild(beam.entity)
             var mesh = HologramMesh()
             // Rising from the chunk's own footprint rather than the plate's rim, so the column ends

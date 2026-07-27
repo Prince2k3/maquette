@@ -115,12 +115,16 @@ public enum TerrainSolidGenerator {
         panOffset: SIMD2<Float>
     ) {
         let parameters = geometry.resampling
+        // The baseline is frozen at generation so the chunk does not bob, which means panning far
+        // enough finds ground below it — and a surface below the chunk's own floor would invert the
+        // walls and poke through the bottom face. Resting it on the floor keeps the solid closed.
+        let floor = -parameters.baseDepth
 
         // Surface: height, shading, and imagery all follow the terrain.
         for index in geometry.top.positions.indices {
             let position = geometry.top.positions[index]
             let sample = SIMD2(position.x, position.z) + panOffset
-            geometry.top.positions[index].y = heightField.surfaceY(atX: sample.x, z: sample.y)
+            geometry.top.positions[index].y = max(heightField.surfaceY(atX: sample.x, z: sample.y), floor)
             geometry.top.normals[index] = surfaceNormal(
                 heightField: heightField,
                 at: sample,
@@ -134,7 +138,7 @@ public enum TerrainSolidGenerator {
         for index in stride(from: 0, to: geometry.walls.positions.count, by: 2) {
             let position = geometry.walls.positions[index]
             let sample = SIMD2(position.x, position.z) + panOffset
-            let y = heightField.surfaceY(atX: sample.x, z: sample.y)
+            let y = max(heightField.surfaceY(atX: sample.x, z: sample.y), floor)
             geometry.walls.positions[index].y = y
             geometry.walls.uvs[index].y = parameters.wallHeight > 0
                 ? ((y + parameters.baseDepth) / parameters.wallHeight).clampedToUnitRange

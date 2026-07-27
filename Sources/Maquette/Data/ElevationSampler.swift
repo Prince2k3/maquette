@@ -24,6 +24,10 @@ public struct ElevationSampler: Sendable {
     public let globalMinElev: Float
 
     /// Creates an elevation sampler from loaded terrain data.
+    ///
+    /// - Parameter anchor: The chunk's ground mapping. Pass the chunk's own when it can pan, so a
+    ///   marker keeps its place as tiles roll in and out; `nil` derives the mapping from the loaded
+    ///   mosaic, which is right only while that mosaic never changes.
     public init(
         grids: [ElevationGrid],
         tilePositions: [(x: Int, y: Int)],
@@ -32,7 +36,8 @@ public struct ElevationSampler: Sendable {
         radiusMeters: Double,
         physicalDiameter: Float,
         exaggeration: Float,
-        globalMinElev: Float
+        globalMinElev: Float,
+        anchor: TerrainAnchor? = nil
     ) {
         self.grids = grids
         self.tilePositions = tilePositions
@@ -42,14 +47,25 @@ public struct ElevationSampler: Sendable {
         self.physicalDiameter = physicalDiameter
         self.exaggeration = exaggeration
         self.globalMinElev = globalMinElev
-        self.heightField = TerrainHeightField(
-            grids: grids,
-            tilePositions: tilePositions,
-            extent: SIMD2(physicalDiameter, physicalDiameter),
-            elevationScale: physicalDiameter / Float(radiusMeters * 2.0) * exaggeration,
-            baselineElevation: globalMinElev,
-            zoom: zoom
-        )
+        let elevationScale = physicalDiameter / Float(radiusMeters * 2.0) * exaggeration
+        if let anchor {
+            self.heightField = TerrainHeightField(
+                grids: grids,
+                tilePositions: tilePositions,
+                anchor: anchor,
+                elevationScale: elevationScale,
+                baselineElevation: globalMinElev
+            )
+        } else {
+            self.heightField = TerrainHeightField(
+                grids: grids,
+                tilePositions: tilePositions,
+                extent: SIMD2(physicalDiameter, physicalDiameter),
+                elevationScale: elevationScale,
+                baselineElevation: globalMinElev,
+                zoom: zoom
+            )
+        }
     }
 
     /// The terrain surface this sampler reads from — the same surface the chunk mesh is built on.

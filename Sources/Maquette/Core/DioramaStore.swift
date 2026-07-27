@@ -123,6 +123,10 @@ public final class DioramaStore {
 
     /// Resets the store to its initial state, discarding the loaded entity.
     public func reset() {
+        rollTask?.cancel()
+        rollTask = nil
+        rolling = nil
+        samplerTemplate = nil
         loadingState = .idle
         dioramaEntity = nil
         elevationSampler = nil
@@ -195,6 +199,10 @@ public final class DioramaStore {
             satelliteImages.append((x: tile.x, y: tile.y, data: sData))
         }
 
+        // Kept unstitched for the roller: stitching reconciles a grid against whichever neighbours
+        // are loaded, so it has to be redone for each new window rather than accumulated.
+        let rawGrids = terrainGrids
+
         // Stitch adjacent tile edges to eliminate seams in multi-tile meshes
         if terrainGrids.count > 1 {
             let stitchedGrids = MeshStitcher.stitchEdges(
@@ -210,13 +218,27 @@ public final class DioramaStore {
         let exaggeration = configuration.effectiveExaggeration
         let elevationScale = configuration.geographicScale * exaggeration
 
+        // The fetched mosaic is stretched across the fetched region, which fixes the scale and the
+        // origin for good. Every subsequent roll reuses this anchor, so tiles can come and go
+        // without the ground moving beneath the chunk.
+        let initialWindow = TerrainTileWindow.covering(
+            terrainGrids.map { TileCoordinate(x: $0.x, y: $0.y) }
+        ) ?? TerrainTileWindow(minX: 0, minY: 0, maxX: 0, maxY: 0)
+        let anchor = TerrainAnchor(
+            mosaicMinTile: SIMD2(initialWindow.minX, initialWindow.minY),
+            tilesWide: initialWindow.tilesWide,
+            tilesTall: initialWindow.tilesTall,
+            extent: configuration.terrainRegionExtent,
+            zoom: zoom
+        )
+
         // The imagery mosaic spans the full tile grid, so the height field does too. The chunk
         // boundary is then cut out of that region — smaller than the region when panning is on,
         // and the leftover margin is what the terrain slides through.
         let heightField = TerrainHeightField(
             grids: terrainGrids.map(\.grid),
             tilePositions: terrainGrids.map { (x: $0.x, y: $0.y) },
-            extent: configuration.terrainRegionExtent,
+            anchor: anchor,
             elevationScale: elevationScale
         )
         let globalMinElev = heightField.minElevation
@@ -293,15 +315,76 @@ public final class DioramaStore {
 
         // Retain elevation data for marker/polyline positioning. The sampler covers the whole
         // fetched region, so markers outside the chunk are still placeable once panned into view.
-        elevationSampler = ElevationSampler(
-            grids: terrainGrids.map(\.grid),
-            tilePositions: terrainGrids.map { (x: $0.x, y: $0.y) },
+        samplerTemplate = SamplerTemplate(
             zoom: zoom,
+            anchor: anchor,
+            exaggeration: exaggeration,
+            globalMinElev: globalMinElev
+        )
+        setElevationSampler(grids: terrainGrids)
+
+        // Panning slides the chunk off its fetched tiles sooner or later, so it keeps the machinery
+        // to fetch more. What it does not keep is a limit: the ground rolls in as the offset grows.
+        if configuration.panRange > 0 {
+            let perTile = anchor.dioramaMetersPerTile
+            let margin = configuration.maximumPanOffset
+            let roller = TerrainRoller(
+                zoom: zoom,
+                anchor: anchor,
+                elevationScale: elevationScale,
+                baselineElevation: globalMinElev,
+                chunkMin: boundary.minCorner,
+                chunkMax: boundary.minCorner + boundary.extent,
+                marginTiles: SIMD2(
+                    Self.marginTiles(meters: margin.x, perTile: perTile.x),
+                    Self.marginTiles(meters: margin.y, perTile: perTile.y)
+                ),
+                terrainProvider: terrainProvider,
+                satelliteProvider: satelliteProvider,
+                decodesMapTilerTerrain: useMapTilerTerrain,
+                cache: tileCache
+            )
+            var tiles = TerrainTileSet()
+            for entry in rawGrids {
+                tiles.grids[TileCoordinate(x: entry.x, y: entry.y)] = entry.grid
+            }
+            for entry in satelliteImages {
+                tiles.imagery[TileCoordinate(x: entry.x, y: entry.y)] = entry.data
+            }
+            rolling = TerrainRollState(roller: roller, tiles: tiles, window: initialWindow)
+        }
+    }
+
+    /// Tiles of ground kept beyond the chunk, from the margin the configuration asks for.
+    ///
+    /// At least one either way: a chunk with no ring at all would fetch on every step.
+    private static func marginTiles(meters: Float, perTile: Double) -> Int {
+        guard perTile > 0 else { return 1 }
+        return max(1, Int((Double(meters) / perTile).rounded(.up)))
+    }
+
+    /// The parts of the sampler that survive a roll, so only its grids have to be replaced.
+    private struct SamplerTemplate {
+        let zoom: Int
+        let anchor: TerrainAnchor
+        let exaggeration: Float
+        let globalMinElev: Float
+    }
+
+    private var samplerTemplate: SamplerTemplate?
+
+    private func setElevationSampler(grids: [(x: Int, y: Int, grid: ElevationGrid)]) {
+        guard let template = samplerTemplate else { return }
+        elevationSampler = ElevationSampler(
+            grids: grids.map(\.grid),
+            tilePositions: grids.map { (x: $0.x, y: $0.y) },
+            zoom: template.zoom,
             center: configuration.center,
             radiusMeters: configuration.terrainFetchRadiusMeters,
             physicalDiameter: configuration.terrainRegionExtent.x,
-            exaggeration: exaggeration,
-            globalMinElev: globalMinElev
+            exaggeration: template.exaggeration,
+            globalMinElev: template.globalMinElev,
+            anchor: template.anchor
         )
         elevationSampler?.panOffset = panOffset
     }
@@ -331,38 +414,114 @@ public final class DioramaStore {
     /// How far the terrain has slid beneath the chunk's fixed outline, in diorama meters.
     public private(set) var panOffset: SIMD2<Float> = .zero
 
-    /// The furthest the terrain can slide before the chunk would overhang the fetched region.
+    /// How far the terrain can slide before it reaches ground that was not fetched up front.
+    ///
+    /// A terrain chunk rolls past this rather than stopping at it, so it reads as the margin held
+    /// in reserve rather than a limit. It still bounds a photorealistic model, which has only what
+    /// it streamed.
     public var maximumPanOffset: SIMD2<Float> {
         configuration.maximumPanOffset
     }
 
-    /// Slides the terrain beneath the chunk's outline by a delta, clamped to the fetched region.
+    /// Slides the terrain beneath the chunk's outline by a delta.
     ///
     /// - Parameter delta: Movement in diorama meters.
     public func pan(by delta: SIMD2<Float>) {
         setPanOffset(panOffset + delta)
     }
 
-    /// Slides the terrain to an absolute offset, clamped to the fetched region.
+    /// Slides the terrain to an absolute offset.
     ///
     /// The chunk keeps its shape and position; only the ground beneath it moves. Markers and
     /// polylines are repositioned so they stay attached to the terrain they sit on.
+    ///
+    /// A terrain chunk rolls new tiles in as the offset grows, so nothing bounds it — pan far
+    /// enough and the ground under the chunk is somewhere else entirely. A photorealistic model
+    /// still has only what it streamed, so that path stays clamped to its fetched region.
     ///
     /// - Parameter offset: The target offset in diorama meters.
     public func setPanOffset(_ offset: SIMD2<Float>) {
         guard configuration.panRange > 0 else { return }
 
-        let limit = configuration.maximumPanOffset
-        let clamped = simd_clamp(offset, -limit, limit)
-        guard clamped != panOffset else { return }
+        let target: SIMD2<Float>
+        if rolling != nil {
+            target = offset
+        } else {
+            let limit = configuration.maximumPanOffset
+            target = simd_clamp(offset, -limit, limit)
+        }
+        guard target != panOffset else { return }
 
-        panOffset = clamped
-        elevationSampler?.panOffset = clamped
-        (dioramaEntity as? DioramaEntity)?.terrain?.setPanOffset(clamped)
-        (dioramaEntity as? DioramaEntity)?.tiles3D?.setPanOffset(clamped)
+        panOffset = target
+        elevationSampler?.panOffset = target
+        (dioramaEntity as? DioramaEntity)?.terrain?.setPanOffset(target)
+        (dioramaEntity as? DioramaEntity)?.tiles3D?.setPanOffset(target)
 
         // Content is anchored to geography, so it has to move with the ground.
         applyContent(appliedContent)
+
+        rollTerrainIfNeeded()
+    }
+
+    // MARK: - Rolling Fetch
+
+    /// What a rolling chunk holds between rolls.
+    private struct TerrainRollState {
+        let roller: TerrainRoller
+        var tiles: TerrainTileSet
+        var window: TerrainTileWindow
+    }
+
+    private var rolling: TerrainRollState?
+    private var rollTask: Task<Void, Never>?
+
+    /// Fetches more ground if the chunk has panned past what is loaded.
+    ///
+    /// Sampling past the resident tiles clamps to their edge rather than failing, so the pan itself
+    /// never waits on this: the gesture stays smooth and the smeared border is replaced when the
+    /// tiles land. One roll runs at a time and re-checks the offset when it finishes, because the
+    /// offset it started from is stale by then.
+    private func rollTerrainIfNeeded() {
+        guard rollTask == nil, let state = rolling else { return }
+        guard !state.window.contains(state.roller.window(forPanOffset: panOffset)) else { return }
+
+        rollTask = Task { [self] in
+            defer { rollTask = nil }
+            while let state = rolling, !Task.isCancelled {
+                let required = state.roller.window(forPanOffset: panOffset)
+                guard !state.window.contains(required) else { return }
+
+                guard let roll = await state.roller.load(window: required, have: state.tiles) else {
+                    logger.warning("Terrain roll loaded nothing; staying on the ground already held")
+                    return
+                }
+                guard !Task.isCancelled, rolling != nil else { return }
+
+                rolling?.tiles = roll.tiles
+                rolling?.window = roll.window
+                applyRoll(roll)
+            }
+        }
+    }
+
+    private func applyRoll(_ roll: TerrainRoll) {
+        let material = roll.imagery.flatMap { try? DioramaMaterials.satelliteMaterial(from: $0) }
+        (dioramaEntity as? DioramaEntity)?.terrain?.setTerrain(
+            roll.heightField,
+            surfaceMaterial: material
+        )
+
+        // The sampler reads the same ground, so it moves with it or markers drift off the terrain.
+        setElevationSampler(
+            grids: roll.heightField.tilePositions.enumerated().map { index, position in
+                (x: position.x, y: position.y, grid: roll.heightField.grids[index])
+            }
+        )
+        applyContent(appliedContent)
+
+        logger.debug(
+            "Rolled terrain to tiles x \(roll.window.minX)...\(roll.window.maxX), y \(roll.window.minY)...\(roll.window.maxY)"
+        )
     }
 
     // MARK: - Content Application

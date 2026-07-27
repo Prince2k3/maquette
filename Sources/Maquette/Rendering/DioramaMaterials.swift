@@ -44,13 +44,39 @@ public enum DioramaMaterials {
         tilesWide: Int,
         tilesTall: Int
     ) throws -> SimpleMaterial {
+        let composited = try compositeSatelliteImage(
+            tiles: tiles, minX: minX, minY: minY, tilesWide: tilesWide, tilesTall: tilesTall
+        )
+        return try satelliteMaterial(from: composited)
+    }
+
+    /// Wraps an already-composited image as a terrain surface material.
+    ///
+    /// Separated from the compositing so a rolling fetch can draw the mosaic off the main actor and
+    /// only come back for the texture upload, which is the part that has to be here.
+    @MainActor
+    public static func satelliteMaterial(from image: CGImage) throws -> SimpleMaterial {
+        let texture = try TextureResource(image: image, options: .init(semantic: .color))
+
+        var material = SimpleMaterial()
+        material.color.texture = .init(texture)
+        material.roughness = .float(0.7)
+        material.metallic = .float(0.0)
+        return material
+    }
+
+    /// Draws satellite tiles into a single image covering the mosaic.
+    ///
+    /// Runs anywhere — it is Core Graphics only, with no RealityKit resource creation.
+    public static func compositeSatelliteImage(
+        tiles: [(x: Int, y: Int, data: Data)],
+        minX: Int,
+        minY: Int,
+        tilesWide: Int,
+        tilesTall: Int
+    ) throws -> CGImage {
         guard let firstTile = tiles.first else {
             throw DioramaError.meshGenerationFailed(reason: "No satellite tiles to composite")
-        }
-
-        // If single tile, use the simple path
-        if tiles.count == 1 {
-            return try satelliteTextureMaterial(from: firstTile.data)
         }
 
         // Decode first tile to get tile dimensions
@@ -90,14 +116,7 @@ public enum DioramaMaterials {
         guard let compositedImage = context.makeImage() else {
             throw DioramaError.meshGenerationFailed(reason: "Failed to create composited image")
         }
-
-        let texture = try TextureResource(image: compositedImage, options: .init(semantic: .color))
-
-        var material = SimpleMaterial()
-        material.color.texture = .init(texture)
-        material.roughness = .float(0.7)
-        material.metallic = .float(0.0)
-        return material
+        return compositedImage
     }
 
     // MARK: - Chunk Materials

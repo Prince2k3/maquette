@@ -93,16 +93,21 @@ public struct DioramaConfiguration: Sendable {
     /// Appearance of the terrain chunk: how much earth sits beneath the surface, how the cut
     /// walls read, and what the chunk rests on.
     public var chunk: TerrainChunkStyle
-    /// How far the terrain can slide beneath the chunk's fixed outline, as a fraction of the
+    /// How much ground to keep loaded around the chunk's fixed outline, as a fraction of the
     /// chunk's horizontal extent. `0` disables panning.
     ///
-    /// Either way there has to be ground outside the outline to slide onto, so this costs roughly
-    /// as much again in tiles. The chunk itself does not grow.
+    /// There has to be ground outside the outline to slide onto, so this costs roughly as much
+    /// again in tiles. The chunk itself does not grow.
     ///
-    /// On a terrain chunk the extra ground is fetched up front and the surface is re-sampled at the
-    /// offset. On a photorealistic model it is streamed and cut away like everything else outside
-    /// the outline, and panning re-cuts it — which is the more expensive of the two, since the
-    /// tiles the outline's edge crosses have to be cut again wherever it stops.
+    /// On a terrain chunk this is a *margin*, not a limit: panning past it rolls new tiles in and
+    /// drops the ones left behind, so the ground runs as far as the user cares to drag it. What the
+    /// margin buys is that an ordinary drag is served from tiles already in hand rather than
+    /// waiting on the network — a larger value fetches more up front and rolls less often.
+    ///
+    /// On a photorealistic model it is still a hard limit. That ground is streamed and cut away
+    /// like everything else outside the outline, and panning re-cuts it — which is the more
+    /// expensive of the two, since the tiles the outline's edge crosses have to be cut again
+    /// wherever it stops.
     public var panRange: Float
 
     // MARK: - Platform-Specific Hints

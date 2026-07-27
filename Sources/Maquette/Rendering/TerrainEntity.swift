@@ -109,6 +109,30 @@ public class TerrainEntity: Entity {
         self.panOffset = offset
     }
 
+    /// Swaps in freshly-rolled ground beneath the chunk.
+    ///
+    /// Elevation and imagery are one mapping, not two, so they have to land together — handing the
+    /// height field over without its imagery would texture the new ground with the old picture for
+    /// as long as it took the material to follow.
+    ///
+    /// - Parameters:
+    ///   - heightField: The new surface. It must share the anchor the chunk was built with, or the
+    ///     terrain jumps.
+    ///   - surfaceMaterial: Imagery composited over the same tiles, or `nil` to keep the current one.
+    public func setTerrain(_ heightField: TerrainHeightField, surfaceMaterial: RealityKit.Material?) {
+        guard var geometry, self.heightField != nil else { return }
+
+        self.heightField = heightField
+        if let surfaceMaterial {
+            surface?.model?.materials = [surfaceMaterial]
+        }
+
+        TerrainSolidGenerator.resample(&geometry, heightField: heightField, panOffset: panOffset)
+        surfaceMesh?.update(from: geometry.top)
+        wallMesh?.update(from: geometry.walls)
+        self.geometry = geometry
+    }
+
     /// Creates a terrain entity from a mesh and a pre-built material.
     ///
     /// - Parameters:

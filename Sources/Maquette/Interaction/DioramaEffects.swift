@@ -20,7 +20,7 @@ public enum ContourInterval: Sendable, Equatable {
 /// Every length here is a fraction of the chunk's largest horizontal extent rather than an absolute
 /// measurement, so a style reads the same on a tabletop diorama and a room-scale one.
 public struct HologramStyle: Sendable, Equatable {
-    /// Color of the contour lines, the graticule, and the motes.
+    /// Color of the contour lines and the graticule.
     public var tint: Color
     /// Color of the chunk's body beneath the lines.
     public var surfaceColor: Color
@@ -31,6 +31,19 @@ public struct HologramStyle: Sendable, Equatable {
     /// per-triangle, so the lower it goes the more the walls and surface visibly fight over which is
     /// in front. The default keeps the body nearly opaque and lets the lines do the work.
     public var surfaceOpacity: Float
+    /// Opacity of the chunk's earth mass — its cut walls, its bottom face, and any plinth — in
+    /// `0...1`. `0`, the default, removes them.
+    ///
+    /// The chunk is a solid everywhere else in this library, and under every other treatment that is
+    /// the point. A projection is the exception: a slab of earth beneath the lines reads as an object
+    /// resting on something, and the effect is meant to read as an image of the ground hanging in
+    /// the air with nothing holding it up. The strata are also the one part of the chunk that is
+    /// invented rather than measured, so they are the first thing a data projection should drop.
+    ///
+    /// Raising this paints the earth in `surfaceColor` instead of removing it. Values in between
+    /// are where RealityKit's per-object transparency sorting shows: the walls and the surface will
+    /// visibly argue over which is in front.
+    public var earthOpacity: Float
     /// Spacing of the elevation contours.
     public var contours: ContourInterval
     /// Width of a contour line's bright core, as a fraction of the chunk's largest extent.
@@ -44,8 +57,6 @@ public struct HologramStyle: Sendable, Equatable {
     public var glowOpacity: Float
     /// Number of graticule lines per horizontal axis, draped over the terrain. `0` draws none.
     public var graticuleDivisions: Int
-    /// Number of motes suspended above the chunk. `0` draws none.
-    public var moteCount: Int
     /// Whether to keep the satellite imagery beneath the effect instead of replacing it with
     /// `surfaceColor`.
     public var showsImagery: Bool
@@ -55,38 +66,37 @@ public struct HologramStyle: Sendable, Equatable {
         tint: Color = Color(red: 0.25, green: 0.95, blue: 0.94),
         surfaceColor: Color = Color(red: 0.012, green: 0.055, blue: 0.085),
         surfaceOpacity: Float = 0.92,
+        earthOpacity: Float = 0,
         contours: ContourInterval = .automatic(count: 22),
         lineWidth: Float = 0.0035,
         glowWidth: Float = 3.5,
         glowOpacity: Float = 0.18,
         graticuleDivisions: Int = 12,
-        moteCount: Int = 140,
         showsImagery: Bool = false
     ) {
         self.tint = tint
         self.surfaceColor = surfaceColor
         self.surfaceOpacity = max(0, min(1, surfaceOpacity))
+        self.earthOpacity = max(0, min(1, earthOpacity))
         self.contours = contours
         self.lineWidth = max(0, lineWidth)
         self.glowWidth = max(1, glowWidth)
         self.glowOpacity = max(0, min(1, glowOpacity))
         self.graticuleDivisions = max(0, graticuleDivisions)
-        self.moteCount = max(0, moteCount)
         self.showsImagery = showsImagery
     }
 
     /// Cyan contours on a near-black body. The default.
     public static let standard = HologramStyle()
 
-    /// A denser, colder read with a tighter contour interval and no motes.
+    /// A denser, colder read with a tighter contour interval.
     public static let survey = HologramStyle(
         tint: Color(red: 0.55, green: 0.85, blue: 1.0),
         contours: .automatic(count: 40),
         lineWidth: 0.0022,
         glowWidth: 2.5,
         glowOpacity: 0.12,
-        graticuleDivisions: 20,
-        moteCount: 0
+        graticuleDivisions: 20
     )
 
     /// Amber lines, in the register of an older display.

@@ -46,7 +46,7 @@ struct HologramMesh {
     }
 }
 
-/// Builds the hologram's drawable pieces: the ribbons that carry every line, and the motes.
+/// Builds the hologram's drawable pieces: the ribbons that carry every line.
 enum HologramGeometry {
     /// Turns isoline segments into flat ribbons lying just above the surface they came from.
     ///
@@ -97,100 +97,5 @@ enum HologramGeometry {
             mesh.appendTriangle(v0, v2, v1)
             mesh.appendTriangle(v2, v3, v1)
         }
-    }
-
-    /// Suspends small motes in the air above the chunk, inside its outline.
-    ///
-    /// Each is an octahedron rather than a billboarded quad: it reads as a point of light from any
-    /// angle without needing to be turned towards a camera every frame, which matters on visionOS
-    /// where there are two of those and neither is the app's to track.
-    ///
-    /// Placement is seeded rather than random so a chunk looks the same every time it loads, and so
-    /// the motes stay put while the terrain pans beneath them.
-    static func addMotes(
-        count: Int,
-        in boundary: DioramaBoundary,
-        from lowY: Float,
-        to highY: Float,
-        size: Float,
-        seed: UInt64,
-        into mesh: inout HologramMesh
-    ) {
-        guard count > 0, size > 0, highY > lowY else { return }
-        var random = SplitMix64(seed: seed)
-
-        var placed = 0
-        // Rejection sampling against the outline, which is exact for concave shapes where an
-        // inscribed region would not be. Bounded so a pathological outline cannot spin here.
-        var attempts = 0
-        let limit = count * 32
-        while placed < count && attempts < limit {
-            attempts += 1
-            let point = boundary.minCorner + SIMD2(
-                random.nextUnit() * boundary.extent.x,
-                random.nextUnit() * boundary.extent.y
-            )
-            guard boundary.contains(point) else { continue }
-            placed += 1
-
-            let y = lowY + random.nextUnit() * (highY - lowY)
-            // Vary the size a little so the field reads as depth rather than as a uniform stipple.
-            let radius = size * (0.5 + random.nextUnit())
-            addOctahedron(center: SIMD3(point.x, y, point.y), radius: radius, into: &mesh)
-        }
-    }
-
-    private static func addOctahedron(
-        center: SIMD3<Float>,
-        radius: Float,
-        into mesh: inout HologramMesh
-    ) {
-        let offsets: [SIMD3<Float>] = [
-            SIMD3(0, radius, 0), SIMD3(0, -radius, 0),
-            SIMD3(radius, 0, 0), SIMD3(-radius, 0, 0),
-            SIMD3(0, 0, radius), SIMD3(0, 0, -radius),
-        ]
-        var corner: [UInt32] = []
-        corner.reserveCapacity(6)
-        for offset in offsets {
-            corner.append(mesh.append(
-                position: center + offset,
-                normal: simd_normalize(offset),
-                uv: SIMD2(0.5, 0.5)
-            ))
-        }
-
-        let (top, bottom) = (corner[0], corner[1])
-        let ring = [corner[4], corner[2], corner[5], corner[3]]  // +Z, +X, -Z, -X
-        for i in 0..<4 {
-            let a = ring[i]
-            let b = ring[(i + 1) % 4]
-            mesh.appendTriangle(top, a, b)
-            mesh.appendTriangle(bottom, b, a)
-        }
-    }
-}
-
-/// A small deterministic generator, so a chunk's motes are the same every load.
-///
-/// Written out rather than taken from `SystemRandomNumberGenerator` precisely because the system one
-/// is not reproducible, and a field of motes that reshuffled on every effect refresh would flicker
-/// during a pan.
-struct SplitMix64: RandomNumberGenerator {
-    private var state: UInt64
-
-    init(seed: UInt64) { state = seed }
-
-    mutating func next() -> UInt64 {
-        state &+= 0x9E37_79B9_7F4A_7C15
-        var z = state
-        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
-        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
-        return z ^ (z >> 31)
-    }
-
-    /// A value in `0..<1`.
-    mutating func nextUnit() -> Float {
-        Float(next() >> 40) / Float(1 << 24)
     }
 }

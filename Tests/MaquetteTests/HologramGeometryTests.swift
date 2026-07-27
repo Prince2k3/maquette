@@ -126,91 +126,6 @@ struct HologramGeometryTests {
         #expect(mesh.isEmpty)
         #expect(mesh.vertices.isEmpty)
     }
-
-    // MARK: - Motes
-
-    @Test("Motes land inside the outline and inside the height band")
-    func motesRespectTheirBounds() {
-        // Concave on purpose: an inscribed-circle placement would pass a convex outline and quietly
-        // hang motes in the notch of this one.
-        let boundary = DioramaBoundary(vertices: [
-            SIMD2(0, 0), SIMD2(1, 0), SIMD2(1, 1),
-            SIMD2(0.6, 0.4), SIMD2(0, 1),
-        ])
-        var mesh = HologramMesh()
-        HologramGeometry.addMotes(
-            count: 120, in: boundary, from: 0.2, to: 0.8,
-            size: 0.004, seed: 7, into: &mesh
-        )
-        #expect(!mesh.isEmpty)
-
-        // Each mote is an octahedron, so its own radius is the tolerance on the band.
-        let radius = Float(0.004) * 1.5
-        for vertex in mesh.vertices {
-            #expect(vertex.position.y > 0.2 - radius)
-            #expect(vertex.position.y < 0.8 + radius)
-        }
-
-        // Centres, which is what placement actually decides, must be strictly inside.
-        let centres = stride(from: 0, to: mesh.vertices.count, by: 6).map { index -> SIMD2<Float> in
-            let top = mesh.vertices[index].position
-            let bottom = mesh.vertices[index + 1].position
-            let centre = (top + bottom) / 2
-            return SIMD2(centre.x, centre.z)
-        }
-        #expect(centres.count == 120)
-        for centre in centres {
-            #expect(boundary.contains(centre), "mote placed outside the outline at \(centre)")
-        }
-    }
-
-    /// Motes are seeded rather than random because a field that reshuffled on every refresh would
-    /// flicker for the whole of a pan — the effect refreshes once per pan step.
-    @Test("The same seed places the same motes")
-    func motesAreReproducible() {
-        let boundary = DioramaBoundary(vertices: [
-            SIMD2(0, 0), SIMD2(1, 0), SIMD2(1, 1), SIMD2(0, 1),
-        ])
-
-        func place(seed: UInt64) -> [SIMD3<Float>] {
-            var mesh = HologramMesh()
-            HologramGeometry.addMotes(
-                count: 30, in: boundary, from: 0, to: 1, size: 0.01, seed: seed, into: &mesh
-            )
-            return mesh.vertices.map(\.position)
-        }
-
-        #expect(place(seed: 42) == place(seed: 42))
-        #expect(place(seed: 42) != place(seed: 43))
-    }
-
-    @Test("Asking for no motes builds nothing")
-    func moteDegenerateCases() {
-        let boundary = DioramaBoundary(vertices: [
-            SIMD2(0, 0), SIMD2(1, 0), SIMD2(1, 1), SIMD2(0, 1),
-        ])
-        var mesh = HologramMesh()
-        HologramGeometry.addMotes(count: 0, in: boundary, from: 0, to: 1,
-                                  size: 0.01, seed: 1, into: &mesh)
-        #expect(mesh.isEmpty)
-
-        HologramGeometry.addMotes(count: 10, in: boundary, from: 1, to: 1,
-                                  size: 0.01, seed: 1, into: &mesh)
-        #expect(mesh.isEmpty)
-
-        HologramGeometry.addMotes(count: 10, in: boundary, from: 0, to: 1,
-                                  size: 0, seed: 1, into: &mesh)
-        #expect(mesh.isEmpty)
-    }
-
-    @Test("The seeded generator stays inside the unit interval")
-    func generatorRange() {
-        var random = SplitMix64(seed: 0)
-        for _ in 0..<5_000 {
-            let value = random.nextUnit()
-            #expect(value >= 0 && value < 1)
-        }
-    }
 }
 
 /// The style's numbers reach geometry directly — a negative width or an opacity above one would
@@ -221,19 +136,29 @@ struct HologramStyleTests {
     func styleClampsItsInputs() {
         let style = HologramStyle(
             surfaceOpacity: 4,
+            earthOpacity: 9,
             lineWidth: -0.5,
             glowWidth: 0.2,
             glowOpacity: -1,
-            graticuleDivisions: -6,
-            moteCount: -20
+            graticuleDivisions: -6
         )
         #expect(style.surfaceOpacity == 1)
+        #expect(style.earthOpacity == 1)
         #expect(style.lineWidth == 0)
         // A halo narrower than the line it sits behind is not a halo.
         #expect(style.glowWidth == 1)
         #expect(style.glowOpacity == 0)
         #expect(style.graticuleDivisions == 0)
-        #expect(style.moteCount == 0)
+    }
+
+    /// The default has to leave the earth off, not merely allow it to be turned off: a solid black
+    /// slab under the lines reads as an object on a table, which is the one thing a projection is
+    /// not, and it is the whole reason `earthOpacity` starts at zero.
+    @Test("The default hologram has no earth beneath it")
+    func earthIsRemovedByDefault() {
+        #expect(HologramStyle.standard.earthOpacity == 0)
+        #expect(HologramStyle.survey.earthOpacity == 0)
+        #expect(HologramStyle.amber.earthOpacity == 0)
     }
 
     @Test("An effect's backdrop follows its body colour")

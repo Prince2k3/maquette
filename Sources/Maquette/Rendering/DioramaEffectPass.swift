@@ -72,7 +72,6 @@ final class HologramEffectPass: DioramaEffectPass {
     private var glow: HologramLayer?
     private var core: HologramLayer?
     private var graticule: HologramLayer?
-    private var motes: HologramLayer?
 
     /// Reused between refreshes so a pan step does not reallocate the whole line set.
     private var glowMesh = HologramMesh()
@@ -131,20 +130,13 @@ final class HologramEffectPass: DioramaEffectPass {
             name: "HologramLines",
             material: DioramaMaterials.hologramLineMaterial(color: style.tint, opacity: 1)
         )
-        let motes = HologramLayer(
-            name: "HologramMotes",
-            material: DioramaMaterials.hologramLineMaterial(color: style.tint, opacity: 0.85)
-        )
         container.addChild(glow.entity)
         container.addChild(graticule.entity)
         container.addChild(core.entity)
-        container.addChild(motes.entity)
         self.glow = glow
         self.graticule = graticule
         self.core = core
-        self.motes = motes
 
-        buildMotes(terrain: terrain, context: context)
         refresh(on: root, context: context)
     }
 
@@ -206,7 +198,6 @@ final class HologramEffectPass: DioramaEffectPass {
         core = nil
         glow = nil
         graticule = nil
-        motes = nil
 
         for entity in hiddenEntities {
             entity.isEnabled = true
@@ -311,24 +302,6 @@ final class HologramEffectPass: DioramaEffectPass {
         }
     }
 
-    private func buildMotes(terrain: TerrainEntity, context: DioramaEffectContext) {
-        guard let motes, style.moteCount > 0 else { return }
-        let extent = max(context.boundary.extent.x, context.boundary.extent.y)
-        var mesh = HologramMesh()
-        HologramGeometry.addMotes(
-            count: style.moteCount,
-            in: context.boundary,
-            from: terrain.maxSurfaceY + extent * 0.02,
-            to: terrain.maxSurfaceY + extent * 0.35,
-            size: extent * 0.0016,
-            // Seeded from the outline so a chunk's motes are the same every load, and unchanged by a
-            // pan: they are suspended in the projection, not attached to the ground moving under it.
-            seed: UInt64(bitPattern: Int64(context.boundary.vertices.count) &* 0x9E37_79B9),
-            into: &mesh
-        )
-        motes.update(with: mesh)
-    }
-
     // MARK: - Body
 
     /// Repaints the solid the lines are drawn over, saving what it replaces.
@@ -341,22 +314,41 @@ final class HologramEffectPass: DioramaEffectPass {
         if !style.showsImagery {
             replace(root.terrain?.surface, with: body)
         }
-        replace(root.terrain?.walls, with: body)
-        replace(root.terrain?.bottom, with: body)
 
-        // The base is a plinth built elsewhere, so it may be one model or a container of them.
-        if let base = root.base {
-            replace(base as? ModelEntity, with: body)
-            for model in base.children.compactMap({ $0 as? ModelEntity }) {
-                replace(model, with: body)
+        // The earth is taken away rather than painted, so the ground reads as hanging in the air.
+        // Hiding it costs nothing to undo — `revert` re-enables what it switched off — and unlike a
+        // fully transparent material it also takes the geometry out of the transparency sort, where
+        // it would otherwise keep arguing with the surface over which is in front.
+        if style.earthOpacity <= 0 {
+            hide(root.terrain?.walls)
+            hide(root.terrain?.bottom)
+            hide(root.base)
+        } else {
+            let earth = DioramaMaterials.hologramBodyMaterial(
+                color: style.surfaceColor,
+                opacity: style.earthOpacity
+            )
+            replace(root.terrain?.walls, with: earth)
+            replace(root.terrain?.bottom, with: earth)
+
+            // The base is a plinth built elsewhere, so it may be one model or a container of them.
+            if let base = root.base {
+                replace(base as? ModelEntity, with: earth)
+                for model in base.children.compactMap({ $0 as? ModelEntity }) {
+                    replace(model, with: earth)
+                }
             }
         }
 
         // Water reads as a mirror, which is the one thing a projection is not.
-        if let water = root.waterPlane, water.isEnabled {
-            water.isEnabled = false
-            hiddenEntities.append(water)
-        }
+        hide(root.waterPlane)
+    }
+
+    /// Switches an entity off, remembering it so `revert` can switch it back on.
+    private func hide(_ entity: Entity?) {
+        guard let entity, entity.isEnabled else { return }
+        entity.isEnabled = false
+        hiddenEntities.append(entity)
     }
 
     private func replace(_ model: ModelEntity?, with material: any RealityKit.Material) {

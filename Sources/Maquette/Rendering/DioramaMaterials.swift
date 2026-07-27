@@ -189,7 +189,7 @@ public enum DioramaMaterials {
 
     // MARK: - Effect Materials
 
-    /// Creates the material a hologram's lines and motes are drawn with.
+    /// Creates the material a hologram's lines are drawn with.
     ///
     /// Unlit because the whole conceit is that the lines emit rather than reflect — a lit material
     /// would darken them wherever the terrain happened to face away from the scene's light. Culling

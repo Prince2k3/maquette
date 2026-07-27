@@ -8,6 +8,14 @@ import simd
 /// it at arbitrary positions — including positions that fall between grid samples, which is what
 /// boundary clipping requires.
 ///
+/// ## Where the ground is, versus what is loaded
+///
+/// A `TerrainAnchor` fixes which ground a diorama position names; the loaded grids are merely the
+/// part of that ground currently in memory. The two are deliberately separate, so tiles can arrive
+/// and be evicted without the terrain sliding under the chunk. Sampling outside the resident tiles
+/// clamps to the nearest edge — a rolling fetch keeps the chunk covered, and clamping is the
+/// gentler failure while tiles are still in flight.
+///
 /// ## Vertical convention
 ///
 /// `surfaceY(atX:z:)` returns diorama-space Y where **0 is the lowest terrain elevation** in the
@@ -19,8 +27,8 @@ public struct TerrainHeightField: Sendable {
     public let grids: [ElevationGrid]
     /// Tile x/y positions corresponding to each grid.
     public let tilePositions: [(x: Int, y: Int)]
-    /// Physical size of the sampled region in diorama meters: X width, Z depth.
-    public let extent: SIMD2<Float>
+    /// How diorama X/Z maps onto the world.
+    public let anchor: TerrainAnchor
     /// Lowest raw elevation (meters above sea level) across all grids. Maps to diorama Y = 0.
     public let minElevation: Float
     /// Highest raw elevation (meters above sea level) across all grids.
@@ -36,26 +44,29 @@ public struct TerrainHeightField: Sendable {
     private let gridIndexBySlot: [Int?]
 
     // Panning re-samples the whole surface every frame, so the per-sample arithmetic is hot.
-    // These fold the repeated divisions and integer conversions into the initializer.
-    private let halfExtent: SIMD2<Float>
-    private let inverseExtent: SIMD2<Float>
+    // These fold the anchor into window-relative `Float`s, which is also what keeps the precision
+    // bounded: absolute tile coordinates run to 2^zoom, far past what a Float resolves finely
+    // enough to sample a 256-wide grid with.
+    private let originInWindow: SIMD2<Float>
+    private let tilesPerDioramaMeter: SIMD2<Float>
     private let tilesWideFloat: Float
     private let tilesTallFloat: Float
 
-    /// Creates a height field from loaded elevation grids.
+    /// Creates a height field from loaded elevation grids and an explicit ground mapping.
     ///
     /// - Parameters:
     ///   - grids: Decoded elevation grids, one per tile.
-    ///   - tilePositions: Tile x/y positions corresponding to each grid.
-    ///   - extent: Physical size of the region in diorama meters (X width, Z depth).
+    ///   - tilePositions: Tile x/y positions corresponding to each grid, at the anchor's zoom.
+    ///   - anchor: How diorama X/Z maps onto the world.
     ///   - elevationScale: Converts raw elevation meters into diorama-space meters.
     ///     Pass `0` to flatten the terrain.
     ///   - baselineElevation: Raw elevation that maps to diorama Y = 0. Defaults to the lowest
-    ///     elevation across the grids.
+    ///     elevation across the grids. Pass the value the chunk was generated with when rolling
+    ///     new tiles in, or the chunk bobs as the ground moves beneath it.
     public init(
         grids: [ElevationGrid],
         tilePositions: [(x: Int, y: Int)],
-        extent: SIMD2<Float>,
+        anchor: TerrainAnchor,
         elevationScale: Float,
         baselineElevation: Float? = nil
     ) {
@@ -64,7 +75,7 @@ public struct TerrainHeightField: Sendable {
 
         self.grids = grids
         self.tilePositions = tilePositions
-        self.extent = extent
+        self.anchor = anchor
         self.elevationScale = elevationScale
         self.minElevation = baselineElevation ?? (grids.map(\.minElevation).min() ?? 0)
         self.maxElevation = grids.map(\.maxElevation).max() ?? 0
@@ -77,14 +88,15 @@ public struct TerrainHeightField: Sendable {
         self.minTileY = minTY
         self.tilesWide = maxTX - minTX + 1
         self.tilesTall = maxTY - minTY + 1
-
-        self.halfExtent = extent / 2
-        self.inverseExtent = SIMD2(
-            extent.x > 0 ? 1 / extent.x : 0,
-            extent.y > 0 ? 1 / extent.y : 0
-        )
         self.tilesWideFloat = Float(maxTX - minTX + 1)
         self.tilesTallFloat = Float(maxTY - minTY + 1)
+
+        let originInWindow = anchor.originTile - SIMD2(Double(minTX), Double(minTY))
+        self.originInWindow = SIMD2(Float(originInWindow.x), Float(originInWindow.y))
+        self.tilesPerDioramaMeter = SIMD2(
+            Float(anchor.tilesPerDioramaMeter.x),
+            Float(anchor.tilesPerDioramaMeter.y)
+        )
 
         var slots = [Int?](repeating: nil, count: (maxTX - minTX + 1) * (maxTY - minTY + 1))
         for (index, position) in tilePositions.enumerated() {
@@ -92,6 +104,58 @@ public struct TerrainHeightField: Sendable {
             slots[slot] = index
         }
         self.gridIndexBySlot = slots
+    }
+
+    /// Creates a height field that stretches the loaded mosaic across a diorama extent.
+    ///
+    /// The mosaic *is* the region here, which is the right mapping for a chunk whose tiles never
+    /// change. A chunk that pans past its fetched tiles wants a geographic anchor instead, so that
+    /// the ground stays put as tiles come and go.
+    ///
+    /// - Parameters:
+    ///   - grids: Decoded elevation grids, one per tile.
+    ///   - tilePositions: Tile x/y positions corresponding to each grid.
+    ///   - extent: Physical size of the region in diorama meters (X width, Z depth).
+    ///   - elevationScale: Converts raw elevation meters into diorama-space meters.
+    ///     Pass `0` to flatten the terrain.
+    ///   - baselineElevation: Raw elevation that maps to diorama Y = 0. Defaults to the lowest
+    ///     elevation across the grids.
+    ///   - zoom: Zoom level the tile positions are expressed at. Only geographic conversions read
+    ///     it, so a field built from synthetic grids can leave it at zero.
+    public init(
+        grids: [ElevationGrid],
+        tilePositions: [(x: Int, y: Int)],
+        extent: SIMD2<Float>,
+        elevationScale: Float,
+        baselineElevation: Float? = nil,
+        zoom: Int = 0
+    ) {
+        let minTX = tilePositions.map(\.x).min() ?? 0
+        let minTY = tilePositions.map(\.y).min() ?? 0
+        let maxTX = tilePositions.map(\.x).max() ?? 0
+        let maxTY = tilePositions.map(\.y).max() ?? 0
+        self.init(
+            grids: grids,
+            tilePositions: tilePositions,
+            anchor: TerrainAnchor(
+                mosaicMinTile: SIMD2(minTX, minTY),
+                tilesWide: maxTX - minTX + 1,
+                tilesTall: maxTY - minTY + 1,
+                extent: extent,
+                zoom: zoom
+            ),
+            elevationScale: elevationScale,
+            baselineElevation: baselineElevation
+        )
+    }
+
+    /// Physical size of the resident tiles in diorama meters: X width, Z depth.
+    ///
+    /// This is the *loaded* region, not the reachable one — it grows and shrinks as tiles roll in
+    /// and out. The chunk's own size comes from its boundary.
+    public var extent: SIMD2<Float> {
+        let perTile = anchor.dioramaMetersPerTile
+        return SIMD2(Float(Double(tilesWide) * perTile.x), Float(Double(tilesTall) * perTile.y))
     }
 
     /// The highest point of the terrain surface in diorama-space Y.
@@ -104,22 +168,59 @@ public struct TerrainHeightField: Sendable {
         maxSurfaceY
     }
 
+    /// The position of a diorama X/Z point within the resident tiles, in tiles from their corner.
+    ///
+    /// Clamped to the loaded mosaic, so a position beyond it reads as its nearest edge.
+    @inline(__always)
+    func windowPoint(atX x: Float, z: Float) -> SIMD2<Float> {
+        SIMD2(
+            min(max(originInWindow.x + x * tilesPerDioramaMeter.x, 0), tilesWideFloat),
+            min(max(originInWindow.y + z * tilesPerDioramaMeter.y, 0), tilesTallFloat)
+        )
+    }
+
+    /// Whether a diorama X/Z point falls on a tile that is currently loaded.
+    ///
+    /// A rolling fetch uses this to decide what still has to arrive; sampling an unloaded point is
+    /// allowed and clamps to the nearest edge rather than failing.
+    public func isResident(atX x: Float, z: Float) -> Bool {
+        let point = SIMD2(
+            originInWindow.x + x * tilesPerDioramaMeter.x,
+            originInWindow.y + z * tilesPerDioramaMeter.y
+        )
+        guard point.x >= 0, point.x <= tilesWideFloat, point.y >= 0, point.y <= tilesTallFloat else {
+            return false
+        }
+        let tileX = min(Int(point.x), tilesWide - 1)
+        let tileZ = min(Int(point.y), tilesTall - 1)
+        return gridIndexBySlot[tileZ * tilesWide + tileX] != nil
+    }
+
+    /// Texture coordinate for a diorama X/Z point within the imagery composited over the resident
+    /// tiles.
+    ///
+    /// The imagery mosaic and the elevation mosaic cover the same tiles, so one mapping serves
+    /// both — and both follow the anchor, so a rolling fetch moves them together.
+    @inline(__always)
+    public func textureCoordinate(atX x: Float, z: Float) -> SIMD2<Float> {
+        let point = windowPoint(atX: x, z: z)
+        return SIMD2(
+            tilesWideFloat > 0 ? point.x / tilesWideFloat : 0,
+            tilesTallFloat > 0 ? point.y / tilesTallFloat : 0
+        )
+    }
+
     /// Returns the raw elevation (meters above sea level) at a diorama-space X/Z position.
     ///
-    /// Positions outside the sampled region clamp to the nearest edge sample.
+    /// Positions outside the loaded tiles clamp to the nearest edge sample.
     @inline(__always)
     public func rawElevation(atX x: Float, z: Float) -> Float {
-        // Normalize into 0...1 across the mosaic.
-        let nx = ((x + halfExtent.x) * inverseExtent.x).clampedToUnitRange
-        let nz = ((z + halfExtent.y) * inverseExtent.y).clampedToUnitRange
-
         // Locate the tile and the fractional position within it.
-        let tileFx = nx * tilesWideFloat
-        let tileFz = nz * tilesTallFloat
-        let tileX = min(Int(tileFx), tilesWide - 1)
-        let tileZ = min(Int(tileFz), tilesTall - 1)
-        let fracX = (tileFx - Float(tileX)).clampedToUnitRange
-        let fracZ = (tileFz - Float(tileZ)).clampedToUnitRange
+        let point = windowPoint(atX: x, z: z)
+        let tileX = min(Int(point.x), tilesWide - 1)
+        let tileZ = min(Int(point.y), tilesTall - 1)
+        let fracX = (point.x - Float(tileX)).clampedToUnitRange
+        let fracZ = (point.y - Float(tileZ)).clampedToUnitRange
 
         guard let gridIndex = gridIndexBySlot[tileZ * tilesWide + tileX] else {
             // A gap in the mosaic — fall back to the baseline so the surface stays continuous.

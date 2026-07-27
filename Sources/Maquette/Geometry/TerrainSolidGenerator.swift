@@ -578,14 +578,15 @@ public enum TerrainSolidGenerator {
     }
 
     /// Maps a diorama-space X/Z position into the satellite imagery's 0...1 texture space.
+    ///
+    /// The imagery covers exactly the tiles the height field holds, so the height field owns the
+    /// mapping — elevation and imagery then move together when the loaded tiles change.
+    @inline(__always)
     private static func textureCoordinate(
         for point: SIMD2<Float>,
         heightField: TerrainHeightField
     ) -> SIMD2<Float> {
-        SIMD2(
-            ((point.x + heightField.extent.x / 2) / heightField.extent.x).clampedToUnitRange,
-            ((point.y + heightField.extent.y / 2) / heightField.extent.y).clampedToUnitRange
-        )
+        heightField.textureCoordinate(atX: point.x, z: point.y)
     }
 
     @MainActor

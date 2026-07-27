@@ -47,7 +47,8 @@ public struct ElevationSampler: Sendable {
             tilePositions: tilePositions,
             extent: SIMD2(physicalDiameter, physicalDiameter),
             elevationScale: physicalDiameter / Float(radiusMeters * 2.0) * exaggeration,
-            baselineElevation: globalMinElev
+            baselineElevation: globalMinElev,
+            zoom: zoom
         )
     }
 
@@ -91,30 +92,9 @@ public struct ElevationSampler: Sendable {
             return nil
         }
 
-        let bounds = TileMath.tileBounds(x: tileCoord.x, y: tileCoord.y, zoom: zoom)
-
-        // Fractional position within the tile.
-        let fracX = (coord.longitude - bounds.minLongitude) / (bounds.maxLongitude - bounds.minLongitude)
-        let fracY = (bounds.maxLatitude - coord.latitude) / (bounds.maxLatitude - bounds.minLatitude)
-        let clampedFracX = Float(max(0, min(1, fracX)))
-        let clampedFracY = Float(max(0, min(1, fracY)))
-
-        let minTX = tilePositions.map(\.x).min()!
-        let minTY = tilePositions.map(\.y).min()!
-        let maxTX = tilePositions.map(\.x).max()!
-        let maxTY = tilePositions.map(\.y).max()!
-        let tilesWide = Float(maxTX - minTX + 1)
-        let tilesTall = Float(maxTY - minTY + 1)
-
-        // Tiles tile the extent edge to edge, so the mosaic position is simply the tile index
-        // plus the fraction within it.
-        let mosaicX = (Float(tileCoord.x - minTX) + clampedFracX) / tilesWide
-        let mosaicZ = (Float(tileCoord.y - minTY) + clampedFracY) / tilesTall
-
-        return SIMD2(
-            (mosaicX - 0.5) * heightField.extent.x,
-            (mosaicZ - 0.5) * heightField.extent.y
-        )
+        // The chunk's own ground mapping, so a marker lands where the mesh put that ground.
+        let point = heightField.anchor.dioramaPoint(for: coord)
+        return SIMD2(Float(point.x), Float(point.y))
     }
 
     /// Returns the terrain elevation (in diorama-space Y) at the given geographic coordinate.

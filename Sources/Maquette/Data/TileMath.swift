@@ -36,6 +36,34 @@ public enum TileMath {
         )
     }
 
+    /// Converts a geographic coordinate to a *fractional* tile coordinate at the given zoom.
+    ///
+    /// Unlike `tileXY(for:zoom:)` this does not floor, so the fractional part is the position
+    /// within the tile. Web Mercator is linear in this space, which is what makes a diorama's
+    /// ground mapping a scale and a translation rather than a projection per sample.
+    public static func tilePoint(for coordinate: Coordinate, zoom: Int) -> SIMD2<Double> {
+        let n = pow(2.0, Double(zoom))
+        let latRad = coordinate.latitudeRadians
+        return SIMD2(
+            (coordinate.longitude + 180.0) / 360.0 * n,
+            (1.0 - log(tan(latRad) + 1.0 / cos(latRad)) / .pi) / 2.0 * n
+        )
+    }
+
+    /// Converts a fractional tile coordinate back to a geographic coordinate.
+    public static func coordinate(forTilePoint tile: SIMD2<Double>, zoom: Int) -> Coordinate {
+        let n = pow(2.0, Double(zoom))
+        let longitude = tile.x / n * 360.0 - 180.0
+        let latitude = atan(sinh(.pi * (1.0 - 2.0 * tile.y / n))) * 180.0 / .pi
+        return Coordinate(latitude: latitude, longitude: longitude)
+    }
+
+    /// Ground distance spanned by one whole tile at a given latitude and zoom level.
+    public static func metersPerTile(latitude: Double, zoom: Int) -> Double {
+        let latRad = latitude * .pi / 180.0
+        return 40_075_016.686 * cos(latRad) / pow(2.0, Double(zoom))
+    }
+
     /// Returns the geographic bounding box of a tile.
     public static func tileBounds(x: Int, y: Int, zoom: Int) -> TileBounds {
         let n = pow(2.0, Double(zoom))

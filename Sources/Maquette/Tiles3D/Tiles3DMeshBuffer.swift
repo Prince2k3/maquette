@@ -104,6 +104,24 @@ final class Tiles3DMeshBuffer {
     /// positions.
     @discardableResult
     func write(vertices: [Tiles3DVertex], indices: [UInt32], bounds: BoundingBox) throws -> Outcome {
+        try vertices.withUnsafeBufferPointer { vertices in
+            try indices.withUnsafeBufferPointer { indices in
+                try write(vertices: vertices, indices: indices, bounds: bounds)
+            }
+        }
+    }
+
+    /// Rewrites the buffer from geometry that is already laid out somewhere else.
+    ///
+    /// The clip kernel writes its results straight into a Metal buffer in this exact layout, so
+    /// there is nothing to gather first — the tile reaches its mesh as two copies out of the scratch
+    /// region it was cut into.
+    @discardableResult
+    func write(
+        vertices: UnsafeBufferPointer<Tiles3DVertex>,
+        indices: UnsafeBufferPointer<UInt32>,
+        bounds: BoundingBox
+    ) throws -> Outcome {
         guard !vertices.isEmpty, !indices.isEmpty else { return .empty }
 
         var recreated = false

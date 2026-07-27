@@ -32,6 +32,10 @@ public final class Tiles3DLODManager {
     /// Where the cut is assembled, held across tiles so its buffers are allocated once rather than
     /// once per tile per pan step.
     private var clipResult = Tiles3DClipper.Result()
+    /// Cuts a whole pan step's tiles on the GPU, when there is one to cut them with.
+    ///
+    /// Only built for a diorama that can pan, since a fixed one is cut once at load and never again.
+    private var gpuClipper: Tiles3DGPUClipper?
     /// Loaded tiles the outline currently cuts away entirely.
     ///
     /// Held rather than forgotten because panning is exactly what brings them back, but never
@@ -164,6 +168,14 @@ public final class Tiles3DLODManager {
             clipPrism: clipPrism,
             retainsSourceGeometry: canPan
         )
+        // Built now, while tiles are still streaming, because it compiles the clip kernel from
+        // source — a cost worth paying where nothing is waiting on it rather than on the first pan.
+        if canPan {
+            gpuClipper = Tiles3DGPUClipper()
+            if gpuClipper == nil {
+                logger.info("No Metal clip available; panning will cut tiles on the CPU")
+            }
+        }
         logger.info("Loaded root tileset (version: \(tileset.asset.version), geometricError: \(tileset.geometricError))")
 
         // Log root tile structure for diagnostics
@@ -675,21 +687,57 @@ public final class Tiles3DLODManager {
         tileLoader?.clipPrism = prism
         clipGeneration &+= 1
 
-        var recut = 0
-        let started = ContinuousClock.now
+        var pending: [(uri: String, source: Tiles3DSourceGeometry)] = []
         for (uri, source) in sourceGeometry {
-            guard let entity = loadedEntities[uri] else { continue }
+            guard loadedEntities[uri] != nil else { continue }
             guard source.needsRecut(from: previous, to: prism) else { continue }
-            recut += 1
-            apply(prism, to: entity, from: source, uri: uri)
+            pending.append((uri, source))
         }
+
+        let started = ContinuousClock.now
+        var onGPU = 0
+        if let prism, let gpuClipper, !pending.isEmpty {
+            gpuClipper.clip(pending, to: prism) { index, outcome in
+                let job = pending[index]
+                guard let entity = loadedEntities[job.uri] else { return }
+                switch outcome {
+                case .clipped(let vertices, let indices, let cutEdges, let bounds):
+                    onGPU += 1
+                    install(
+                        vertices: vertices,
+                        indices: indices,
+                        cutEdges: cutEdges,
+                        bounds: bounds,
+                        to: entity,
+                        from: job.source,
+                        uri: job.uri,
+                        wasClipped: true
+                    )
+                case .empty:
+                    onGPU += 1
+                    clear(entity, uri: job.uri)
+                case .unresolved:
+                    // The kernel could not finish this one — most often a triangle that clipped to
+                    // more vertices than a thread has room for. The exact clip finishes it.
+                    apply(prism, to: entity, from: job.source, uri: job.uri)
+                }
+            }
+        } else {
+            for job in pending {
+                guard let entity = loadedEntities[job.uri] else { continue }
+                apply(prism, to: entity, from: job.source, uri: job.uri)
+            }
+        }
+
         // Re-decide what is on screen: the re-cut above has just changed which tiles hold geometry.
         applyVisibility(selectedURIs)
-        if recut > 0 {
+        if !pending.isEmpty {
             let elapsed = (ContinuousClock.now - started).milliseconds
+            let recut = pending.count
             logger.debug("""
                 Re-cut \(recut) of \(self.sourceGeometry.count) tiles \
-                against the moved outline in \(String(format: "%.1f", elapsed)) ms
+                against the moved outline in \(String(format: "%.1f", elapsed)) ms \
+                [gpu \(onGPU), cpu \(recut - onGPU)]
                 """)
         }
     }
@@ -714,8 +762,38 @@ public final class Tiles3DLODManager {
         } else {
             Tiles3DClipper.pack(descriptors: source.descriptors, into: &clipResult)
         }
-        let cutEdges = clipResult.cutEdges
 
+        clipResult.vertices.withUnsafeBufferPointer { vertices in
+            clipResult.indices.withUnsafeBufferPointer { indices in
+                install(
+                    vertices: vertices,
+                    indices: indices,
+                    cutEdges: clipResult.cutEdges,
+                    bounds: clipResult.bounds,
+                    to: entity,
+                    from: source,
+                    uri: uri,
+                    wasClipped: prism != nil
+                )
+            }
+        }
+    }
+
+    /// Puts freshly cut geometry on a tile, wherever it was cut.
+    ///
+    /// Takes pointers rather than arrays because the GPU path's results live in a Metal scratch
+    /// buffer that nothing needs to copy out first — the write into the tile's own buffer is that
+    /// copy.
+    private func install(
+        vertices: UnsafeBufferPointer<Tiles3DVertex>,
+        indices: UnsafeBufferPointer<UInt32>,
+        cutEdges: [Tiles3DCutEdge],
+        bounds: BoundingBox,
+        to entity: ModelEntity,
+        from source: Tiles3DSourceGeometry,
+        uri: String,
+        wasClipped: Bool
+    ) {
         // Written into a buffer RealityKit already holds rather than compiled into a new asset. A
         // pan re-cuts a couple of hundred tiles at once, and `MeshResource.generate` measured about
         // half the cost of a step doing exactly that work over again every time.
@@ -726,23 +804,17 @@ public final class Tiles3DLODManager {
             buffer = created
             tileMeshes[uri] = created
         } else {
-            entity.model = nil
-            entity.isEnabled = false
-            entity.components.remove(Tiles3DCutEdgeComponent.self)
-            clippedAway.insert(uri)
+            clear(entity, uri: uri)
             return
         }
 
         let outcome = (try? buffer.write(
-            vertices: clipResult.vertices,
-            indices: clipResult.indices,
-            bounds: clipResult.bounds
+            vertices: vertices,
+            indices: indices,
+            bounds: bounds
         )) ?? .empty
         guard outcome != .empty else {
-            entity.model = nil
-            entity.isEnabled = false
-            entity.components.remove(Tiles3DCutEdgeComponent.self)
-            clippedAway.insert(uri)
+            clear(entity, uri: uri)
             return
         }
 
@@ -757,7 +829,7 @@ public final class Tiles3DLODManager {
             entity.model = ModelComponent(mesh: buffer.resource, materials: [source.material])
         }
         entity.transform = Transform(
-            matrix: prism == nil ? source.placement : matrix_identity_float4x4
+            matrix: wasClipped ? matrix_identity_float4x4 : source.placement
         )
         if cutEdges.isEmpty {
             entity.components.remove(Tiles3DCutEdgeComponent.self)
@@ -766,6 +838,14 @@ public final class Tiles3DLODManager {
             entity.components.set(Tiles3DCutEdgeComponent(edges: cutEdges))
         }
         clippedAway.remove(uri)
+    }
+
+    /// Leaves a tile loaded but drawing nothing, for when the outline has taken all of it.
+    private func clear(_ entity: ModelEntity, uri: String) {
+        entity.model = nil
+        entity.isEnabled = false
+        entity.components.remove(Tiles3DCutEdgeComponent.self)
+        clippedAway.insert(uri)
     }
 
     /// Shows exactly the tiles the traversal selected and hides the rest.
@@ -825,6 +905,7 @@ public final class Tiles3DLODManager {
             framesSinceVisible.removeValue(forKey: uri)
             sourceGeometry.removeValue(forKey: uri)
             tileMeshes.removeValue(forKey: uri)
+            gpuClipper?.discard(uri)
             clippedAway.remove(uri)
             selectedURIs.remove(uri)
             removed += 1

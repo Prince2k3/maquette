@@ -313,6 +313,59 @@ struct BoundaryPrism {
         }
     }
 
+    // MARK: - Compute Kernel
+
+    /// The prism flattened into the buffers `Tiles3DClipKernel` reads.
+    ///
+    /// Assembled here rather than in the clipper so the grid, the two circles and the tolerance stay
+    /// private to the type that derives them — and so any change to how they are derived has to come
+    /// through this one function on its way to the GPU, instead of being mirrored somewhere else and
+    /// quietly drifting out of step with the CPU clip.
+    struct KernelDescription {
+        var uniforms: Tiles3DClipKernel.Prism
+        var boundary: [SIMD2<Float>]
+        var pieces: [Tiles3DClipKernel.Piece]
+        /// Every piece's edges end to end, as `(a.x, a.y, b.x, b.y)`.
+        var pieceEdges: [SIMD4<Float>]
+        var grid: [UInt8]
+    }
+
+    var kernelDescription: KernelDescription {
+        var flattened: [Tiles3DClipKernel.Piece] = []
+        var edges: [SIMD4<Float>] = []
+        flattened.reserveCapacity(pieces.count)
+        for piece in pieces {
+            flattened.append(Tiles3DClipKernel.Piece(
+                lowerBound: piece.lowerBound,
+                upperBound: piece.upperBound,
+                edgeBegin: UInt32(edges.count),
+                edgeCount: UInt32(piece.edges.count)
+            ))
+            for edge in piece.edges {
+                edges.append(SIMD4(edge.a.x, edge.a.y, edge.b.x, edge.b.y))
+            }
+        }
+
+        return KernelDescription(
+            uniforms: Tiles3DClipKernel.Prism(
+                lowerBound: lowerBound,
+                upperBound: upperBound,
+                gridCellScale: gridCellScale,
+                centroid: centroid,
+                innerRadiusSquared: innerRadiusSquared,
+                outerRadiusSquared: outerRadiusSquared,
+                cutEdgeTolerance: cutEdgeTolerance,
+                boundaryCount: UInt32(boundary.vertices.count),
+                pieceCount: UInt32(pieces.count),
+                gridResolution: UInt32(Self.gridResolution)
+            ),
+            boundary: boundary.vertices,
+            pieces: flattened,
+            pieceEdges: edges,
+            grid: boundaryGrid.map { $0 ? 1 : 0 }
+        )
+    }
+
     /// A polygon is convex when every turn goes the same way.
     static func isConvex(_ vertices: [SIMD2<Float>]) -> Bool {
         guard vertices.count > 3 else { return true }

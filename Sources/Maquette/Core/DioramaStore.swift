@@ -826,11 +826,38 @@ public final class DioramaStore {
         configuration.maximumPanOffset
     }
 
+    /// Movement asked for by a gesture that has not been applied to the ground yet.
+    private var pendingPan: SIMD2<Float>?
+
+    /// Whether a flush of ``pendingPan`` is already on its way.
+    private var isFlushingPan = false
+
     /// Slides the terrain beneath the chunk's outline by a delta.
+    ///
+    /// Accumulated and applied once per turn of the main actor rather than immediately, because a
+    /// pan step costs more than the interval a finger delivers touches at — 10–20 ms of resampling
+    /// and effect work against an event every 8 ms on a 120 Hz display. Applied as they arrive, the
+    /// steps queue behind each other and the ground goes on moving after the finger has stopped: a
+    /// measured 640 ms drag produced 80 steps spanning 975 ms, so a third of the movement happened
+    /// with nothing touching the screen. That reads as momentum nobody asked for, and it gets worse
+    /// the faster the events arrive.
+    ///
+    /// Coalescing makes the gesture's own work an addition, so the queue drains as fast as it fills
+    /// and what the deltas add up to is applied in one step. The ground follows the finger and stops
+    /// with it, and a burst of events costs one pan rather than a dozen.
     ///
     /// - Parameter delta: Movement in diorama meters.
     public func pan(by delta: SIMD2<Float>) {
-        setPanOffset(panOffset + delta)
+        pendingPan = (pendingPan ?? .zero) + delta
+        guard !isFlushingPan else { return }
+        isFlushingPan = true
+        Task { [weak self] in
+            guard let self else { return }
+            isFlushingPan = false
+            guard let pending = pendingPan else { return }
+            pendingPan = nil
+            setPanOffset(panOffset + pending)
+        }
     }
 
     /// Slides the terrain to an absolute offset.

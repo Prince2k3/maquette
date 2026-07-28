@@ -8,10 +8,12 @@ import SwiftUI
 /// express a vertical wall even if they were present. Buildings are therefore a separate fetch and
 /// separate geometry resting on the ground.
 ///
-/// > Important: This is a prototype. Footprints come from the public Overpass API, which is
-/// > rate-limited and whose usage policy asks that applications not point end users at it, so a
-/// > shipping diorama wants a vector-tile source instead. See ``OSMBuildingProvider``.
+/// > Important: ``source`` defaults to the public Overpass API, which needs no key and is slow
+/// > enough — tens of seconds when its instances are busy — that a shipping diorama wants
+/// > ``BuildingSource/mapTiler(apiKey:)`` instead.
 public struct BuildingStyle: Sendable, Equatable {
+    /// Where the footprints are fetched from.
+    public var source: BuildingSource
     /// Color the blocks are drawn in.
     public var color: Color
     /// Opacity of the blocks, in `0...1`. Below `1` they blend, and RealityKit sorts transparent
@@ -40,6 +42,7 @@ public struct BuildingStyle: Sendable, Equatable {
 
     /// Creates a building style.
     public init(
+        source: BuildingSource = .openStreetMap,
         color: Color = Color(red: 0.35, green: 0.95, blue: 0.95),
         opacity: Float = 0.55,
         defaultHeightMeters: Double = 8,
@@ -49,6 +52,7 @@ public struct BuildingStyle: Sendable, Equatable {
         followsPan: Bool = true,
         maximumBuildings: Int = 12_000
     ) {
+        self.source = source
         self.color = color
         self.opacity = max(0, min(1, opacity))
         self.defaultHeightMeters = max(0, defaultHeightMeters)

@@ -446,11 +446,7 @@ public final class DioramaStore {
         let west = min(corners[0].longitude, corners[1].longitude)
         let east = max(corners[0].longitude, corners[1].longitude)
 
-        let provider = OSMBuildingProvider(
-            maximumBuildings: style.maximumBuildings,
-            defaultHeightMeters: style.defaultHeightMeters,
-            metersPerLevel: style.metersPerLevel
-        )
+        let provider = style.source.makeProvider(style: style)
 
         buildingsTask?.cancel()
         buildingsTask = Task { [logger] in

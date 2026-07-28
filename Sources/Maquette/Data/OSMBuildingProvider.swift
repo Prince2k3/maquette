@@ -1,33 +1,18 @@
 import Foundation
 import os
 
-/// A building footprint as OpenStreetMap describes it: a closed ring of coordinates and a height.
-public struct BuildingFootprint: Sendable, Equatable {
-    /// The outline, in geographic coordinates, wound in whatever order OSM stored it.
-    public let outline: [Coordinate]
-    /// Height above the ground in real meters.
-    public let heightMeters: Double
-
-    public init(outline: [Coordinate], heightMeters: Double) {
-        self.outline = outline
-        self.heightMeters = heightMeters
-    }
-}
-
 /// Fetches building footprints from the OpenStreetMap Overpass API.
 ///
-/// ## Why this is a prototype and not the shipping path
+/// ## Why this is the development path and not the shipping one
 ///
 /// Overpass is a query service for cartographers and analysts, not a tile server for applications:
 /// the public instances are slow, aggressively rate-limited, and their usage policy asks that
 /// software not point end users at them. It earns its place here for one reason — it answers a
-/// bounding-box query with plain JSON, so building footprints can be put on screen without first
-/// writing a Mapbox Vector Tile reader.
+/// bounding-box query with plain JSON, and it needs no key, so buildings can be put on screen
+/// against any bounding box at all with nothing to sign up for.
 ///
-/// The shipping route is vector tiles: MapTiler's `openmaptiles` schema carries a `building` layer
-/// with `render_height` already normalized, and this package already talks to MapTiler for imagery
-/// and terrain, so it would reuse the same key, the same `HTTPClient`, and the same tile cache. What
-/// it needs that this does not is a protobuf reader.
+/// The shipping route is ``MapTilerBuildingProvider``, which reads the same OSM data pre-baked into
+/// vector tiles.
 ///
 /// ## What it does not do
 ///
@@ -58,7 +43,7 @@ public struct BuildingFootprint: Sendable, Equatable {
 ///   have given up 70 s earlier with nothing.
 /// - **Say who is calling.** The usage policy asks for an identifying `User-Agent`, and an
 ///   unidentified caller is the first one throttled.
-public struct OSMBuildingProvider: Sendable {
+public struct OSMBuildingProvider: BuildingProvider {
     private static let logger = Logger(subsystem: "com.maquette", category: "OSMBuildings")
 
     /// Overpass instances to try, in order. Each is tried before any is tried a second time.

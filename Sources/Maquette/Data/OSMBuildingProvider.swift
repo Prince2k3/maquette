@@ -34,11 +34,37 @@ public struct BuildingFootprint: Sendable, Equatable {
 /// Only closed ways tagged `building` are read. Multipolygon relations — buildings with courtyards,
 /// and a scattering of large complexes — are skipped, as are `building:part` refinements and
 /// `min_height`, which together are what separate blocks-on-the-ground from a real 3D city model.
+///
+/// ## 504 is the normal failure, and it is about the queue rather than the query
+///
+/// A busy public instance answers **504 Gateway Timeout**: the front-end gives up before the
+/// dispatcher has even admitted the query. Measured here against `overpass-api.de`, a downtown San
+/// Francisco bbox answered in 2.1 s when it answered at all, and 504'd four times across ten
+/// minutes when the instance was loaded — the same query, so nothing about the query was the cause.
+/// Retrying the same host inside a few seconds therefore does nothing useful; three things do:
+///
+/// - **Ask for a smaller slot.** `[timeout:]` is not just an abort deadline, it is what the
+///   dispatcher schedules against, so a query declaring 180 s waits for a slot big enough for one.
+///   This bbox finishes in about two seconds, so it declares thirty.
+/// - **Move to another instance.** The public mirrors are independently loaded, so the fallover is
+///   what actually clears a 504. Every default here serves the whole planet — several well-known
+///   mirrors carry a regional extract only (`overpass.osm.ch` is Switzerland), and one of those
+///   silently returns an empty result set outside its region rather than an error, which would read
+///   as a city with no buildings in it.
+/// - **Lap them more than once.** They can all be busy at the same moment, so one pass through the
+///   list is not enough to call the fetch failed. Measured on device against this preset's bbox:
+///   all three 504'd on the first lap, `overpass-api.de` 504'd again on the second, and
+///   `overpass.kumi.systems` then answered — 2,368 buildings, 109 s end to end. A single lap would
+///   have given up 70 s earlier with nothing.
+/// - **Say who is calling.** The usage policy asks for an identifying `User-Agent`, and an
+///   unidentified caller is the first one throttled.
 public struct OSMBuildingProvider: Sendable {
     private static let logger = Logger(subsystem: "com.maquette", category: "OSMBuildings")
 
-    /// Overpass instance to query.
-    public let endpoint: URL
+    /// Overpass instances to try, in order. Each is tried before any is tried a second time.
+    public let endpoints: [URL]
+    /// How many times to work through `endpoints` before giving up.
+    public let rounds: Int
     /// How many buildings to keep. Beyond this the response is truncated and the drop is logged.
     public let maximumBuildings: Int
     /// Height assumed for a building that declares neither `height` nor `building:levels`.
@@ -48,19 +74,32 @@ public struct OSMBuildingProvider: Sendable {
 
     private let httpClient: any HTTPClient
 
+    /// Full-planet public Overpass instances, most-canonical first.
+    public static let defaultEndpoints: [URL] = [
+        URL(string: "https://overpass-api.de/api/interpreter")!,
+        URL(string: "https://overpass.kumi.systems/api/interpreter")!,
+        URL(string: "https://overpass.private.coffee/api/interpreter")!
+    ]
+
     public init(
-        endpoint: URL = URL(string: "https://overpass-api.de/api/interpreter")!,
+        endpoints: [URL] = OSMBuildingProvider.defaultEndpoints,
+        rounds: Int = 2,
         maximumBuildings: Int = 12_000,
         defaultHeightMeters: Double = 8,
         metersPerLevel: Double = 3.2,
         httpClient: any HTTPClient = URLSession.shared
     ) {
-        self.endpoint = endpoint
+        self.endpoints = endpoints.isEmpty ? OSMBuildingProvider.defaultEndpoints : endpoints
+        self.rounds = max(1, rounds)
         self.maximumBuildings = maximumBuildings
         self.defaultHeightMeters = defaultHeightMeters
         self.metersPerLevel = metersPerLevel
         self.httpClient = httpClient
     }
+
+    /// The statuses worth trying another instance for. Everything else — 400 for a malformed query
+    /// above all — would fail identically everywhere, so it is raised on the first answer.
+    private static let overloadedStatuses: Set<Int> = [429, 502, 503, 504]
 
     /// Fetches every building footprint whose way falls inside the bounding box.
     ///
@@ -76,28 +115,60 @@ public struct OSMBuildingProvider: Sendable {
         east: Double
     ) async throws -> [BuildingFootprint] {
         // `out geom` is what makes one request enough: it inlines each way's node coordinates
-        // instead of returning node references that would need a second query to resolve.
+        // instead of returning node references that would need a second query to resolve. Thirty
+        // seconds is a deadline this query does not need and a slot size the dispatcher can find.
         let query = """
-            [out:json][timeout:60];
+            [out:json][timeout:30];
             way["building"](\(south),\(west),\(north),\(east));
             out geom;
             """
 
+        var lastStatus = 0
+        for round in 0..<rounds {
+            for endpoint in endpoints {
+                switch try await ask(query, of: endpoint) {
+                case .answered(let data):
+                    return decode(data)
+                case .overloaded(let code):
+                    lastStatus = code
+                    Self.logger.info(
+                        "\(endpoint.host() ?? "Overpass") returned \(code); trying another instance"
+                    )
+                }
+            }
+            // The instances are independently loaded, so the fallover is what clears a 504 — this
+            // pause is only so a second lap does not read as hammering all of them at once.
+            if round + 1 < rounds { try await Task.sleep(for: .seconds(2))  }
+        }
+
+        throw DioramaError.networkFailure(
+            message: "every Overpass instance was busy (last returned \(lastStatus))"
+        )
+    }
+
+    /// One instance's answer to one query.
+    private enum Answer {
+        case answered(Data)
+        /// The instance is loaded rather than the query being wrong: worth asking another one.
+        case overloaded(Int)
+    }
+
+    private func ask(_ query: String, of endpoint: URL) async throws -> Answer {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.httpBody = Data(query.utf8)
         request.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        // The usage policy asks callers to identify themselves, and an anonymous one is throttled
+        // first.
+        request.setValue("Maquette/1.0", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await httpClient.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            // 429 and 504 are the two Overpass answers worth recognizing on sight: the public
-            // instances rate-limit hard, and a busy one times the query out rather than queueing it.
-            throw DioramaError.networkFailure(
-                message: "Overpass returned \(http.statusCode)"
-            )
+        guard let http = response as? HTTPURLResponse else { return .answered(data) }
+        if (200..<300).contains(http.statusCode) { return .answered(data) }
+        if Self.overloadedStatuses.contains(http.statusCode) {
+            return .overloaded(http.statusCode)
         }
-
-        return decode(data)
+        throw DioramaError.networkFailure(message: "Overpass returned \(http.statusCode)")
     }
 
     /// Turns an Overpass JSON response into footprints. Separated from the fetch so it can be

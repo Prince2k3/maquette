@@ -67,6 +67,65 @@ struct OSMBuildingProviderTests {
     @Test func survivesGarbage() {
         #expect(provider.decode(Data("not json".utf8)).isEmpty)
     }
+
+    private static let oneBuilding = """
+    {"elements":[{"type":"way","geometry":[
+        {"lat":37.7,"lon":-122.4},{"lat":37.7,"lon":-122.3999},{"lat":37.7001,"lon":-122.3999}],
+      "tags":{"building":"yes"}}]}
+    """
+
+    private static let busy = URL(string: "https://busy.example/api/interpreter")!
+    private static let free = URL(string: "https://free.example/api/interpreter")!
+
+    /// A 504 says the instance is loaded, not that the query is wrong, so the next instance is
+    /// asked rather than the load being failed.
+    @Test func movesToAnotherInstanceWhenOneIsOverloaded() async throws {
+        let client = MockHTTPClient(responses: [
+            Self.busy.absoluteString: .init(statusCode: 504),
+            Self.free.absoluteString: .init(data: Data(Self.oneBuilding.utf8))
+        ])
+        let provider = OSMBuildingProvider(
+            endpoints: [Self.busy, Self.free], httpClient: client
+        )
+        let buildings = try await provider.fetchBuildings(
+            south: 37.69, west: -122.41, north: 37.71, east: -122.39
+        )
+        #expect(buildings.count == 1)
+    }
+
+    /// With every instance loaded the failure has to name that, rather than surfacing whichever
+    /// status the last one happened to answer with as though it were the query's fault.
+    @Test func failsOnlyAfterEveryInstanceIsTried() async {
+        let client = MockHTTPClient(responses: [
+            Self.busy.absoluteString: .init(statusCode: 504),
+            Self.free.absoluteString: .init(statusCode: 429)
+        ])
+        let provider = OSMBuildingProvider(
+            endpoints: [Self.busy, Self.free], rounds: 1, httpClient: client
+        )
+        await #expect(throws: DioramaError.self) {
+            _ = try await provider.fetchBuildings(
+                south: 37.69, west: -122.41, north: 37.71, east: -122.39
+            )
+        }
+    }
+
+    /// A malformed query answers 400 everywhere, so asking the other instances only delays the
+    /// error — and hides which one the user actually needs to read.
+    @Test func doesNotShopAroundForAQueryEveryInstanceWillReject() async {
+        let client = MockHTTPClient(responses: [
+            Self.busy.absoluteString: .init(statusCode: 400),
+            Self.free.absoluteString: .init(data: Data(Self.oneBuilding.utf8))
+        ])
+        let provider = OSMBuildingProvider(
+            endpoints: [Self.busy, Self.free], httpClient: client
+        )
+        await #expect(throws: DioramaError.self) {
+            _ = try await provider.fetchBuildings(
+                south: 37.69, west: -122.41, north: 37.71, east: -122.39
+            )
+        }
+    }
 }
 
 @Suite("Building extrusion")

@@ -268,7 +268,9 @@ enum DemoPresets {
 }
 
 struct ContentView: View {
-    @State private var selection = 0
+    @State private var selection = DemoPresets.all.firstIndex {
+        $0.id == ProcessInfo.processInfo.environment["MAQUETTE_PRESET"]
+    } ?? 0
 
     private var preset: DemoPreset { DemoPresets.all[selection] }
 

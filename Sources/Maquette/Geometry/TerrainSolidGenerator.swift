@@ -35,8 +35,6 @@ struct ResamplingParameters {
     /// Frozen at generation. If it tracked the terrain currently under the boundary, the strata
     /// bands would slide up and down as the terrain panned beneath them.
     let wallHeight: Float
-    /// Cell size, used as the step for the surface normal's central differences.
-    let sampleStep: SIMD2<Float>
 }
 
 /// Generates a terrain chunk: a closed solid whose top is real terrain, whose sides are cut walls
@@ -125,11 +123,7 @@ public enum TerrainSolidGenerator {
         for index in geometry.top.positions.indices {
             let position = geometry.top.positions[index]
             let point = SIMD2(position.x, position.z) + panOffset
-            let sample = heightField.surfaceSample(
-                atX: point.x,
-                z: point.y,
-                sampleStep: parameters.sampleStep
-            )
+            let sample = heightField.surfaceSample(atX: point.x, z: point.y)
             geometry.top.positions[index].y = max(sample.y, floor)
             geometry.top.normals[index] = sample.normal
             geometry.top.uvs[index] = sample.textureCoordinate
@@ -175,7 +169,7 @@ public enum TerrainSolidGenerator {
         var top = Buffers()
         var walls = Buffers()
         var bottom = Buffers()
-        var resampling = ResamplingParameters(baseDepth: 0, wallHeight: 0, sampleStep: .one)
+        var resampling = ResamplingParameters(baseDepth: 0, wallHeight: 0)
     }
 
     /// Builds all chunk geometry. Exposed for testing without a RealityKit device context.
@@ -230,11 +224,7 @@ public enum TerrainSolidGenerator {
             }
         }
         let wallHeight = maxBoundarySurfaceY + baseDepth
-        geometry.resampling = ResamplingParameters(
-            baseDepth: baseDepth,
-            wallHeight: wallHeight,
-            sampleStep: cellSize
-        )
+        geometry.resampling = ResamplingParameters(baseDepth: baseDepth, wallHeight: wallHeight)
         let cumulativeEdgeLengths = cumulativeLengths(of: boundary)
         let perimeter = boundary.perimeter
         // Repeat the wall texture around the perimeter so its texels stay roughly square.
@@ -249,15 +239,14 @@ public enum TerrainSolidGenerator {
 
         // The vertex stays where the boundary put it; only what the terrain does there depends on
         // the pan offset.
+        //
+        // This takes the same combined sample `resample` does, and it has to: the two are the only
+        // things that build the top surface's shading, so deriving the normal differently here would
+        // repaint the whole chunk on the first pan step, from a drag of any size.
         func topVertex(at point: SIMD2<Float>) -> (position: SIMD3<Float>, normal: SIMD3<Float>, uv: SIMD2<Float>) {
-            let sample = point + panOffset
-            let y = heightField.surfaceY(atX: sample.x, z: sample.y)
-            let normal = surfaceNormal(heightField: heightField, at: sample, sampleStep: cellSize)
-            return (
-                SIMD3(point.x, y, point.y),
-                normal,
-                textureCoordinate(for: sample, heightField: heightField)
-            )
+            let point2D = point + panOffset
+            let sample = heightField.surfaceSample(atX: point2D.x, z: point2D.y)
+            return (SIMD3(point.x, sample.y, point.y), sample.normal, sample.textureCoordinate)
         }
 
         func sharedTopIndex(_ ix: Int, _ iz: Int) -> UInt32 {
@@ -560,27 +549,6 @@ public enum TerrainSolidGenerator {
             }
         }
         return buckets
-    }
-
-    /// Surface normal from central differences on the height field, so shading stays smooth
-    /// across cell boundaries even though neighbouring cells may not share vertices.
-    private static func surfaceNormal(
-        heightField: TerrainHeightField,
-        at point: SIMD2<Float>,
-        sampleStep: SIMD2<Float>
-    ) -> SIMD3<Float> {
-        let dx = max(sampleStep.x, 1e-6)
-        let dz = max(sampleStep.y, 1e-6)
-
-        let yLeft = heightField.surfaceY(atX: point.x - dx, z: point.y)
-        let yRight = heightField.surfaceY(atX: point.x + dx, z: point.y)
-        let yBack = heightField.surfaceY(atX: point.x, z: point.y - dz)
-        let yFront = heightField.surfaceY(atX: point.x, z: point.y + dz)
-
-        let slopeX = (yRight - yLeft) / (2 * dx)
-        let slopeZ = (yFront - yBack) / (2 * dz)
-
-        return simd_normalize(SIMD3(-slopeX, 1, -slopeZ))
     }
 
     /// Maps a diorama-space X/Z position into the satellite imagery's 0...1 texture space.

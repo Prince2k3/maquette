@@ -29,6 +29,16 @@ public struct HologramPedestal: Sendable, Equatable {
     /// How far the plate sits below the chunk's lowest ground.
     public var drop: Float
     /// Opacity of the plate itself, in `0...1`.
+    ///
+    /// The plate is drawn in the style's tint, so this reads the same way `beamOpacity` does and
+    /// wants the same small numbers — see that property for why a blend factor arrives on screen
+    /// several times brighter than it looks here. Measured on this style's own backdrop, the
+    /// default `0.02` sampled off the screen as an apparent `0.047`.
+    ///
+    /// That is deliberately dimmer than the column, which is the reverse of how the two numbers
+    /// read in isolation: the plate is a filled disc wider than the chunk, so it covers far more of
+    /// the frame than a band of light does, and the same blend factor on it reads as a solid object
+    /// rather than as a glow.
     public var plateOpacity: Float
     /// How many rings of light are drawn on the plate, working inwards from its rim.
     public var rings: Int
@@ -51,7 +61,7 @@ public struct HologramPedestal: Sendable, Equatable {
     /// Creates a pedestal.
     public init(
         drop: Float = 0.09,
-        plateOpacity: Float = 0.16,
+        plateOpacity: Float = 0.02,
         rings: Int = 3,
         beamOpacity: Float = 0.03
     ) {

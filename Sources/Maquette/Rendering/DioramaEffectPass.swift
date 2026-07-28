@@ -338,8 +338,13 @@ final class HologramEffectPass: DioramaEffectPass {
         let outline = HologramGeometry.scaled(context.boundary.vertices, by: Self.plateScale)
 
         if pedestal.plateOpacity > 0 {
+            // Tinted rather than painted in `surfaceColor`, which is what the rest of the chunk's
+            // body uses. That colour is near-black and the backdrop behind the effect is the same
+            // colour, so the plate drew nothing at any opacity: sampled off a screenshot it came
+            // back (3,13,19) against a background of (3,14,22), and `plateOpacity` was a knob with
+            // no visible range at all.
             var material = DioramaMaterials.hologramBodyMaterial(
-                color: style.surfaceColor,
+                color: style.tint,
                 opacity: pedestal.plateOpacity
             )
             // Seen from below as readily as from above once the chunk can be orbited under.

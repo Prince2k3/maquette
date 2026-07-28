@@ -245,4 +245,37 @@ struct TerrainHeightFieldTests {
         #expect(simd_distance(field.textureCoordinate(atX: 2, z: 2), SIMD2(1, 0)) < 1e-6)
         #expect(simd_distance(field.textureCoordinate(atX: 1, z: 1), SIMD2(0.5, 0.5)) < 1e-6)
     }
+
+    @Test("Sampling height, slope, and imagery together gives what sampling them apart gives")
+    func combinedSampleMatchesSeparateCalls() {
+        // The pan path takes all three at once so they share one tile lookup, which is only a
+        // saving if it is also the same answer. Three cases have to agree, and the fast path is
+        // exactly where they could stop agreeing: a point whose four neighbours land on a
+        // different tile from the point itself, a point over a hole in the mosaic, and a point
+        // past the loaded tiles altogether, where sampling clamps to the edge.
+        var tiles = (100...102).flatMap { x in (100...102).map { (x: x, y: $0) } }
+        tiles.removeAll { $0.x == 101 && $0.y == 101 }
+        let field = anchoredField(tiles: tiles, anchor: testAnchor)
+        let step = SIMD2<Float>(0.25, 0.25)
+
+        for x in stride(from: Float(-0.4), through: 3.4, by: 0.1) {
+            for z in stride(from: Float(-0.4), through: 3.4, by: 0.1) {
+                let sample = field.surfaceSample(atX: x, z: z, sampleStep: step)
+
+                let left = field.surfaceY(atX: x - step.x, z: z)
+                let right = field.surfaceY(atX: x + step.x, z: z)
+                let back = field.surfaceY(atX: x, z: z - step.y)
+                let front = field.surfaceY(atX: x, z: z + step.y)
+                let normal = simd_normalize(SIMD3<Float>(
+                    -(right - left) / (2 * step.x),
+                    1,
+                    -(front - back) / (2 * step.y)
+                ))
+
+                #expect(sample.y == field.surfaceY(atX: x, z: z))
+                #expect(simd_distance(sample.normal, normal) < 1e-6)
+                #expect(simd_distance(sample.textureCoordinate, field.textureCoordinate(atX: x, z: z)) < 1e-6)
+            }
+        }
+    }
 }

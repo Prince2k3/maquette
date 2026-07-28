@@ -251,6 +251,91 @@ public struct TerrainHeightField: Sendable {
     public func surfaceY(atX x: Float, z: Float) -> Float {
         (rawElevation(atX: x, z: z) - minElevation) * elevationScale
     }
+
+    /// Everything a surface vertex needs from the terrain at one point.
+    public struct SurfaceSample: Sendable {
+        /// Terrain height in diorama-space Y.
+        public var y: Float
+        /// Shading normal, from central differences either side of the point.
+        public var normal: SIMD3<Float>
+        /// Where the point falls in the composited imagery, in 0...1.
+        public var textureCoordinate: SIMD2<Float>
+    }
+
+    /// Samples the height, shading normal, and imagery coordinate at one point together.
+    ///
+    /// Separately these are six calls that each re-derive the same thing. The normal comes from
+    /// central differences, so it needs four more heights either side of the point — and each of
+    /// those, asked for on its own, repeats the window transform, the tile lookup, and the borrow
+    /// of that tile's value array. The four neighbours are `sampleStep` away, which is one grid
+    /// cell, so all five land on the same tile except within a cell of a tile's edge: resolving it
+    /// once and reusing it covers the overwhelming majority of a chunk's vertices. The texture
+    /// coordinate then falls out of the window point already in hand.
+    ///
+    /// Panning re-samples every vertex of the surface, so this runs tens of thousands of times a
+    /// step and is the reason the combined form exists at all.
+    ///
+    /// - Parameters:
+    ///   - x: Diorama-space X.
+    ///   - z: Diorama-space Z.
+    ///   - sampleStep: How far either side to measure the slope, in diorama meters. The generator
+    ///     passes its grid spacing, so the normal is the surface's own slope rather than a finer
+    ///     detail the mesh cannot show.
+    @inline(__always)
+    public func surfaceSample(atX x: Float, z: Float, sampleStep: SIMD2<Float>) -> SurfaceSample {
+        let dx = max(sampleStep.x, 1e-6)
+        let dz = max(sampleStep.y, 1e-6)
+
+        let center = windowPoint(atX: x, z: z)
+        let tileX = min(Int(center.x), tilesWide - 1)
+        let tileZ = min(Int(center.y), tilesTall - 1)
+
+        // Bound once for all five samples. Read as `grids[index]` per sample instead, and each one
+        // borrows the tile's value array again for a single interpolation.
+        let resident = gridIndexBySlot[tileZ * tilesWide + tileX].map { grids[$0] }
+
+        @inline(__always)
+        func elevation(at point: SIMD2<Float>) -> Float {
+            let pointX = min(Int(point.x), tilesWide - 1)
+            let pointZ = min(Int(point.y), tilesTall - 1)
+            let fracX = (point.x - Float(pointX)).clampedToUnitRange
+            let fracZ = (point.y - Float(pointZ)).clampedToUnitRange
+
+            if pointX == tileX, pointZ == tileZ {
+                // A gap in the mosaic falls back to the baseline, so the surface stays continuous.
+                guard let resident else { return minElevation }
+                return resident.bilinearElevation(fracX: fracX, fracY: fracZ)
+            }
+            guard let index = gridIndexBySlot[pointZ * tilesWide + pointX] else { return minElevation }
+            return grids[index].bilinearElevation(fracX: fracX, fracY: fracZ)
+        }
+
+        @inline(__always)
+        func surfaceY(at point: SIMD2<Float>) -> Float {
+            (elevation(at: point) - minElevation) * elevationScale
+        }
+
+        // The neighbours go through the full window transform rather than being offset from the
+        // center in window space. Folding the step in there would fuse the multiply differently and
+        // move the last bits of the slope, and this replaces code whose shading is already on
+        // screen; the four extra multiply-adds are far below what the tile lookups cost.
+        let yLeft = surfaceY(at: windowPoint(atX: x - dx, z: z))
+        let yRight = surfaceY(at: windowPoint(atX: x + dx, z: z))
+        let yBack = surfaceY(at: windowPoint(atX: x, z: z - dz))
+        let yFront = surfaceY(at: windowPoint(atX: x, z: z + dz))
+
+        let slopeX = (yRight - yLeft) / (2 * dx)
+        let slopeZ = (yFront - yBack) / (2 * dz)
+
+        return SurfaceSample(
+            y: surfaceY(at: center),
+            normal: simd_normalize(SIMD3(-slopeX, 1, -slopeZ)),
+            textureCoordinate: SIMD2(
+                tilesWideFloat > 0 ? center.x / tilesWideFloat : 0,
+                tilesTallFloat > 0 ? 1 - center.y / tilesTallFloat : 0
+            )
+        )
+    }
 }
 
 extension ElevationGrid {

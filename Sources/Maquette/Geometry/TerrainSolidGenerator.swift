@@ -120,17 +120,19 @@ public enum TerrainSolidGenerator {
         // walls and poke through the bottom face. Resting it on the floor keeps the solid closed.
         let floor = -parameters.baseDepth
 
-        // Surface: height, shading, and imagery all follow the terrain.
+        // Surface: height, shading, and imagery all follow the terrain, and are taken together
+        // because they share the tile lookup underneath — see `surfaceSample`.
         for index in geometry.top.positions.indices {
             let position = geometry.top.positions[index]
-            let sample = SIMD2(position.x, position.z) + panOffset
-            geometry.top.positions[index].y = max(heightField.surfaceY(atX: sample.x, z: sample.y), floor)
-            geometry.top.normals[index] = surfaceNormal(
-                heightField: heightField,
-                at: sample,
+            let point = SIMD2(position.x, position.z) + panOffset
+            let sample = heightField.surfaceSample(
+                atX: point.x,
+                z: point.y,
                 sampleStep: parameters.sampleStep
             )
-            geometry.top.uvs[index] = textureCoordinate(for: sample, heightField: heightField)
+            geometry.top.positions[index].y = max(sample.y, floor)
+            geometry.top.normals[index] = sample.normal
+            geometry.top.uvs[index] = sample.textureCoordinate
         }
 
         // Walls: `appendWallQuad` emits its four vertices as top, bottom, top, bottom, so the

@@ -49,12 +49,36 @@ enum BuildingExtruder {
     ///   - heightField: Supplies both the ground under each footprint and the geographic mapping.
     ///   - boundary: The chunk's outline. Footprints not wholly inside it are dropped.
     ///   - style: Height defaults and the vertical scale to draw at.
+    ///
+    /// ## Isolation
+    ///
+    /// `@concurrent` rather than a bare `nonisolated async`, because the whole point of this being
+    /// async is to get off the main actor and the bare spelling only does that by default. Under
+    /// `NonisolatedNonsendingByDefault` — an upcoming feature now, the default in Swift 7 — a
+    /// `nonisolated async` function runs on its *caller's* executor instead, which would quietly put
+    /// the whole loop back on the main actor without a diagnostic anywhere.
+    ///
+    /// The attribute has to carry that on its own: where this runs is not observable from a test.
+    /// Timing it from the calling actor looks like it should work and does not — an `async let`
+    /// child races the parent's own resumption onto the actor's queue, so the stall it measures is
+    /// scheduling order, not isolation. Written that way it passes just as happily with the extrude
+    /// pinned to `@MainActor`, which is how the attempt was caught. What settled it was a temporary
+    /// `Thread.isMainThread` probe on device — `false`, on a thread the store was not running on.
+    ///
+    /// The cost this is worth is smaller than it first appeared, and the reason is worth recording:
+    /// 8,480 downtown footprints extrude in **31 ms in a Release build and 3,164 ms in a Debug one**.
+    /// The loop is scalar arithmetic over every corner of every footprint, the shape unoptimised
+    /// Swift punishes hardest — the same ~100× that `Tiles3DClipper` shows. So the multi-second stall
+    /// that motivated moving this off the main actor was a debug-build artifact. Two frames is still
+    /// worth not spending on the main actor, and the loop scales with `BuildingStyle
+    /// .maximumBuildings`, but do not quote seconds for it.
+    @concurrent
     static func extrude(
         footprints: [BuildingFootprint],
         heightField: TerrainHeightField,
         boundary: DioramaBoundary,
         style: BuildingStyle
-    ) -> Result {
+    ) async -> Result {
         var result = Result(mesh: IndexedMesh(), kept: 0, droppedOutside: 0, droppedDegenerate: 0)
 
         // A typical footprint is a quad: 4 side quads plus a roof fan is about 20 vertices.
@@ -63,7 +87,12 @@ enum BuildingExtruder {
         let anchor = heightField.anchor
         var outline: [SIMD2<Float>] = []
 
-        for footprint in footprints {
+        for (index, footprint) in footprints.enumerated() {
+            // A preset switch mid-extrude should not pay for footprints nobody will see. Checked in
+            // batches because the cost is per-check, not per-footprint, and abandoned without
+            // logging: a partial count is not a result worth reporting.
+            if index & 0xFF == 0, Task.isCancelled { return result }
+
             outline.removeAll(keepingCapacity: true)
             outline.reserveCapacity(footprint.outline.count)
 

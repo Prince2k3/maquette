@@ -208,7 +208,7 @@ struct BuildingExtruderTests {
 
     /// Footprints crossing the outline are dropped rather than clipped: clipping *against* a
     /// possibly-concave boundary is the direction Sutherland-Hodgman gets wrong.
-    @Test func keepsOnlyFootprintsWhollyInsideTheOutline() throws {
+    @Test func keepsOnlyFootprintsWhollyInsideTheOutline() async throws {
         let heightField = flatHeightField()
         let anchor = heightField.anchor
         let boundary = DioramaBoundary.make(shape: .circular, extent: SIMD2(1, 1))
@@ -222,7 +222,7 @@ struct BuildingExtruderTests {
             )
         }
 
-        let result = BuildingExtruder.extrude(
+        let result = await BuildingExtruder.extrude(
             footprints: [
                 footprint(atDioramaX: 0, z: 0, half: 0.02),        // dead centre
                 footprint(atDioramaX: 0.49, z: 0, half: 0.02),     // straddling the rim
@@ -252,11 +252,11 @@ struct BuildingExtruderTests {
 
     /// A footprint whose scaled height rounds to nothing would draw a sheet that z-fights the
     /// terrain, which reads worse than drawing it slightly too tall.
-    @Test func neverDrawsABuildingFlat() throws {
+    @Test func neverDrawsABuildingFlat() async throws {
         let heightField = flatHeightField()
         let anchor = heightField.anchor
         let style = BuildingStyle(minimumDrawnHeight: 0.01)
-        let result = BuildingExtruder.extrude(
+        let result = await BuildingExtruder.extrude(
             footprints: [
                 BuildingFootprint(
                     outline: square(0.02).map {

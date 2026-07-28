@@ -468,7 +468,10 @@ public final class DioramaStore {
             guard !Task.isCancelled else { return }
 
             let fetched = ContinuousClock.now
-            let result = BuildingExtruder.extrude(
+            // Awaited rather than called: `extrude` is `@concurrent`, so this hands the whole scalar
+            // loop to the cooperative pool and comes back to the main actor holding the finished
+            // mesh. Structured, so cancelling `buildingsTask` still reaches into the loop.
+            let result = await BuildingExtruder.extrude(
                 footprints: footprints,
                 heightField: heightField,
                 boundary: boundary,

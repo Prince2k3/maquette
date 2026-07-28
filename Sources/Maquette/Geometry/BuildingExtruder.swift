@@ -136,6 +136,44 @@ enum BuildingExtruder {
         return planar
     }
 
+    /// Folds newly fetched footprints in with the ones already held, keeping the target box's worth.
+    ///
+    /// Two things have to happen at once here, and both are about a pan that keeps going.
+    ///
+    /// A provider is asked for a box and answers with whatever it holds that *touches* it: Overpass
+    /// returns any way crossing the bounds, and the vector-tile provider returns whole tiles. So a
+    /// strip abutting ground already fetched brings back buildings that are already in hand, and
+    /// pasting the two lists together would draw those twice — at double the triangles, z-fighting
+    /// with themselves. A footprint centred on ground the previous fetch covered is therefore taken
+    /// to be one of that fetch's, which is exact for both providers unless a query hit its cap.
+    ///
+    /// And what falls outside `target` is dropped rather than remembered. The arena is rebuilt whole
+    /// whenever the ground moves under it, so a city the chunk left an hour ago would be re-extruded
+    /// on every roll for the rest of the session. The trade is that panning back across the seam
+    /// fetches it again.
+    ///
+    /// - Parameters:
+    ///   - fetched: Footprints just returned, in diorama space.
+    ///   - held: Footprints already in hand.
+    ///   - target: The ground the result should cover.
+    ///   - covered: The ground `held` came from, which is where duplicates can be recognised.
+    static func merge(
+        _ fetched: [PlanarFootprint],
+        into held: [PlanarFootprint],
+        covering target: GroundBox,
+        alreadyHeld covered: GroundBox
+    ) -> [PlanarFootprint] {
+        var footprints = held.filter { target.overlaps(lo: $0.minCorner, hi: $0.maxCorner) }
+        for footprint in fetched {
+            let centre = (footprint.minCorner + footprint.maxCorner) / 2
+            guard !covered.contains(centre),
+                  target.overlaps(lo: footprint.minCorner, hi: footprint.maxCorner)
+            else { continue }
+            footprints.append(footprint)
+        }
+        return footprints
+    }
+
     /// Extrudes every footprint the fetch covered, once, into one arena.
     ///
     /// ## Why this is separate from the cut

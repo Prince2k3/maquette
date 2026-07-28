@@ -130,6 +130,8 @@ public final class DioramaStore {
         buildingsTask = nil
         buildingsCutTask?.cancel()
         buildingsCutTask = nil
+        buildingsFetchTask?.cancel()
+        buildingsFetchTask = nil
         buildings = nil
         rolling = nil
         samplerTemplate = nil
@@ -423,25 +425,46 @@ public final class DioramaStore {
     /// What standing buildings on a chunk that pans needs to keep between selections.
     private struct BuildingsState {
         let style: BuildingStyle
-        /// Every footprint fetched, in diorama space — including the margin ring, which is outside
-        /// the outline at rest and is the whole reason a pan has anything new to show. Kept because a
-        /// roll makes the arena stale and it has to be built again from these.
-        let footprints: [BuildingExtruder.PlanarFootprint]
+        /// Where more footprints come from when the chunk pans off the ones in hand.
+        let provider: any BuildingProvider
+        /// Every footprint held, in diorama space — including the margin ring, which is outside the
+        /// outline at rest and is the whole reason a pan has anything new to show. Kept because both
+        /// a roll and a fetch make the arena stale and it has to be built again from these.
+        var footprints: [BuildingExtruder.PlanarFootprint]
         /// All of them extruded, once. A pan selects out of this rather than rebuilding it.
         var blocks: BuildingExtruder.Blocks
+        /// The ground `footprints` covers. Slides with the chunk, one strip at a time.
+        var covered: GroundBox
         let boundary: DioramaBoundary
         /// The ground the blocks stand on. A roll replaces it.
         var heightField: TerrainHeightField
         /// The offset the drawn selection was made for.
         var cutOffset: SIMD2<Float>
-        /// Set when the ground changed under an arena that is otherwise current.
-        var groundChanged = false
+        /// Set when the arena no longer describes `footprints` standing on `heightField` — either
+        /// because the ground moved under them or because a fetch changed which ones are held.
+        var blocksStale = false
+        /// Bumped whenever `footprints` or `heightField` is replaced.
+        ///
+        /// A rebuild takes tens of milliseconds off the main actor, and a fetch or a roll can land
+        /// inside that window. Without a generation the rebuild would come back and install an arena
+        /// for inputs that no longer exist, clearing `blocksStale` as it went — so the new footprints
+        /// would sit in the state, unextruded, until something else happened to invalidate it.
+        var generation = 0
         /// How far the chunk may slide before it is worth selecting again.
         let threshold: Float
     }
 
     private var buildings: BuildingsState?
     private var buildingsCutTask: Task<Void, Never>?
+    private var buildingsFetchTask: Task<Void, Never>?
+
+    /// Fraction of the pan ring the chunk may spend before more buildings are asked for.
+    ///
+    /// Hysteresis, and the reason it is needed here but not for terrain: tiles are chunky enough that
+    /// a rolling window quantises the question on its own, while a building region is continuous and
+    /// would otherwise issue a query for every millimetre of drag. Half the ring means an ordinary
+    /// drag fetches once and still has the other half in hand while the answer is out.
+    private static let buildingsRefetchTrigger: Float = 0.5
 
     /// Fetches OpenStreetMap footprints and stands them on the chunk, without holding up the load.
     ///
@@ -456,21 +479,12 @@ public final class DioramaStore {
         guard let style = configuration.buildings else { return }
 
         // Cover the pan margin as well as the chunk, so an ordinary drag slides onto ground that
-        // already has buildings on it. They are extruded once and never re-cut, so this is the only
-        // chance to fetch the ring.
-        let margin = configuration.maximumPanOffset
-        let lo = boundary.minCorner - margin
-        let hi = boundary.minCorner + boundary.extent + margin
-        let anchor = heightField.anchor
-        let corners = [
-            anchor.coordinate(forDioramaX: Double(lo.x), z: Double(lo.y)),
-            anchor.coordinate(forDioramaX: Double(hi.x), z: Double(hi.y))
-        ]
-        // Z counts southward in tile space, so the corners come back with latitude inverted.
-        let south = min(corners[0].latitude, corners[1].latitude)
-        let north = max(corners[0].latitude, corners[1].latitude)
-        let west = min(corners[0].longitude, corners[1].longitude)
-        let east = max(corners[0].longitude, corners[1].longitude)
+        // already has buildings on it rather than waiting for a query.
+        let covered = GroundBox(
+            lo: boundary.minCorner,
+            hi: boundary.minCorner + boundary.extent
+        ).expanded(by: configuration.maximumPanOffset)
+        let box = covered.geographicBounds(anchor: heightField.anchor)
 
         let provider = style.source.makeProvider(style: style)
 
@@ -480,7 +494,7 @@ public final class DioramaStore {
             let footprints: [BuildingFootprint]
             do {
                 footprints = try await provider.fetchBuildings(
-                    south: south, west: west, north: north, east: east
+                    south: box.south, west: box.west, north: box.north, east: box.east
                 )
             } catch {
                 // A missing prototype layer is not a reason to fail a diorama that already renders.
@@ -509,8 +523,10 @@ public final class DioramaStore {
 
             self.buildings = BuildingsState(
                 style: style,
+                provider: provider,
                 footprints: planar,
                 blocks: blocks,
+                covered: covered,
                 boundary: boundary,
                 heightField: heightField,
                 cutOffset: offset,
@@ -527,8 +543,10 @@ public final class DioramaStore {
             entity.setPanOffset(offset)
             rootEntity.setBuildings(entity)
             // The offset may have moved while the fetch was out, and this is the first selection, so
-            // nothing else would notice.
+            // nothing else would notice — including that the chunk may already be standing off the
+            // ring this fetch covered.
             recutBuildingsIfNeeded()
+            refetchBuildingsIfNeeded()
 
             let finished = ContinuousClock.now
             logger.info("""
@@ -553,9 +571,9 @@ public final class DioramaStore {
     /// nothing about a block's geometry depends on the pan, so a step that re-extruded was doing the
     /// heaviest work in the library at drag rate, and in a debug build that is seconds per step.
     ///
-    /// A roll is the one thing that invalidates the arena, because `baseY` comes off the height
-    /// field. The old arena stays drawn while the new one is built, so the ground moves a moment
-    /// before the blocks re-seat on it.
+    /// Two things do invalidate the arena: a roll, because `baseY` comes off the height field, and a
+    /// fetch, because there are footprints in hand that are not in it. The old arena stays drawn
+    /// while the new one is built, so the ground moves a moment before the blocks re-seat on it.
     ///
     /// Shaped like ``rollTerrainIfNeeded()`` and for the same reason: one runs at a time and re-reads
     /// the offset when it lands, because the offset it started from is stale by then. A drag can
@@ -573,7 +591,7 @@ public final class DioramaStore {
                 let started = ContinuousClock.now
 
                 var blocks = state.blocks
-                if state.groundChanged {
+                if state.blocksStale {
                     blocks = await BuildingExtruder.build(
                         footprints: state.footprints,
                         heightField: state.heightField,
@@ -586,31 +604,122 @@ public final class DioramaStore {
                     panOffset: offset
                 )
                 guard !Task.isCancelled, buildings != nil else { return }
+                // A fetch or a roll landing during the rebuild means this arena was built from
+                // inputs the state no longer holds. Installing it would be wrong and clearing the
+                // flag would be worse — the loop goes round again on the current ones instead.
+                guard buildings?.generation == state.generation else { continue }
 
                 let entity = (dioramaEntity as? DioramaEntity)?.buildings
-                if state.groundChanged {
+                if state.blocksStale {
                     buildings?.blocks = blocks
                     entity?.install(blocks)
                 }
                 entity?.show(selection)
                 buildings?.cutOffset = offset
-                buildings?.groundChanged = false
+                buildings?.blocksStale = false
 
                 logger.debug("""
                     Drew \(selection.kept) buildings at \
                     \(offset.x, format: .fixed(precision: 4)), \
                     \(offset.y, format: .fixed(precision: 4)) in \
                     \(String(format: "%.2f", (ContinuousClock.now - started).milliseconds)) ms\
-                    \(state.groundChanged ? " (re-extruded)" : "")
+                    \(state.blocksStale ? " (re-extruded)" : "")
                     """)
             }
         }
     }
 
     private func buildingsNeedCutting(_ state: BuildingsState) -> Bool {
-        state.groundChanged
+        state.blocksStale
             || simd_distance_squared(panOffset, state.cutOffset) > state.threshold * state.threshold
     }
+
+    /// Fetches footprints for ground the chunk is panning onto.
+    ///
+    /// The selection can only draw what has been fetched, so without this a pan runs the buildings
+    /// out at the edge of the initial ring while the terrain rolls happily onward — a downtown that
+    /// simply stops, which reads as data missing rather than as a limit.
+    ///
+    /// Shaped like ``rollTerrainIfNeeded()``, and ahead of the frontier for the same reason: the
+    /// trigger box is the outline plus *half* the ring, so the query goes out while there is still
+    /// half a ring of buildings to slide onto. What arrives is only the difference —
+    /// ``GroundBox/subtracting(_:)`` — because a query costs seconds against Overpass and asking it
+    /// again for the city already in hand is the expensive way to learn nothing.
+    ///
+    /// The region is then *replaced* rather than accumulated: what falls outside the new one is
+    /// dropped. Keeping it would grow the arena without bound along a long pan, and the arena is
+    /// rebuilt whole every time the ground moves under it, so the cost of remembering a city already
+    /// left behind is paid on every roll. The trade is that panning back across the seam fetches
+    /// again.
+    private func refetchBuildingsIfNeeded() {
+        guard buildingsFetchTask == nil, let state = buildings, state.style.followsPan else { return }
+        guard buildingsNeedFetching(state) else { return }
+
+        buildingsFetchTask = Task { [self] in
+            defer { buildingsFetchTask = nil }
+            while let state = buildings, !Task.isCancelled, buildingsNeedFetching(state) {
+                let target = buildingsTarget(state)
+                let anchor = state.heightField.anchor
+                let started = ContinuousClock.now
+
+                var fetched: [BuildingFootprint] = []
+                for strip in target.subtracting(state.covered) {
+                    let box = strip.geographicBounds(anchor: anchor)
+                    do {
+                        fetched += try await state.provider.fetchBuildings(
+                            south: box.south, west: box.west, north: box.north, east: box.east
+                        )
+                    } catch {
+                        // The ground already in hand still draws; the strip is asked for again on
+                        // the next step, which is the same thing a failed terrain roll does.
+                        logger.error("Could not fetch more buildings: \(error.localizedDescription)")
+                        return
+                    }
+                }
+                guard !Task.isCancelled, buildings != nil else { return }
+
+                let planar = await BuildingExtruder.project(fetched, anchor: anchor)
+                guard !Task.isCancelled, let state = buildings else { return }
+
+                let footprints = BuildingExtruder.merge(
+                    planar,
+                    into: state.footprints,
+                    covering: target,
+                    alreadyHeld: state.covered
+                )
+                buildings?.footprints = footprints
+                buildings?.covered = target
+                buildings?.blocksStale = true
+                buildings?.generation += 1
+                recutBuildingsIfNeeded()
+
+                logger.info("""
+                    Fetched \(planar.count) more building footprints, holding \(footprints.count): \
+                    \(String(format: "%.0f", (ContinuousClock.now - started).milliseconds)) ms
+                    """)
+            }
+        }
+    }
+
+    /// The ground a fetch would cover: the outline where it stands now, plus the whole pan ring.
+    private func buildingsTarget(_ state: BuildingsState) -> GroundBox {
+        GroundBox(
+            lo: state.boundary.minCorner + panOffset,
+            hi: state.boundary.minCorner + state.boundary.extent + panOffset
+        ).expanded(by: configuration.maximumPanOffset)
+    }
+
+    private func buildingsNeedFetching(_ state: BuildingsState) -> Bool {
+        let outline = GroundBox(
+            lo: state.boundary.minCorner + panOffset,
+            hi: state.boundary.minCorner + state.boundary.extent + panOffset
+        )
+        let trigger = outline.expanded(
+            by: configuration.maximumPanOffset * Self.buildingsRefetchTrigger
+        )
+        return !state.covered.contains(trigger)
+    }
+
 
     /// Tiles of ground kept beyond the chunk, from the margin the configuration asks for.
     ///
@@ -780,6 +889,7 @@ public final class DioramaStore {
         applyContent(appliedContent)
 
         recutBuildingsIfNeeded()
+        refetchBuildingsIfNeeded()
         rollTerrainIfNeeded()
     }
 
@@ -870,7 +980,8 @@ public final class DioramaStore {
         // the outline has not moved. The anchor survives a roll, so their footprints do not have to
         // be projected again.
         buildings?.heightField = roll.heightField
-        buildings?.groundChanged = true
+        buildings?.blocksStale = true
+        buildings?.generation += 1
         recutBuildingsIfNeeded()
 
         logger.debug(

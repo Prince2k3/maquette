@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 import RealityKit
 import Testing
@@ -526,5 +527,60 @@ struct BuildingExtruderTests {
         #expect(simd_distance(projected.minCorner, SIMD2(0.08, -0.32)) < 1e-5)
         #expect(simd_distance(projected.maxCorner, SIMD2(0.12, -0.28)) < 1e-5)
         #expect(projected.heightMeters == 20)
+    }
+}
+
+@Suite("Building visibility")
+@MainActor
+struct BuildingVisibilityTests {
+    private func configuration(buildings: BuildingStyle?) -> DioramaConfiguration {
+        DioramaConfiguration(
+            center: CLLocationCoordinate2D(latitude: 37.7929, longitude: -122.3971),
+            radiusMeters: 800,
+            physicalDiameter: 0.8,
+            panRange: 0.8,
+            buildings: buildings
+        )
+    }
+
+    /// The default is drawn: a caller that asked for buildings at all wants to see them.
+    @Test func buildingsAreVisibleUnlessAskedOtherwise() {
+        #expect(BuildingStyle.standard.isVisible)
+        #expect(BuildingStyle.solid.isVisible)
+        #expect(!BuildingStyle(isVisible: false).isVisible)
+    }
+
+    /// Hiding is a restyle, not a scope change — the style stays on the configuration, so everything
+    /// that was fetched for it is still described and nothing has to be asked for again.
+    @Test func hidingKeepsTheStyleOnTheConfiguration() {
+        let store = DioramaStore(configuration: configuration(buildings: .standard))
+        #expect(store.buildingsVisible)
+
+        store.setBuildingsVisible(false)
+        #expect(!store.buildingsVisible)
+        #expect(store.configuration.buildings != nil)
+
+        store.setBuildingsVisible(true)
+        #expect(store.buildingsVisible)
+        #expect(store.configuration.buildings?.isVisible == true)
+    }
+
+    /// A style asking to start hidden is honoured from the first frame, so the toggle reads the way
+    /// the diorama looks rather than the other way round.
+    @Test func aStyleCanStartHidden() {
+        let store = DioramaStore(configuration: configuration(buildings: BuildingStyle(isVisible: false)))
+        #expect(!store.buildingsVisible)
+        store.setBuildingsVisible(true)
+        #expect(store.buildingsVisible)
+    }
+
+    /// No buildings were requested, so there is nothing to show and nothing to hide. Answering `true`
+    /// would make an empty diorama claim to be drawing a city.
+    @Test func aDioramaWithNoBuildingsHasNothingToShow() {
+        let store = DioramaStore(configuration: configuration(buildings: nil))
+        #expect(!store.buildingsVisible)
+        store.setBuildingsVisible(true)
+        #expect(!store.buildingsVisible)
+        #expect(store.configuration.buildings == nil)
     }
 }

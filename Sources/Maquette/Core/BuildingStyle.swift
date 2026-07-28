@@ -37,6 +37,16 @@ public struct BuildingStyle: Sendable, Equatable {
     public var minimumDrawnHeight: Float
     /// Whether buildings track the pan offset, so they stay over the ground they belong to.
     public var followsPan: Bool
+    /// Whether the blocks are drawn.
+    ///
+    /// A switch, not a scope: `nil` buildings on a ``DioramaConfiguration`` are never fetched, while
+    /// `isVisible == false` keeps the fetch and the arena and only stops drawing them. Turning them
+    /// back on therefore costs nothing — no query, no re-extrude, no reload — which is what makes
+    /// this usable as a live toggle rather than as a load-time decision.
+    ///
+    /// While they are off, the per-pan re-select and the pan refetch stand down too, since both exist
+    /// only to keep what is drawn correct. Both are brought back up to date when they come on.
+    public var isVisible: Bool
     /// Most footprints to fetch. The drop is logged when it bites.
     public var maximumBuildings: Int
 
@@ -50,6 +60,7 @@ public struct BuildingStyle: Sendable, Equatable {
         exaggeration: Float = 1,
         minimumDrawnHeight: Float = 0.0015,
         followsPan: Bool = true,
+        isVisible: Bool = true,
         maximumBuildings: Int = 12_000
     ) {
         self.source = source
@@ -60,6 +71,7 @@ public struct BuildingStyle: Sendable, Equatable {
         self.exaggeration = max(0, exaggeration)
         self.minimumDrawnHeight = max(0, minimumDrawnHeight)
         self.followsPan = followsPan
+        self.isVisible = isVisible
         self.maximumBuildings = max(0, maximumBuildings)
     }
 

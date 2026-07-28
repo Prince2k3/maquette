@@ -70,6 +70,9 @@ struct IOSDioramaView: View {
         .onChange(of: effect) { _, newEffect in
             store.setEffect(newEffect)
         }
+        .onChange(of: configuration.buildings?.isVisible) { _, isVisible in
+            store.setBuildingsVisible(isVisible ?? false)
+        }
         .onChange(of: routePreviewController?.playbackState) { _, newState in
             RouteAnimationHelper.handlePlaybackStateChange(
                 newState,

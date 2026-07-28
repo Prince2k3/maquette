@@ -42,6 +42,22 @@ final class BuildingsEntity: Entity {
     /// How many buildings the current mesh draws.
     private(set) var buildingCount = 0
 
+    /// Whether the caller wants the blocks drawn at all.
+    ///
+    /// Held apart from `isEnabled`, which answers a different question — whether there is anything to
+    /// draw. Both end up as the same flag on the entity, so a caller that reached for `isEnabled`
+    /// directly would have its choice overwritten by the next ``show(_:)``, which is every few
+    /// milliseconds during a pan.
+    var isVisible = true {
+        didSet {
+            guard isVisible != oldValue else { return }
+            applyVisibility()
+        }
+    }
+
+    /// Whether ``show(_:)`` last put geometry in the index buffer.
+    private var hasGeometry = false
+
     init(style: BuildingStyle) {
         self.material = DioramaMaterials.buildingMaterial(
             color: style.color,
@@ -50,7 +66,8 @@ final class BuildingsEntity: Entity {
         self.followsPan = style.followsPan
         super.init()
         addChild(model)
-        isEnabled = false
+        isVisible = style.isVisible
+        applyVisibility()
     }
 
     @MainActor required init() {
@@ -65,7 +82,8 @@ final class BuildingsEntity: Entity {
     func install(_ blocks: BuildingExtruder.Blocks) {
         buffer = nil
         model.model = nil
-        isEnabled = false
+        hasGeometry = false
+        applyVisibility()
         buildingCount = 0
         guard !blocks.vertices.isEmpty, !blocks.indices.isEmpty else { return }
 
@@ -90,7 +108,12 @@ final class BuildingsEntity: Entity {
     func show(_ selection: BuildingExtruder.Selection) {
         buildingCount = selection.kept
         guard let buffer else { return }
-        isEnabled = buffer.writeIndices(selection.indices, bounds: selection.bounds) != .empty
+        hasGeometry = buffer.writeIndices(selection.indices, bounds: selection.bounds) != .empty
+        applyVisibility()
+    }
+
+    private func applyVisibility() {
+        isEnabled = hasGeometry && isVisible
     }
 
     /// Slides the buildings with the ground.

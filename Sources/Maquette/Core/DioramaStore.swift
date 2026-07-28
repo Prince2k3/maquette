@@ -161,6 +161,32 @@ public final class DioramaStore {
         rebuildEffect()
     }
 
+    // MARK: - Buildings
+
+    /// Whether the extruded buildings are drawn. `false` for a diorama that asked for none.
+    ///
+    /// Reads through the configuration rather than shadowing it, so there is one answer to the
+    /// question however it is asked.
+    public var buildingsVisible: Bool { configuration.buildings?.isVisible ?? false }
+
+    /// Shows or hides the buildings, keeping everything that was fetched for them.
+    ///
+    /// The same shape as ``setEffect(_:)`` and for the same reason: this is a restyle of the finished
+    /// scene, so it never queries a provider or rebuilds a mesh, and setting it before the buildings
+    /// have arrived is fine — the entity is created with the configuration's own flag.
+    ///
+    /// Turning them back on is where the work is. A hidden layer stands its pan work down, so the
+    /// selection on screen and the ground fetched for it are both as stale as the pan that happened
+    /// while it was off; both are brought back up to date here.
+    public func setBuildingsVisible(_ visible: Bool) {
+        guard configuration.buildings != nil, visible != buildingsVisible else { return }
+        configuration.buildings?.isVisible = visible
+        (dioramaEntity as? DioramaEntity)?.buildings?.isVisible = visible
+        guard visible else { return }
+        recutBuildingsIfNeeded()
+        refetchBuildingsIfNeeded()
+    }
+
     private var effectContext: DioramaEffectContext {
         DioramaEffectContext(
             boundary: configuration.boundary,
@@ -582,11 +608,12 @@ public final class DioramaStore {
     /// right place and merely a little late at the rim.
     private func recutBuildingsIfNeeded() {
         guard buildingsCutTask == nil, let state = buildings, state.style.followsPan else { return }
-        guard buildingsNeedCutting(state) else { return }
+        guard buildingsVisible, buildingsNeedCutting(state) else { return }
 
         buildingsCutTask = Task { [self] in
             defer { buildingsCutTask = nil }
-            while let state = buildings, !Task.isCancelled, buildingsNeedCutting(state) {
+            while let state = buildings, !Task.isCancelled, buildingsVisible,
+                  buildingsNeedCutting(state) {
                 let offset = panOffset
                 let started = ContinuousClock.now
 
@@ -653,11 +680,12 @@ public final class DioramaStore {
     /// again.
     private func refetchBuildingsIfNeeded() {
         guard buildingsFetchTask == nil, let state = buildings, state.style.followsPan else { return }
-        guard buildingsNeedFetching(state) else { return }
+        guard buildingsVisible, buildingsNeedFetching(state) else { return }
 
         buildingsFetchTask = Task { [self] in
             defer { buildingsFetchTask = nil }
-            while let state = buildings, !Task.isCancelled, buildingsNeedFetching(state) {
+            while let state = buildings, !Task.isCancelled, buildingsVisible,
+                  buildingsNeedFetching(state) {
                 let target = buildingsTarget(state)
                 let anchor = state.heightField.anchor
                 let started = ContinuousClock.now

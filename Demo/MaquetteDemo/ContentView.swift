@@ -264,6 +264,7 @@ enum DemoPresets {
                 effect: .hologram
             )
         }(),
+
     ]
 }
 
@@ -272,7 +273,19 @@ struct ContentView: View {
         $0.id == ProcessInfo.processInfo.environment["MAQUETTE_PRESET"]
     } ?? 0
 
+    @State private var buildingsVisible = true
+
     private var preset: DemoPreset { DemoPresets.all[selection] }
+
+    /// The preset's configuration with the live toggles folded in.
+    ///
+    /// Flipping `isVisible` hands `DioramaView` a changed configuration on a view whose `id` has not
+    /// moved, so the store is the one already loaded and the buildings are hidden rather than refetched.
+    private var configuration: DioramaConfiguration {
+        var configuration = preset.configuration
+        configuration.buildings?.isVisible = buildingsVisible
+        return configuration
+    }
 
     var body: some View {
         ZStack {
@@ -281,15 +294,27 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 header
 
-                DioramaView(configuration: preset.configuration)
+                DioramaView(configuration: configuration)
                     .dioramaEffect(preset.effect)
                     .id(preset.id)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+                if preset.configuration.buildings != nil {
+                    buildingsToggle
+                }
                 presetPicker
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    private var buildingsToggle: some View {
+        Toggle("Buildings", isOn: $buildingsVisible)
+            .font(.subheadline.weight(.medium))
+            .toggleStyle(.switch)
+            .tint(.accentColor)
+            .padding(.horizontal, 16)
+            .accessibilityIdentifier("toggle-buildings")
     }
 
     private var header: some View {

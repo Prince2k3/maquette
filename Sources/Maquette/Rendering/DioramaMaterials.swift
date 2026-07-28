@@ -171,6 +171,35 @@ public enum DioramaMaterials {
         return material
     }
 
+    /// Creates the material extruded buildings are drawn with.
+    ///
+    /// Lit, unlike the hologram's own surfaces: a block's whole job is to read as a volume, and four
+    /// walls and a roof painted one flat color read as a silhouette instead. Culling stays on, since
+    /// a building is a closed prism and its inside is never meant to be seen.
+    ///
+    /// - Parameters:
+    ///   - color: The block color.
+    ///   - opacity: How solid the blocks are, in `0...1`.
+    ///
+    /// `PhysicallyBasedMaterial` rather than the `SimpleMaterial` the rest of the chunk uses, only
+    /// because `SimpleMaterial` exposes no `blending` and these need to be translucent under the
+    /// hologram.
+    @MainActor
+    public static func buildingMaterial(color: Color, opacity: Float) -> PhysicallyBasedMaterial {
+        var material = PhysicallyBasedMaterial()
+        #if canImport(UIKit)
+        material.baseColor = .init(tint: UIColor(color))
+        #elseif canImport(AppKit)
+        material.baseColor = .init(tint: NSColor(color))
+        #endif
+        material.roughness = .init(floatLiteral: 0.85)
+        material.metallic = .init(floatLiteral: 0)
+        if opacity < 1 {
+            material.blending = .transparent(opacity: .init(floatLiteral: max(0, opacity)))
+        }
+        return material
+    }
+
     /// Creates an unlit material with the given SwiftUI color.
     ///
     /// Used for markers and polyline overlays that should not be affected by scene lighting.

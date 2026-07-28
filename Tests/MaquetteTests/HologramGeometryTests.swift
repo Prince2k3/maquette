@@ -17,7 +17,7 @@ struct HologramGeometryTests {
         ContourExtractor.Segment(a: a, b: b)
     }
 
-    static func triangles(of mesh: HologramMesh) -> [(SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)] {
+    static func triangles(of mesh: IndexedMesh) -> [(SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)] {
         var faces: [(SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)] = []
         var base = 0
         while base + 2 < mesh.indices.count {
@@ -34,7 +34,7 @@ struct HologramGeometryTests {
 
     @Test("A segment becomes one quad of the requested width")
     func ribbonHasTheRequestedWidth() {
-        var mesh = HologramMesh()
+        var mesh = IndexedMesh()
         HologramGeometry.addRibbons(
             [Self.segment(SIMD3(0, 0, 0), SIMD3(1, 0, 0))],
             width: 0.04, yOffset: 0, into: &mesh
@@ -55,7 +55,7 @@ struct HologramGeometryTests {
     /// looks at a diorama from, and nothing about the vertex count says so.
     @Test("Ribbon triangles face up")
     func ribbonTrianglesFaceUp() {
-        var mesh = HologramMesh()
+        var mesh = IndexedMesh()
         HologramGeometry.addRibbons(
             [Self.segment(SIMD3(0, 0, 0), SIMD3(1, 0, 0)),
              Self.segment(SIMD3(1, 0, 0), SIMD3(1, 0, 1)),
@@ -75,7 +75,7 @@ struct HologramGeometryTests {
     /// look identical on a contour and would cut a graticule line straight through a hill.
     @Test("A ribbon keeps each end's own height")
     func ribbonDrapesOverRelief() {
-        var mesh = HologramMesh()
+        var mesh = IndexedMesh()
         HologramGeometry.addRibbons(
             [Self.segment(SIMD3(0, 0, 0), SIMD3(1, 1, 0))],
             width: 0.02, yOffset: 0.5, into: &mesh
@@ -88,7 +88,7 @@ struct HologramGeometryTests {
 
     @Test("A zero-length segment draws nothing rather than dividing by its own length")
     func degenerateSegmentsAreSkipped() {
-        var mesh = HologramMesh()
+        var mesh = IndexedMesh()
         HologramGeometry.addRibbons(
             [Self.segment(SIMD3(0.5, 0.2, 0.5), SIMD3(0.5, 0.9, 0.5))],
             width: 0.02, yOffset: 0, into: &mesh
@@ -96,11 +96,11 @@ struct HologramGeometryTests {
         // Purely vertical: no horizontal extent to build a ribbon across.
         #expect(mesh.isEmpty)
 
-        var second = HologramMesh()
+        var second = IndexedMesh()
         HologramGeometry.addRibbons([], width: 0.02, yOffset: 0, into: &second)
         #expect(second.isEmpty)
 
-        var third = HologramMesh()
+        var third = IndexedMesh()
         HologramGeometry.addRibbons(
             [Self.segment(SIMD3(0, 0, 0), SIMD3(1, 0, 0))],
             width: 0, yOffset: 0, into: &third
@@ -110,7 +110,7 @@ struct HologramGeometryTests {
 
     @Test("Several line sets accumulate into one mesh")
     func ribbonsAccumulate() {
-        var mesh = HologramMesh()
+        var mesh = IndexedMesh()
         HologramGeometry.addRibbons(
             [Self.segment(SIMD3(0, 0, 0), SIMD3(1, 0, 0))],
             width: 0.02, yOffset: 0, into: &mesh
@@ -142,7 +142,7 @@ struct HologramGeometryTests {
         }
         let boundary = DioramaBoundary.make(shape: .custom(points: points), extent: SIMD2(1, 1))
 
-        var mesh = HologramMesh()
+        var mesh = IndexedMesh()
         HologramGeometry.addPlate(boundary.vertices, y: -0.3, into: &mesh)
 
         var covered: Float = 0
@@ -158,7 +158,7 @@ struct HologramGeometryTests {
     @Test("Plate triangles face up")
     func plateFacesUp() {
         let boundary = DioramaBoundary.make(shape: .circular, extent: SIMD2(1, 1))
-        var mesh = HologramMesh()
+        var mesh = IndexedMesh()
         HologramGeometry.addPlate(boundary.vertices, y: 0, into: &mesh)
 
         #expect(!mesh.isEmpty)
@@ -195,7 +195,7 @@ struct HologramGeometryTests {
     @Test("Beam faces spans the gap and points away from the interior")
     func beamStandsBetweenPlateAndChunk() {
         let boundary = DioramaBoundary.make(shape: .hexagonal, extent: SIMD2(1, 1))
-        var mesh = HologramMesh()
+        var mesh = IndexedMesh()
         HologramGeometry.addBeam(boundary.vertices, from: -0.3, to: 0, into: &mesh)
 
         #expect(!mesh.isEmpty)
@@ -209,7 +209,7 @@ struct HologramGeometryTests {
             #expect(simd_dot(outward, SIMD2(vertex.normal.x, vertex.normal.z)) > 0)
         }
 
-        var empty = HologramMesh()
+        var empty = IndexedMesh()
         HologramGeometry.addBeam(boundary.vertices, from: 0, to: 0, into: &empty)
         #expect(empty.isEmpty)
     }

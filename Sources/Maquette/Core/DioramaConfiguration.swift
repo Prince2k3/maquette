@@ -115,6 +115,12 @@ public struct DioramaConfiguration: Sendable {
     /// expensive of the two, since the tiles the outline's edge crosses have to be cut again
     /// wherever it stops.
     public var panRange: Float
+    /// Buildings extruded from OpenStreetMap footprints and stood on the terrain, or `nil` for
+    /// none.
+    ///
+    /// Terrain chunks only, and a prototype: footprints come from the public Overpass API, which is
+    /// rate-limited and asks not to be pointed at end users. See ``BuildingStyle``.
+    public var buildings: BuildingStyle?
 
     // MARK: - Platform-Specific Hints
 
@@ -149,6 +155,7 @@ public struct DioramaConfiguration: Sendable {
         elevationExaggeration: Float = 1.0,
         chunk: TerrainChunkStyle = .standard,
         panRange: Float = 0,
+        buildings: BuildingStyle? = nil,
         cameraElevation: Float? = nil,
         cameraDistance: Float? = nil,
         allowsARPlacement: Bool = false,
@@ -165,6 +172,7 @@ public struct DioramaConfiguration: Sendable {
         self.elevationExaggeration = elevationExaggeration
         self.chunk = chunk
         self.panRange = max(0, panRange)
+        self.buildings = buildings
         self.cameraElevation = cameraElevation
         self.cameraDistance = cameraDistance
         self.allowsARPlacement = allowsARPlacement

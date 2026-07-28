@@ -236,6 +236,34 @@ enum DemoPresets {
                 effect: .hologram
             )
         }(),
+
+        {
+            // The reason this preset is a small radius over a dense downtown: OSM footprints are
+            // the only thing standing on the chunk here, since both elevation providers are
+            // bare-earth and a heightfield could not hold a vertical wall anyway. Anywhere without
+            // tall buildings, the layer is invisible and the preset proves nothing.
+            //
+            // Buildings are exaggerated past the terrain's own scale for the same reason terrain is
+            // exaggerated past reality: at 800 m to the chunk's 0.8 m, a fifteen-metre block is
+            // 7 mm tall and reads as texture. The towers carry the effect; the blocks around them
+            // are what make it a city.
+            var configuration = DioramaConfiguration(
+                center: CLLocationCoordinate2D(latitude: 37.7929, longitude: -122.3971),
+                radiusMeters: 800,
+                elevationExaggeration: 1.6,
+                chunk: .canyon,
+                panRange: 0.8,
+                buildings: BuildingStyle(exaggeration: 1.5)
+            )
+            camera(&configuration)
+            return DemoPreset(
+                id: "buildings",
+                title: "City grid",
+                caption: "OSM buildings extruded over San Francisco",
+                configuration: configuration,
+                effect: .hologram
+            )
+        }(),
     ]
 }
 

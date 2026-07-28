@@ -126,6 +126,8 @@ public final class DioramaStore {
     public func reset() {
         rollTask?.cancel()
         rollTask = nil
+        buildingsTask?.cancel()
+        buildingsTask = nil
         rolling = nil
         samplerTemplate = nil
         effectPass = nil
@@ -407,6 +409,85 @@ public final class DioramaStore {
             }
             rolling = TerrainRollState(roller: roller, tiles: tiles, window: initialWindow)
         }
+
+        startBuildingsFetch(heightField: heightField, boundary: boundary, rootEntity: rootEntity)
+    }
+
+    // MARK: - Buildings
+
+    private var buildingsTask: Task<Void, Never>?
+
+    /// Fetches OpenStreetMap footprints and stands them on the chunk, without holding up the load.
+    ///
+    /// Detached from the pipeline because Overpass is slow — a public instance answers a downtown
+    /// query in seconds, sometimes tens of them — and terrain the user can already look at is worth
+    /// more than buildings that arrive at the same moment.
+    private func startBuildingsFetch(
+        heightField: TerrainHeightField,
+        boundary: DioramaBoundary,
+        rootEntity: DioramaEntity
+    ) {
+        guard let style = configuration.buildings else { return }
+
+        // Cover the pan margin as well as the chunk, so an ordinary drag slides onto ground that
+        // already has buildings on it. They are extruded once and never re-cut, so this is the only
+        // chance to fetch the ring.
+        let margin = configuration.maximumPanOffset
+        let lo = boundary.minCorner - margin
+        let hi = boundary.minCorner + boundary.extent + margin
+        let anchor = heightField.anchor
+        let corners = [
+            anchor.coordinate(forDioramaX: Double(lo.x), z: Double(lo.y)),
+            anchor.coordinate(forDioramaX: Double(hi.x), z: Double(hi.y))
+        ]
+        // Z counts southward in tile space, so the corners come back with latitude inverted.
+        let south = min(corners[0].latitude, corners[1].latitude)
+        let north = max(corners[0].latitude, corners[1].latitude)
+        let west = min(corners[0].longitude, corners[1].longitude)
+        let east = max(corners[0].longitude, corners[1].longitude)
+
+        let provider = OSMBuildingProvider(
+            maximumBuildings: style.maximumBuildings,
+            defaultHeightMeters: style.defaultHeightMeters,
+            metersPerLevel: style.metersPerLevel
+        )
+
+        buildingsTask?.cancel()
+        buildingsTask = Task { [logger] in
+            let started = ContinuousClock.now
+            let footprints: [BuildingFootprint]
+            do {
+                footprints = try await provider.fetchBuildings(
+                    south: south, west: west, north: north, east: east
+                )
+            } catch {
+                // A missing prototype layer is not a reason to fail a diorama that already renders.
+                logger.error("Could not fetch buildings: \(error.localizedDescription)")
+                return
+            }
+            guard !Task.isCancelled else { return }
+
+            let fetched = ContinuousClock.now
+            let result = BuildingExtruder.extrude(
+                footprints: footprints,
+                heightField: heightField,
+                boundary: boundary,
+                style: style
+            )
+            guard !Task.isCancelled, !result.mesh.isEmpty else { return }
+
+            let entity = BuildingsEntity(style: style)
+            entity.update(with: result.mesh, buildingCount: result.kept)
+            entity.setPanOffset(self.panOffset)
+            rootEntity.setBuildings(entity)
+
+            let finished = ContinuousClock.now
+            logger.info("""
+                Stood \(result.kept) buildings on the chunk: fetch \
+                \(String(format: "%.0f", (fetched - started).milliseconds)) ms, extrude \
+                \(String(format: "%.0f", (finished - fetched).milliseconds)) ms
+                """)
+        }
     }
 
     /// Tiles of ground kept beyond the chunk, from the margin the configuration asks for.
@@ -557,6 +638,9 @@ public final class DioramaStore {
         let started = ContinuousClock.now
         (dioramaEntity as? DioramaEntity)?.terrain?.setPanOffset(target)
         (dioramaEntity as? DioramaEntity)?.tiles3D?.setPanOffset(target)
+        // Buildings are anchored to geography like the content below, but they are geometry rather
+        // than placed entities, so they ride one transform instead of being repositioned.
+        (dioramaEntity as? DioramaEntity)?.buildings?.setPanOffset(target)
         let resampled = ContinuousClock.now
         refreshEffect()
         let finished = ContinuousClock.now

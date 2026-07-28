@@ -77,9 +77,9 @@ final class HologramEffectPass: DioramaEffectPass {
     private var beam: HologramLayer?
 
     /// Reused between refreshes so a pan step does not reallocate the whole line set.
-    private var glowMesh = HologramMesh()
-    private var coreMesh = HologramMesh()
-    private var graticuleMesh = HologramMesh()
+    private var glowMesh = IndexedMesh()
+    private var coreMesh = IndexedMesh()
+    private var graticuleMesh = IndexedMesh()
 
     private var graticuleLines: [ContourExtractor.Segment] = []
 
@@ -352,7 +352,7 @@ final class HologramEffectPass: DioramaEffectPass {
 
             let plate = HologramLayer(name: "HologramPlate", material: material)
             container.addChild(plate.entity)
-            var mesh = HologramMesh()
+            var mesh = IndexedMesh()
             HologramGeometry.addPlate(outline, y: plateY, into: &mesh)
             plate.update(with: mesh)
             self.plate = plate
@@ -374,7 +374,7 @@ final class HologramEffectPass: DioramaEffectPass {
                 )
             }
 
-            var mesh = HologramMesh()
+            var mesh = IndexedMesh()
             HologramGeometry.addRibbons(
                 segments,
                 width: style.lineWidth * extent,
@@ -401,7 +401,7 @@ final class HologramEffectPass: DioramaEffectPass {
 
             let beam = HologramLayer(name: "HologramBeam", material: material)
             container.addChild(beam.entity)
-            var mesh = HologramMesh()
+            var mesh = IndexedMesh()
             // Rising from the chunk's own footprint rather than the plate's rim, so the column ends
             // flush with the ground it is projecting instead of flaring past its edge.
             HologramGeometry.addBeam(context.boundary.vertices, from: plateY, to: 0, into: &mesh)
@@ -498,7 +498,7 @@ private final class HologramLayer {
         entity.isEnabled = false
     }
 
-    func update(with mesh: HologramMesh) {
+    func update(with mesh: IndexedMesh) {
         guard !mesh.isEmpty else {
             clear()
             return

@@ -27,6 +27,9 @@ public class DioramaEntity: Entity {
     /// The 3D Tiles sub-entity (used with photorealistic pipeline).
     public private(set) var tiles3D: Tiles3DEntity?
 
+    /// The extruded buildings standing on the chunk, if any were requested and fetched.
+    private(set) var buildings: BuildingsEntity?
+
     /// The water plane sub-entity (visible when terrain has sea-level areas).
     public private(set) var waterPlane: Entity?
 
@@ -71,6 +74,13 @@ public class DioramaEntity: Entity {
     public func setTiles3D(_ entity: Tiles3DEntity) {
         self.tiles3D?.removeFromParent()
         self.tiles3D = entity
+        addChild(entity)
+    }
+
+    /// Sets the extruded buildings standing on the chunk.
+    func setBuildings(_ entity: BuildingsEntity) {
+        self.buildings?.removeFromParent()
+        self.buildings = entity
         addChild(entity)
     }
 

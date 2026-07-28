@@ -2,50 +2,6 @@ import Foundation
 import RealityKit
 import simd
 
-/// Geometry accumulated for one hologram pass, in the layout `Tiles3DMeshBuffer` draws from.
-///
-/// The lines are real triangles rather than a shader effect, which is not a stylistic choice:
-/// `CustomMaterial` is unavailable on visionOS and `ShaderGraphMaterial` only loads from a Reality
-/// Composer Pro asset, which this package deliberately does not ship. Geometry plus an unlit
-/// material is the one route that renders the same on all four platforms.
-struct HologramMesh {
-    private(set) var vertices: [Tiles3DVertex] = []
-    private(set) var indices: [UInt32] = []
-    private var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
-    private var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
-
-    var isEmpty: Bool { indices.isEmpty }
-
-    var bounds: BoundingBox {
-        isEmpty ? BoundingBox() : BoundingBox(min: lo, max: hi)
-    }
-
-    mutating func reserve(vertices count: Int, indices indexCount: Int) {
-        vertices.reserveCapacity(count)
-        indices.reserveCapacity(indexCount)
-    }
-
-    mutating func removeAll() {
-        vertices.removeAll(keepingCapacity: true)
-        indices.removeAll(keepingCapacity: true)
-        lo = SIMD3(repeating: .greatestFiniteMagnitude)
-        hi = SIMD3(repeating: -.greatestFiniteMagnitude)
-    }
-
-    /// Appends a vertex and returns its index.
-    @discardableResult
-    mutating func append(position: SIMD3<Float>, normal: SIMD3<Float>, uv: SIMD2<Float>) -> UInt32 {
-        lo = simd_min(lo, position)
-        hi = simd_max(hi, position)
-        vertices.append(Tiles3DVertex(position: position, normal: normal, uv: uv))
-        return UInt32(vertices.count - 1)
-    }
-
-    mutating func appendTriangle(_ a: UInt32, _ b: UInt32, _ c: UInt32) {
-        indices.append(contentsOf: [a, b, c])
-    }
-}
-
 /// Builds the hologram's drawable pieces: the ribbons that carry every line, and the plate the
 /// projection stands on.
 enum HologramGeometry {
@@ -81,7 +37,7 @@ enum HologramGeometry {
     /// outline is allowed to be concave, and a fan from one vertex triangulates straight across the
     /// notch. Each triple is then wound to face up by measuring it, rather than by trusting the
     /// boundary's winding to have survived being scaled.
-    static func addPlate(_ outline: [SIMD2<Float>], y: Float, into mesh: inout HologramMesh) {
+    static func addPlate(_ outline: [SIMD2<Float>], y: Float, into mesh: inout IndexedMesh) {
         guard outline.count >= 3 else { return }
         let up = SIMD3<Float>(0, 1, 0)
         let triangles = PolygonClipping.triangulate(outline, minimumArea: 0)
@@ -111,7 +67,7 @@ enum HologramGeometry {
         _ outline: [SIMD2<Float>],
         from lower: Float,
         to upper: Float,
-        into mesh: inout HologramMesh
+        into mesh: inout IndexedMesh
     ) {
         guard outline.count >= 3, upper > lower else { return }
 
@@ -151,7 +107,7 @@ enum HologramGeometry {
         _ segments: [ContourExtractor.Segment],
         width: Float,
         yOffset: Float,
-        into mesh: inout HologramMesh
+        into mesh: inout IndexedMesh
     ) {
         guard width > 0, !segments.isEmpty else { return }
         let half = width / 2

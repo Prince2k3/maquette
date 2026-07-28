@@ -52,14 +52,19 @@ enum InkGeometry {
             let start = segment.a - overhang
             let end = segment.b + overhang
 
-            let corners = [u + v, u - v, -u - v, -u + v]
-            var base: UInt32 = 0
-            for (offset, corner) in corners.enumerated() {
+            // Unrolled rather than looped over an array of the four corners: this runs once per
+            // segment and a chunk's creases run to several thousand a pan step, so the array
+            // literal was several thousand heap allocations for four values that fit in registers.
+            func addCorner(_ corner: SIMD3<Float>) -> UInt32 {
                 let normal = simd_normalize(corner)
                 let index = mesh.append(position: start + corner, normal: normal, uv: .zero)
-                if offset == 0 { base = index }
                 mesh.append(position: end + corner, normal: normal, uv: .zero)
+                return index
             }
+            let base = addCorner(u + v)
+            _ = addCorner(u - v)
+            _ = addCorner(-u - v)
+            _ = addCorner(-u + v)
 
             // Four sides, wound consistently around the tube, plus a cap at each end so a line that
             // stops in the open — the end of a crease, or a path's last segment — is not hollow.

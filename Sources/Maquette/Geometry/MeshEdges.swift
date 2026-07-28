@@ -54,6 +54,14 @@ struct MeshEdges {
     /// How many patches hold at least one interior edge, which is what a budget is divided between.
     private var occupiedPatches = 0
 
+    /// Every triangle's geometric normal at the positions last passed to ``creases(in:minimumAngle:density:)``.
+    ///
+    /// Held rather than derived per edge because a triangle sits on three of them, so asking each
+    /// edge for its two neighbours' normals normalises every triangle three times over. One pass
+    /// down the triangles first makes it once, and reads the position buffer in order while it is
+    /// at it rather than jumping about it. Kept between steps so a pan reuses the allocation.
+    private var faceNormals: [SIMD3<Float>] = []
+
     /// How many patches the chunk is divided into along each axis when spreading a crease budget.
     ///
     /// Wants to be fine enough that a patch is smaller than a landform — a budget spread over four
@@ -192,7 +200,7 @@ struct MeshEdges {
     ///   solid black while flat ground a few hundred metres away is left bare, and panning from one
     ///   to the other changes the whole look of the chunk. It also lets the work grow without limit,
     ///   which the pan step pays for.
-    func creases(
+    mutating func creases(
         in positions: [SIMD3<Float>],
         minimumAngle: Float,
         density: Float = 0
@@ -207,15 +215,18 @@ struct MeshEdges {
             allowance = max(1, Int((total / Float(occupiedPatches)).rounded()))
         }
 
+        refreshFaceNormals(in: positions)
+
         // Sharpest first within a patch, so a budget spends itself on the folds that read as folds.
         var candidates: [(sharpness: Float, edge: UInt32)] = []
         for patch in 0..<(patchStarts.count - 1) {
             candidates.removeAll(keepingCapacity: true)
             for slot in patchStarts[patch]..<patchStarts[patch + 1] {
                 let edge = edges[Int(edgesByPatch[slot])]
-                guard let left = normal(ofTriangle: edge.left, in: positions),
-                      let right = normal(ofTriangle: edge.right, in: positions) else { continue }
-                let facing = simd_dot(left, right)
+                // A degenerate triangle carries a normal of NaN, so this comparison is false and the
+                // edge is passed over — the same answer the old per-edge `nil` gave, without an
+                // extra test on the hot path for a case that only arises in a clipped sliver.
+                let facing = simd_dot(faceNormals[Int(edge.left)], faceNormals[Int(edge.right)])
                 guard facing < threshold else { continue }
                 candidates.append((facing, edgesByPatch[slot]))
             }
@@ -233,22 +244,39 @@ struct MeshEdges {
         return segments
     }
 
-    /// The geometric normal of a triangle, or `nil` when it is degenerate.
+    /// Recomputes every triangle's geometric normal for the positions given.
     ///
     /// Taken from the positions rather than from the mesh's shading normals on purpose: shading
     /// normals on this library's terrain are central differences of the height field, which are
     /// smooth across a cliff by construction and would report no crease exactly where the sharpest
     /// one is.
-    private func normal(ofTriangle triangle: UInt32, in positions: [SIMD3<Float>]) -> SIMD3<Float>? {
-        let base = Int(triangle) * 3
-        guard base + 2 < triangles.count else { return nil }
-        let a = positions[Int(triangles[base])]
-        let b = positions[Int(triangles[base + 1])]
-        let c = positions[Int(triangles[base + 2])]
-        let cross = simd_cross(b - a, c - a)
-        let length = simd_length(cross)
-        guard length > 1e-12 else { return nil }
-        return cross / length
+    ///
+    /// A degenerate triangle gets NaN, which propagates through the dot product and fails the
+    /// dihedral comparison, so it is skipped rather than read as a fold.
+    private mutating func refreshFaceNormals(in positions: [SIMD3<Float>]) {
+        let count = triangles.count / 3
+        if faceNormals.count != count {
+            faceNormals = [SIMD3<Float>](repeating: .zero, count: count)
+        }
+        guard count > 0 else { return }
+
+        positions.withUnsafeBufferPointer { positions in
+            triangles.withUnsafeBufferPointer { corners in
+                faceNormals.withUnsafeMutableBufferPointer { normals in
+                    for triangle in 0..<count {
+                        let base = triangle * 3
+                        let a = positions[Int(corners[base])]
+                        let b = positions[Int(corners[base + 1])]
+                        let c = positions[Int(corners[base + 2])]
+                        let cross = simd_cross(b - a, c - a)
+                        let length = simd_length(cross)
+                        normals[triangle] = length > 1e-12
+                            ? cross / length
+                            : SIMD3<Float>(repeating: .nan)
+                    }
+                }
+            }
+        }
     }
 
     /// Maps every vertex to a representative for the point it sits on.

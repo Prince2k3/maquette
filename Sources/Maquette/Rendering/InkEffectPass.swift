@@ -112,7 +112,10 @@ final class InkEffectPass: DioramaEffectPass {
     }
 
     func refresh(on root: DioramaEntity, context: DioramaEffectContext) {
-        guard let lines, let edges else { return }
+        // `edges` is deliberately not bound here. It carries a face-normal buffer the size of the
+        // surface that the crease test rewrites in place, and a local copy would leave the property
+        // holding a second reference to it — so every step would pay to copy it before writing.
+        guard let lines, edges != nil else { return }
         guard let surface = root.terrain?.surfaceBuffers else { return }
 
         let extent = max(context.boundary.extent.x, context.boundary.extent.y)
@@ -126,16 +129,13 @@ final class InkEffectPass: DioramaEffectPass {
 
         // The rim and the creases in one layer and one draw, because they are the same kind of mark:
         // the reference draws no distinction between the line around a shape and the line across it.
-        InkGeometry.addTubes(edges.borders(in: surface.positions), radius: radius, into: &lineMesh)
-        InkGeometry.addTubes(
-            edges.creases(
-                in: surface.positions,
-                minimumAngle: style.creaseAngle * .pi / 180,
-                density: style.creaseDensity
-            ),
-            radius: radius,
-            into: &lineMesh
-        )
+        InkGeometry.addTubes(edges?.borders(in: surface.positions) ?? [], radius: radius, into: &lineMesh)
+        let creaseSegments = edges?.creases(
+            in: surface.positions,
+            minimumAngle: style.creaseAngle * .pi / 180,
+            density: style.creaseDensity
+        ) ?? []
+        InkGeometry.addTubes(creaseSegments, radius: radius, into: &lineMesh)
 
         // The block's own edges: a vertical line down each corner of the outline, and a loop around
         // the bottom face. The lower rim is flat and fixed, so unlike everything above it a pan does
@@ -151,6 +151,7 @@ final class InkEffectPass: DioramaEffectPass {
         }
 
         lines.update(with: lineMesh)
+        Self.logger.debug("Ink step: \(creaseSegments.count) creases, \(self.lineMesh.vertices.count) vertices")
     }
 
     func reapply(to root: DioramaEntity, context: DioramaEffectContext) {

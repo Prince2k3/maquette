@@ -62,7 +62,7 @@ struct InkTests {
     @Test("A quad's outer edges are borders and its diagonal is not")
     func quadBorders() {
         let quad = quad
-        let edges = MeshEdges(positions: quad.positions, indices: quad.indices, tolerance: 1e-5)
+        var edges = MeshEdges(positions: quad.positions, indices: quad.indices, tolerance: 1e-5)
         let borders = edges.borders(in: quad.positions)
 
         #expect(borders.count == 4, "A quad has four outer edges, found \(borders.count)")
@@ -79,7 +79,7 @@ struct InkTests {
             SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(1, 0, 1),
             SIMD3(0, 0, 0), SIMD3(1, 0, 1), SIMD3(0, 0, 1),
         ]
-        let edges = MeshEdges(positions: positions, indices: [0, 1, 2, 3, 4, 5], tolerance: 1e-5)
+        var edges = MeshEdges(positions: positions, indices: [0, 1, 2, 3, 4, 5], tolerance: 1e-5)
         let borders = edges.borders(in: positions)
 
         #expect(borders.count == 4, "The shared diagonal should weld, found \(borders.count) borders")
@@ -97,7 +97,7 @@ struct InkTests {
             SIMD3(2, 0, 0), SIMD3(2, 0, 1),
         ]
         let indices: [UInt32] = [0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4]
-        let edges = MeshEdges(positions: positions, indices: indices, tolerance: 1e-5)
+        var edges = MeshEdges(positions: positions, indices: indices, tolerance: 1e-5)
 
         let steep = edges.creases(in: positions, minimumAngle: 80 * .pi / 180)
         let gentle = edges.creases(in: positions, minimumAngle: 100 * .pi / 180)
@@ -122,7 +122,7 @@ struct InkTests {
             resolution: 96
         )
         let positions = geometry.top.positions
-        let edges = MeshEdges(positions: positions, indices: geometry.top.indices, tolerance: 1e-5)
+        var edges = MeshEdges(positions: positions, indices: geometry.top.indices, tolerance: 1e-5)
         let angle: Float = 30 * .pi / 180
 
         let unbounded = edges.creases(in: positions, minimumAngle: angle)
@@ -169,7 +169,7 @@ struct InkTests {
     @Test("A flat surface has no creases at any useful angle")
     func flatSurfaceHasNoCreases() {
         let quad = quad
-        let edges = MeshEdges(positions: quad.positions, indices: quad.indices, tolerance: 1e-5)
+        var edges = MeshEdges(positions: quad.positions, indices: quad.indices, tolerance: 1e-5)
         #expect(edges.creases(in: quad.positions, minimumAngle: 1 * .pi / 180).isEmpty)
     }
 
@@ -189,7 +189,7 @@ struct InkTests {
             resolution: 64
         )
 
-        let edges = MeshEdges(
+        var edges = MeshEdges(
             positions: geometry.top.positions,
             indices: geometry.top.indices,
             tolerance: 1e-5

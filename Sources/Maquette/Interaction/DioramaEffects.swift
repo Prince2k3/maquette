@@ -209,11 +209,26 @@ public struct InkStyle: Sendable, Equatable {
     public var patchSize: Int
     /// How far each colour is pushed from its own grey, to make up for aerial haze.
     public var saturation: Float
-    /// How sharply the surface must fold, in degrees, before the fold is inked as a crease.
+    /// How sharply the surface must fold, in degrees, before the fold is worth inking as a crease.
     ///
-    /// Low values ink every gentle undulation and the chunk turns solid black; the useful range is
-    /// steep enough to pick out cliffs and ridge lines and nothing else.
+    /// Wants to be shallow — much shallower than it reads — because it is a *floor* on what may be
+    /// drawn rather than a description of what will be. Set steep enough to admit only cliffs and
+    /// ridge lines, it also refuses gentle ground everything: a plateau beside a mountain range
+    /// offers no candidate at all, so it is inked bare and reads as a flat slab next to a drawn one,
+    /// which is the opposite of what raising the threshold was meant to achieve. Shallow enough that
+    /// ordinary undulation qualifies, every part of the chunk has something to draw and
+    /// ``creaseDensity`` decides how much of it survives.
     public var creaseAngle: Float
+    /// The largest share of the surface's interior edges that may be inked as creases.
+    ///
+    /// The angle above decides *whether* a fold is worth a line; this decides *how many* lines the
+    /// drawing gets, and the two answer different questions. Left to the angle alone the density is
+    /// a property of the ground rather than of the drawing, and panning across a chunk shows both
+    /// ends of that: rugged terrain inks until it is solid black, flat terrain a few hundred metres
+    /// away is left almost bare, and the cost of a pan step grows with whatever slid into view. The
+    /// share is spread evenly over the chunk and each patch keeps its own sharpest folds, so a
+    /// plateau still gets its drainages while a mountain range stops short of a scribble.
+    public var creaseDensity: Float
     /// How sharply the outline must turn, in degrees, before its vertex is inked as a vertical corner.
     ///
     /// A square outline has four corners at 90°, and a circular one is drawn as a hundred-odd short
@@ -243,7 +258,8 @@ public struct InkStyle: Sendable, Equatable {
         colorLevels: Int = 5,
         patchSize: Int = 24,
         saturation: Float = 1.8,
-        creaseAngle: Float = 30,
+        creaseAngle: Float = 14,
+        creaseDensity: Float = 0.06,
         cornerAngle: Float = 25,
         showsImagery: Bool = true,
         surfaceColor: Color = Color(red: 0.76, green: 0.79, blue: 0.66),
@@ -257,6 +273,7 @@ public struct InkStyle: Sendable, Equatable {
         self.patchSize = max(1, patchSize)
         self.saturation = max(0, saturation)
         self.creaseAngle = max(1, min(179, creaseAngle))
+        self.creaseDensity = max(0, min(1, creaseDensity))
         self.cornerAngle = max(1, min(179, cornerAngle))
         self.showsImagery = showsImagery
         self.surfaceColor = surfaceColor
@@ -275,7 +292,7 @@ public struct InkStyle: Sendable, Equatable {
         colorLevels: 4,
         patchSize: 48,
         saturation: 2.2,
-        creaseAngle: 26
+        creaseAngle: 12
     )
 }
 

@@ -106,6 +106,66 @@ struct InkTests {
         #expect(gentle.isEmpty, "A 90° fold should not be a crease at a 100° threshold")
     }
 
+    @Test("A crease budget bounds the drawing and spreads it over the chunk")
+    func creaseBudgetIsBoundedAndSpread() {
+        // Rough on one side of the chunk, smooth on the other — which is what a pan produces in
+        // practice, and the case a fixed angle handles worst: the rough side inks until it is solid
+        // and the smooth side is left bare, so the same chunk reads as two different drawings.
+        let boundary = DioramaBoundary.make(shape: .rectangular(width: 1, depth: 1),
+                                            extent: SIMD2(1.0, 1.0))
+        let geometry = TerrainSolidGenerator.buildGeometry(
+            heightField: halfRoughHeightField(),
+            boundary: boundary,
+            baseDepth: 0.1,
+            includesWalls: false,
+            includesBottom: false,
+            resolution: 96
+        )
+        let positions = geometry.top.positions
+        let edges = MeshEdges(positions: positions, indices: geometry.top.indices, tolerance: 1e-5)
+        let angle: Float = 30 * .pi / 180
+
+        let unbounded = edges.creases(in: positions, minimumAngle: angle)
+        let budgeted = edges.creases(in: positions, minimumAngle: angle, density: 0.02)
+
+        #expect(!unbounded.isEmpty, "The fixture should have creases to budget")
+        #expect(budgeted.count < unbounded.count,
+                "A budget of 2% left \(budgeted.count) of \(unbounded.count) creases")
+
+        // The half the terrain is rough over must not take the whole budget: a bound that is only a
+        // cap would leave the drawing exactly as lopsided, just shorter.
+        func roughShare(of segments: [ContourExtractor.Segment]) -> Float {
+            guard !segments.isEmpty else { return 0 }
+            let rough = segments.filter { ($0.a.x + $0.b.x) / 2 > 0 }
+            return Float(rough.count) / Float(segments.count)
+        }
+        #expect(roughShare(of: unbounded) > 0.9,
+                "The fixture's creases should start lopsided, at \(roughShare(of: unbounded))")
+        #expect(roughShare(of: budgeted) < roughShare(of: unbounded),
+                "The budget should have moved lines onto the smooth half, still at \(roughShare(of: budgeted))")
+    }
+
+    /// A height field that is jagged over its eastern half and gently sloped over its western.
+    private func halfRoughHeightField(resolution: Int = 64) -> TerrainHeightField {
+        var values: [Float] = []
+        for row in 0..<resolution {
+            for col in 0..<resolution {
+                let x = Float(col) / Float(resolution - 1)
+                if x > 0.5 {
+                    values.append(100 + Float((row + col) % 2) * 300)
+                } else {
+                    values.append(100 + x * 40 + Float(row) / Float(resolution) * 10)
+                }
+            }
+        }
+        return TerrainHeightField(
+            grids: [ElevationGrid(width: resolution, height: resolution, values: values)],
+            tilePositions: [(x: 0, y: 0)],
+            extent: SIMD2(1.0, 1.0),
+            elevationScale: 0.001
+        )
+    }
+
     @Test("A flat surface has no creases at any useful angle")
     func flatSurfaceHasNoCreases() {
         let quad = quad

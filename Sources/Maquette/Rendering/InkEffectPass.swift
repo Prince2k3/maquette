@@ -128,7 +128,11 @@ final class InkEffectPass: DioramaEffectPass {
         // the reference draws no distinction between the line around a shape and the line across it.
         InkGeometry.addTubes(edges.borders(in: surface.positions), radius: radius, into: &lineMesh)
         InkGeometry.addTubes(
-            edges.creases(in: surface.positions, minimumAngle: style.creaseAngle * .pi / 180),
+            edges.creases(
+                in: surface.positions,
+                minimumAngle: style.creaseAngle * .pi / 180,
+                density: style.creaseDensity
+            ),
             radius: radius,
             into: &lineMesh
         )

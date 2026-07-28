@@ -42,6 +42,25 @@ struct MeshEdges {
     /// Triangle corner indices, welded, so a face normal can be recomputed after a pan.
     private var triangles: [UInt32] = []
 
+    /// Interior edges grouped by the patch of ground they sit over, as a run per patch.
+    ///
+    /// The grouping is what lets a crease budget be spread evenly rather than spent wherever the
+    /// terrain happens to be roughest, and like the adjacency it survives a pan: an edge's midpoint
+    /// moves vertically as the ground slides and never horizontally, so which patch it belongs to is
+    /// settled once.
+    private var edgesByPatch: [UInt32] = []
+    private var patchStarts: [Int] = []
+
+    /// How many patches hold at least one interior edge, which is what a budget is divided between.
+    private var occupiedPatches = 0
+
+    /// How many patches the chunk is divided into along each axis when spreading a crease budget.
+    ///
+    /// Wants to be fine enough that a patch is smaller than a landform — a budget spread over four
+    /// quadrants would still let one mountain range take a quarter of the drawing — and coarse
+    /// enough that a patch holds enough edges to choose between. At 24 across, a 256-cell sampling
+    /// grid gives roughly a hundred candidates per patch.
+    private static let patchesAcross = 24
     /// Builds the edge structure for a mesh.
     ///
     /// - Parameters:
@@ -75,6 +94,51 @@ struct MeshEdges {
             add(corners.0, corners.1, triangle: UInt32(triangle), into: &slots)
             add(corners.1, corners.2, triangle: UInt32(triangle), into: &slots)
             add(corners.2, corners.0, triangle: UInt32(triangle), into: &slots)
+        }
+
+        groupIntoPatches(positions: positions)
+    }
+
+    /// Sorts the interior edges into a horizontal grid of patches, as runs in one flat buffer.
+    private mutating func groupIntoPatches(positions: [SIMD3<Float>]) {
+        let across = Self.patchesAcross
+        patchStarts = [Int](repeating: 0, count: across * across + 1)
+        guard let first = positions.first else { return }
+
+        var low = SIMD2(first.x, first.z)
+        var high = low
+        for position in positions {
+            low = simd_min(low, SIMD2(position.x, position.z))
+            high = simd_max(high, SIMD2(position.x, position.z))
+        }
+        let extent = simd_max(high - low, SIMD2(repeating: 1e-6))
+        let scale = SIMD2(Float(across), Float(across)) / extent
+
+        func patch(of edge: Edge) -> Int {
+            let a = positions[Int(edge.a)]
+            let b = positions[Int(edge.b)]
+            let midpoint = (SIMD2(a.x, a.z) + SIMD2(b.x, b.z)) / 2
+            let cell = (midpoint - low) * scale
+            let column = min(across - 1, max(0, Int(cell.x)))
+            let row = min(across - 1, max(0, Int(cell.y)))
+            return row * across + column
+        }
+
+        // Counting sort, so the runs come out contiguous without a dictionary or a sort.
+        for edge in edges where !edge.isBorder {
+            patchStarts[patch(of: edge) + 1] += 1
+        }
+        for index in 1..<patchStarts.count {
+            if patchStarts[index] > 0 { occupiedPatches += 1 }
+            patchStarts[index] += patchStarts[index - 1]
+        }
+
+        var cursors = patchStarts
+        edgesByPatch = [UInt32](repeating: 0, count: patchStarts[patchStarts.count - 1])
+        for index in edges.indices where !edges[index].isBorder {
+            let slot = patch(of: edges[index])
+            edgesByPatch[cursors[slot]] = UInt32(index)
+            cursors[slot] += 1
         }
     }
 
@@ -119,18 +183,52 @@ struct MeshEdges {
     /// Recomputed rather than cached because it genuinely changes on every pan step: the adjacency
     /// holds, but the heights either side of an edge are re-sampled, so a ridge that was sharp under
     /// one stretch of ground is smooth under the next.
-    func creases(in positions: [SIMD3<Float>], minimumAngle: Float) -> [ContourExtractor.Segment] {
+    ///
+    /// - Parameter density: The largest share of the interior edges that may be returned, or zero
+    ///   for all of them. The share is divided evenly between the patches of ground holding edges
+    ///   and each patch keeps its own sharpest, so what comes back is bounded *and* spread — an
+    ///   angle alone gives neither. A fixed threshold makes the drawing's density a property of the
+    ///   terrain rather than of the drawing: ground that happens to be rugged is inked until it is
+    ///   solid black while flat ground a few hundred metres away is left bare, and panning from one
+    ///   to the other changes the whole look of the chunk. It also lets the work grow without limit,
+    ///   which the pan step pays for.
+    func creases(
+        in positions: [SIMD3<Float>],
+        minimumAngle: Float,
+        density: Float = 0
+    ) -> [ContourExtractor.Segment] {
         guard minimumAngle > 0 else { return [] }
         let threshold = cos(minimumAngle)
         var segments: [ContourExtractor.Segment] = []
 
-        for edge in edges where !edge.isBorder {
-            guard let left = normal(ofTriangle: edge.left, in: positions),
-                  let right = normal(ofTriangle: edge.right, in: positions) else { continue }
-            guard simd_dot(left, right) < threshold else { continue }
-            segments.append(
-                ContourExtractor.Segment(a: positions[Int(edge.a)], b: positions[Int(edge.b)])
-            )
+        var allowance = Int.max
+        if density > 0, density < 1, occupiedPatches > 0 {
+            let total = Float(edgesByPatch.count) * density
+            allowance = max(1, Int((total / Float(occupiedPatches)).rounded()))
+        }
+
+        // Sharpest first within a patch, so a budget spends itself on the folds that read as folds.
+        var candidates: [(sharpness: Float, edge: UInt32)] = []
+        for patch in 0..<(patchStarts.count - 1) {
+            candidates.removeAll(keepingCapacity: true)
+            for slot in patchStarts[patch]..<patchStarts[patch + 1] {
+                let edge = edges[Int(edgesByPatch[slot])]
+                guard let left = normal(ofTriangle: edge.left, in: positions),
+                      let right = normal(ofTriangle: edge.right, in: positions) else { continue }
+                let facing = simd_dot(left, right)
+                guard facing < threshold else { continue }
+                candidates.append((facing, edgesByPatch[slot]))
+            }
+            if candidates.count > allowance {
+                candidates.sort { $0.sharpness < $1.sharpness }
+                candidates.removeLast(candidates.count - allowance)
+            }
+            for candidate in candidates {
+                let edge = edges[Int(candidate.edge)]
+                segments.append(
+                    ContourExtractor.Segment(a: positions[Int(edge.a)], b: positions[Int(edge.b)])
+                )
+            }
         }
         return segments
     }

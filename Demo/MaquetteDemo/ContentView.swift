@@ -265,6 +265,31 @@ enum DemoPresets {
             )
         }(),
 
+        {
+            // Terrain with real structure in it, because the ink is drawn from the chunk's own
+            // triangles: the rim comes from where the surface ends and everything inside it comes
+            // from where two triangles disagree about which way they face. Somewhere flat draws an
+            // outline around a blank card and proves nothing about the effect.
+            //
+            // Pannable for the reason the hologram preset is: the creases are re-tested against
+            // re-sampled heights on every step, and a roll hands the surface a fresh mosaic that has
+            // to be flattened again rather than left as photography under the lines.
+            var configuration = DioramaConfiguration(
+                center: CLLocationCoordinate2D(latitude: 36.0544, longitude: -112.1401),
+                radiusMeters: 6000,
+                elevationExaggeration: 1.6,
+                chunk: .canyon,
+                panRange: 0.8
+            )
+            camera(&configuration)
+            return DemoPreset(
+                id: "ink",
+                title: "Ink",
+                caption: "The Grand Canyon drawn as an illustration",
+                configuration: configuration,
+                effect: .ink
+            )
+        }(),
     ]
 }
 

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import os
 import RealityKit
@@ -15,6 +16,12 @@ struct DioramaEffectContext {
     let elevationScale: Float
     /// The real elevation that diorama Y = 0 stands for.
     let baselineElevation: Float
+    /// The composited satellite mosaic currently under the chunk, when there is one.
+    ///
+    /// The image rather than the material, because an effect that wants to restyle the imagery has to
+    /// *read* it, and a `TextureResource` on the surface's material cannot be read back. It changes
+    /// when a roll lands, which is the case `reapply` exists for.
+    let imagery: CGImage?
 }
 
 /// A restyle of a built diorama.
@@ -43,7 +50,91 @@ extension DioramaEffect {
             return nil
         case .hologram(let style):
             return HologramEffectPass(style: style)
+        case .ink(let style):
+            return InkEffectPass(style: style)
         }
+    }
+}
+
+// MARK: - Body
+
+/// What an effect displaced when it repainted the diorama, so it can put it back.
+///
+/// `revert` has to be exact — an effect that could only be added would make `.none` mean "reload the
+/// diorama" — and "exact" is easier to hold as a record of what was actually touched than as a list
+/// of entities each pass remembers to walk. So this tracks the models it repainted rather than being
+/// told about them again on the way out.
+@MainActor
+struct EffectBody {
+    private var saved: [(model: ModelEntity, materials: [any RealityKit.Material])] = []
+    private var repainted: Set<ObjectIdentifier> = []
+    private var hidden: [Entity] = []
+
+    /// Switches an entity off, remembering it.
+    ///
+    /// Hiding rather than painting transparent, where an effect wants something gone: it costs
+    /// nothing to undo, and it takes the geometry out of the transparency sort, where it would
+    /// otherwise keep arguing with the surface over which is in front.
+    mutating func hide(_ entity: Entity?) {
+        guard let entity, entity.isEnabled else { return }
+        entity.isEnabled = false
+        hidden.append(entity)
+    }
+
+    /// Repaints a model, saving its materials the first time.
+    mutating func replace(_ model: ModelEntity?, with material: any RealityKit.Material) {
+        guard let model, var component = model.model else { return }
+        if repainted.insert(ObjectIdentifier(model)).inserted {
+            saved.append((model, component.materials))
+        }
+        component.materials = Array(repeating: material, count: max(1, component.materials.count))
+        model.model = component
+    }
+
+    /// Repaints the chunk's earth mass — its cut walls, its bottom face, and any plinth.
+    ///
+    /// The plinth is built elsewhere and may be one model or a container of them, which is the only
+    /// reason this is worth a method rather than three calls.
+    mutating func replaceEarth(of root: DioramaEntity, with material: any RealityKit.Material) {
+        replace(root.terrain?.walls, with: material)
+        replace(root.terrain?.bottom, with: material)
+        if let base = root.base {
+            replace(base as? ModelEntity, with: material)
+            for model in base.children.compactMap({ $0 as? ModelEntity }) {
+                replace(model, with: material)
+            }
+        }
+    }
+
+    /// Hides the chunk's earth mass.
+    mutating func hideEarth(of root: DioramaEntity) {
+        hide(root.terrain?.walls)
+        hide(root.terrain?.bottom)
+        hide(root.base)
+    }
+
+    /// Drops the saved materials without putting them back.
+    ///
+    /// For `reapply`, where the scene replaced its own materials underneath the effect: what the
+    /// effect must hand back on the way out is the imagery the chunk has *now*, not the window it
+    /// was showing when the effect went on.
+    mutating func forgetMaterials() {
+        saved.removeAll()
+        repainted.removeAll()
+    }
+
+    /// Puts everything back and empties the record.
+    mutating func restore() {
+        for entry in saved {
+            entry.model.model?.materials = entry.materials
+        }
+        saved.removeAll()
+        repainted.removeAll()
+
+        for entity in hidden {
+            entity.isEnabled = true
+        }
+        hidden.removeAll()
     }
 }
 
@@ -64,17 +155,16 @@ final class HologramEffectPass: DioramaEffectPass {
 
     private let style: HologramStyle
 
-    /// Materials displaced by the effect, so `revert` can put the original diorama back.
-    private var savedMaterials: [ObjectIdentifier: [any RealityKit.Material]] = [:]
-    private var hiddenEntities: [Entity] = []
+    /// What the effect displaced, so `revert` can put the original diorama back.
+    private var body = EffectBody()
 
     private var container: Entity?
-    private var glow: HologramLayer?
-    private var core: HologramLayer?
-    private var graticule: HologramLayer?
-    private var plate: HologramLayer?
-    private var rings: HologramLayer?
-    private var beam: HologramLayer?
+    private var glow: EffectLayer?
+    private var core: EffectLayer?
+    private var graticule: EffectLayer?
+    private var plate: EffectLayer?
+    private var rings: EffectLayer?
+    private var beam: EffectLayer?
 
     /// Reused between refreshes so a pan step does not reallocate the whole line set.
     private var glowMesh = IndexedMesh()
@@ -125,21 +215,21 @@ final class HologramEffectPass: DioramaEffectPass {
         self.container = container
 
         // Wide and faint first, so the core draws over its own halo.
-        let glow = HologramLayer(
+        let glow = EffectLayer(
             name: "HologramGlow",
             material: DioramaMaterials.hologramLineMaterial(
                 color: style.tint,
                 opacity: style.glowOpacity
             )
         )
-        let graticule = HologramLayer(
+        let graticule = EffectLayer(
             name: "HologramGraticule",
             material: DioramaMaterials.hologramLineMaterial(
                 color: style.tint,
                 opacity: Self.graticuleOpacity
             )
         )
-        let core = HologramLayer(
+        let core = EffectLayer(
             name: "HologramLines",
             material: DioramaMaterials.hologramLineMaterial(color: style.tint, opacity: 1)
         )
@@ -201,7 +291,7 @@ final class HologramEffectPass: DioramaEffectPass {
         guard container != nil else { return }
         // Forget what was saved before re-painting, so what the effect hands back on revert is the
         // imagery the chunk has now rather than the window it was showing when the effect went on.
-        savedMaterials.removeAll()
+        body.forgetMaterials()
         restyleBody(of: root)
         refresh(on: root, context: context)
     }
@@ -216,20 +306,8 @@ final class HologramEffectPass: DioramaEffectPass {
         rings = nil
         beam = nil
 
-        for entity in hiddenEntities {
-            entity.isEnabled = true
-        }
-        hiddenEntities.removeAll()
         graticuleLines.removeAll()
-
-        restore(root.terrain?.surface)
-        restore(root.terrain?.walls)
-        restore(root.terrain?.bottom)
-        for model in root.base?.children.compactMap({ $0 as? ModelEntity }) ?? [] {
-            restore(model)
-        }
-        restore(root.base as? ModelEntity)
-        savedMaterials.removeAll()
+        body.restore()
     }
 
     // MARK: - Lines
@@ -350,7 +428,7 @@ final class HologramEffectPass: DioramaEffectPass {
             // Seen from below as readily as from above once the chunk can be orbited under.
             material.faceCulling = .none
 
-            let plate = HologramLayer(name: "HologramPlate", material: material)
+            let plate = EffectLayer(name: "HologramPlate", material: material)
             container.addChild(plate.entity)
             var mesh = IndexedMesh()
             HologramGeometry.addPlate(outline, y: plateY, into: &mesh)
@@ -359,7 +437,7 @@ final class HologramEffectPass: DioramaEffectPass {
         }
 
         if pedestal.rings > 0, style.lineWidth > 0 {
-            let rings = HologramLayer(
+            let rings = EffectLayer(
                 name: "HologramPedestalRings",
                 material: DioramaMaterials.hologramLineMaterial(color: style.tint, opacity: 1)
             )
@@ -399,7 +477,7 @@ final class HologramEffectPass: DioramaEffectPass {
             // one wall standing, so the number means what it says.
             material.faceCulling = .back
 
-            let beam = HologramLayer(name: "HologramBeam", material: material)
+            let beam = EffectLayer(name: "HologramBeam", material: material)
             container.addChild(beam.entity)
             var mesh = IndexedMesh()
             // Rising from the chunk's own footprint rather than the plate's rim, so the column ends
@@ -414,64 +492,30 @@ final class HologramEffectPass: DioramaEffectPass {
 
     /// Repaints the solid the lines are drawn over, saving what it replaces.
     private func restyleBody(of root: DioramaEntity) {
-        let body = DioramaMaterials.hologramBodyMaterial(
+        let surface = DioramaMaterials.hologramBodyMaterial(
             color: style.surfaceColor,
             opacity: style.surfaceOpacity
         )
 
         if !style.showsImagery {
-            replace(root.terrain?.surface, with: body)
+            body.replace(root.terrain?.surface, with: surface)
         }
 
         // The earth is taken away rather than painted, so the ground reads as hanging in the air.
-        // Hiding it costs nothing to undo — `revert` re-enables what it switched off — and unlike a
-        // fully transparent material it also takes the geometry out of the transparency sort, where
-        // it would otherwise keep arguing with the surface over which is in front.
         if style.earthOpacity <= 0 {
-            hide(root.terrain?.walls)
-            hide(root.terrain?.bottom)
-            hide(root.base)
+            body.hideEarth(of: root)
         } else {
-            let earth = DioramaMaterials.hologramBodyMaterial(
-                color: style.surfaceColor,
-                opacity: style.earthOpacity
+            body.replaceEarth(
+                of: root,
+                with: DioramaMaterials.hologramBodyMaterial(
+                    color: style.surfaceColor,
+                    opacity: style.earthOpacity
+                )
             )
-            replace(root.terrain?.walls, with: earth)
-            replace(root.terrain?.bottom, with: earth)
-
-            // The base is a plinth built elsewhere, so it may be one model or a container of them.
-            if let base = root.base {
-                replace(base as? ModelEntity, with: earth)
-                for model in base.children.compactMap({ $0 as? ModelEntity }) {
-                    replace(model, with: earth)
-                }
-            }
         }
 
         // Water reads as a mirror, which is the one thing a projection is not.
-        hide(root.waterPlane)
-    }
-
-    /// Switches an entity off, remembering it so `revert` can switch it back on.
-    private func hide(_ entity: Entity?) {
-        guard let entity, entity.isEnabled else { return }
-        entity.isEnabled = false
-        hiddenEntities.append(entity)
-    }
-
-    private func replace(_ model: ModelEntity?, with material: any RealityKit.Material) {
-        guard let model, var component = model.model else { return }
-        let key = ObjectIdentifier(model)
-        if savedMaterials[key] == nil {
-            savedMaterials[key] = component.materials
-        }
-        component.materials = Array(repeating: material, count: max(1, component.materials.count))
-        model.model = component
-    }
-
-    private func restore(_ model: ModelEntity?) {
-        guard let model, let materials = savedMaterials[ObjectIdentifier(model)] else { return }
-        model.model?.materials = materials
+        body.hide(root.waterPlane)
     }
 }
 
@@ -483,8 +527,12 @@ final class HologramEffectPass: DioramaEffectPass {
 /// triangle count changes with them — which is the shape `Tiles3DMeshBuffer` exists for. Compiling a
 /// `MeshResource` per step instead is the cost the raster path measured at 12 ms against 0.14 ms for
 /// a buffer write.
+///
+/// Shared by every pass rather than owned by one, because none of it is about contours or about ink:
+/// a layer is a mesh, a material, and the ability to be rewritten cheaply, which is what each of an
+/// effect's drawn pieces needs.
 @MainActor
-private final class HologramLayer {
+final class EffectLayer {
     let entity = ModelEntity()
     private let material: any RealityKit.Material
     private var buffer: Tiles3DMeshBuffer?
@@ -530,12 +578,12 @@ private final class HologramLayer {
             }
             entity.isEnabled = true
         } catch {
-            HologramLayer.logger.error("Could not write hologram geometry: \(error)")
+            EffectLayer.logger.error("Could not write effect geometry: \(error)")
             clear()
         }
     }
 
-    private static let logger = Logger(subsystem: "com.maquette", category: "HologramEffect")
+    private static let logger = Logger(subsystem: "com.maquette", category: "DioramaEffect")
 }
 
 extension ContourExtractor.LevelSet {

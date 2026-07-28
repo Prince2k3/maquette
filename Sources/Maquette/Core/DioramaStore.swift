@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import RealityKit
 import os
@@ -150,6 +151,13 @@ public final class DioramaStore {
 
     private var effectPass: (any DioramaEffectPass)?
 
+    /// The composited mosaic currently painted on the chunk.
+    ///
+    /// Kept because an effect that restyles the imagery has to read it, and the `TextureResource` it
+    /// was uploaded as cannot be read back. Replaced when a roll lands, so the picture an effect
+    /// works from is the window the chunk is actually showing.
+    private var mosaic: CGImage?
+
     /// Applies a visual effect, or `.none` to put the diorama back as its configuration describes it.
     ///
     /// An effect is a restyle of the finished scene, so changing one never refetches a tile or
@@ -191,7 +199,8 @@ public final class DioramaStore {
         DioramaEffectContext(
             boundary: configuration.boundary,
             elevationScale: configuration.geographicScale * (samplerTemplate?.exaggeration ?? 1),
-            baselineElevation: samplerTemplate?.globalMinElev ?? 0
+            baselineElevation: samplerTemplate?.globalMinElev ?? 0,
+            imagery: mosaic
         )
     }
 
@@ -348,27 +357,26 @@ public final class DioramaStore {
 
         logger.debug("Generated terrain chunk with base depth \(baseDepth)m")
 
-        // Create satellite material — composite multiple tiles if needed
+        // Composite the mosaic, then upload it — in that order, and through the same path whether it
+        // is one tile or many, because the image is kept as well as uploaded and an effect that
+        // restyles the imagery needs it whatever the region's size worked out to.
         let terrainMaterial: RealityKit.Material
-        if satelliteImages.count > 1 {
-            let minX = satelliteImages.map(\.x).min()!
-            let minY = satelliteImages.map(\.y).min()!
-            let maxX = satelliteImages.map(\.x).max()!
-            let maxY = satelliteImages.map(\.y).max()!
-            let tilesWide = maxX - minX + 1
-            let tilesTall = maxY - minY + 1
-
-            terrainMaterial = try DioramaMaterials.compositeSatelliteMaterial(
-                tiles: satelliteImages,
-                minX: minX,
-                minY: minY,
-                tilesWide: tilesWide,
-                tilesTall: tilesTall
-            )
-        } else if let firstTile = satelliteImages.first {
-            terrainMaterial = (try? DioramaMaterials.satelliteTextureMaterial(from: firstTile.data))
-                ?? TerrainEntity.fallbackMaterial()
+        if let minX = satelliteImages.map(\.x).min(),
+           let minY = satelliteImages.map(\.y).min(),
+           let maxX = satelliteImages.map(\.x).max(),
+           let maxY = satelliteImages.map(\.y).max(),
+           let composited = try? DioramaMaterials.compositeSatelliteImage(
+               tiles: satelliteImages,
+               minX: minX,
+               minY: minY,
+               tilesWide: maxX - minX + 1,
+               tilesTall: maxY - minY + 1
+           ),
+           let material = try? DioramaMaterials.satelliteMaterial(from: composited) {
+            mosaic = composited
+            terrainMaterial = material
         } else {
+            mosaic = nil
             terrainMaterial = TerrainEntity.fallbackMaterial()
         }
 
@@ -987,6 +995,7 @@ public final class DioramaStore {
             return false
         }
 
+        mosaic = image
         (dioramaEntity as? DioramaEntity)?.terrain?.setTerrain(
             roll.heightField,
             surfaceMaterial: material

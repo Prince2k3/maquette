@@ -253,6 +253,42 @@ public enum DioramaMaterials {
         return material
     }
 
+    /// Creates the material the ink effect paints flat areas with — its block, its lines, its water.
+    ///
+    /// Unlit, which is the whole treatment in one word. The reference look gives an object its form
+    /// entirely through the outlines drawn around it, and a shaded grey block would put a second,
+    /// competing description of that form underneath — a gradient across a face the ink says is one
+    /// flat colour. Culling stays on: unlike a hologram's ribbons, none of these surfaces is meant to
+    /// be seen from behind.
+    @MainActor
+    public static func inkFlatMaterial(color: Color) -> UnlitMaterial {
+        unlitMaterial(color: color)
+    }
+
+    /// Creates the material the ink effect draws lines with.
+    ///
+    /// Culling off, because a line traced along a fold in the terrain is looked at from both sides as
+    /// the chunk is orbited, and a line that vanished at some angles would read as a rendering fault.
+    @MainActor
+    public static func inkLineMaterial(color: Color) -> UnlitMaterial {
+        var material = unlitMaterial(color: color)
+        material.faceCulling = .none
+        return material
+    }
+
+    /// Wraps flattened imagery as the ink effect's terrain surface.
+    ///
+    /// Unlit for the same reason the rest of the effect is: the imagery has already been reduced to
+    /// flat bands of colour, and lighting it would re-introduce exactly the continuous shading the
+    /// posterizing took out.
+    @MainActor
+    public static func inkSurfaceMaterial(from image: CGImage) throws -> UnlitMaterial {
+        let texture = try TextureResource(image: image, options: .init(semantic: .color))
+        var material = UnlitMaterial()
+        material.color = .init(tint: .white, texture: .init(texture))
+        return material
+    }
+
     // MARK: - Private
 
     private static func cgImage(from imageData: Data) -> CGImage? {

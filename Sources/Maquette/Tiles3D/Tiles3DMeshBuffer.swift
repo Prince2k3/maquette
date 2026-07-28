@@ -97,6 +97,49 @@ final class Tiles3DMeshBuffer {
         case regrown
     }
 
+    /// Fills the vertex buffer once, for geometry that will be drawn in changing subsets.
+    ///
+    /// The buildings do this: every block the fetch covered is extruded into one arena, and a pan
+    /// step changes which of them are indexed, never where any of them is. Splitting the write in two
+    /// means a step copies indices only — for a downtown chunk that is a couple of megabytes of
+    /// vertices not re-uploaded per step.
+    ///
+    /// Sized to the whole arena at creation, so neither half can ever need to grow; a regrow here
+    /// would discard the vertices this wrote and there is nothing left to rewrite them from.
+    func writeVertices(_ vertices: [Tiles3DVertex]) {
+        precondition(vertices.count <= vertexCapacity, "vertex arena outgrew the buffer made for it")
+        vertices.withUnsafeBufferPointer { source in
+            mesh.withUnsafeMutableBytes(bufferIndex: 0) { raw in
+                _ = raw.bindMemory(to: Tiles3DVertex.self).update(fromContentsOf: source)
+            }
+        }
+    }
+
+    /// Draws a different subset of the vertices already written by ``writeVertices(_:)``.
+    @discardableResult
+    func writeIndices(_ indices: [UInt32], bounds: BoundingBox) -> Outcome {
+        precondition(indices.count <= indexCapacity, "index arena outgrew the buffer made for it")
+        guard !indices.isEmpty else {
+            mesh.parts.replaceAll([])
+            return .empty
+        }
+
+        indices.withUnsafeBufferPointer { source in
+            mesh.withUnsafeMutableIndices { raw in
+                _ = raw.bindMemory(to: UInt32.self).update(fromContentsOf: source)
+            }
+        }
+        mesh.parts.replaceAll([
+            LowLevelMesh.Part(
+                indexCount: indices.count,
+                topology: .triangle,
+                materialIndex: 0,
+                bounds: bounds
+            )
+        ])
+        return .rewritten
+    }
+
     /// Rewrites the buffer from a freshly clipped tile.
     ///
     /// Both copies are bulk. The clip produced this exact layout, so nothing here walks a vertex at

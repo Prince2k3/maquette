@@ -1,6 +1,5 @@
 import Foundation
 import RealityKit
-import os
 import simd
 
 /// Turns OpenStreetMap building footprints into extruded blocks standing on the chunk's terrain.
@@ -20,34 +19,145 @@ import simd
 /// corner and floats slightly at its highest, which reads correctly from every angle a diorama is
 /// looked at, and the error is bounded by the relief across one footprint — a few meters at most.
 enum BuildingExtruder {
-    private static let logger = Logger(subsystem: "com.maquette", category: "Buildings")
-
-    /// The geometry produced for one region's buildings, plus what it took to get there.
-    struct Result {
-        /// The extruded blocks, ready for `Tiles3DMeshBuffer`.
-        var mesh: IndexedMesh
-        /// How many footprints became geometry.
-        var kept: Int
-        /// How many were dropped for crossing or lying outside the chunk's outline.
-        var droppedOutside: Int
-        /// How many were dropped because their outline could not be triangulated.
-        var droppedDegenerate: Int
+    /// A footprint already carried into diorama space, with the box it occupies there.
+    ///
+    /// The projection is the expensive half of a cut — `TerrainAnchor.dioramaPoint(for:)` is a
+    /// Mercator transform per corner — and it is also the half that never changes: the anchor
+    /// survives a roll, so a geographic corner keeps the diorama position it was first given for the
+    /// life of the chunk. Only which of them the outline covers changes as the ground slides. So the
+    /// projection is done once at fetch and every later cut reads these.
+    ///
+    /// The bounds ride along because a cut is mostly rejection. A downtown fetch is thousands of
+    /// footprints against an outline covering a fraction of them, and comparing two boxes settles
+    /// nearly all of it without a point-in-polygon test against a 128-sided circle.
+    struct PlanarFootprint: Sendable {
+        let outline: [SIMD2<Float>]
+        let minCorner: SIMD2<Float>
+        let maxCorner: SIMD2<Float>
+        let heightMeters: Float
     }
 
-    /// Extrudes every footprint that lies wholly inside the chunk's outline.
+    /// One extruded footprint, and where its triangles sit in the arena.
+    struct Block: Sendable {
+        let outline: [SIMD2<Float>]
+        let minCorner: SIMD2<Float>
+        let maxCorner: SIMD2<Float>
+        /// The block's triangles, as a span of ``Blocks/indices``.
+        let indexStart: Int
+        let indexCount: Int
+        /// The box the block's own vertices occupy, so a selection's bounds are a union of boxes
+        /// rather than a second pass over every position.
+        let lo: SIMD3<Float>
+        let hi: SIMD3<Float>
+    }
+
+    /// Every footprint the fetch covered, extruded once into one arena.
     ///
-    /// Footprints that cross the outline are dropped rather than clipped. Clipping them correctly
-    /// would mean clipping *against* a boundary that may be concave, and Sutherland-Hodgman is exact
-    /// only when the clip region is convex — the same trap `TerrainSolidGenerator` documents, where
-    /// intersecting a concave outline's edge half-planes punches a notch at every reflex corner. The
-    /// exact answer exists (clip the boundary against each footprint, as the terrain does per cell)
-    /// but a building straddling the rim is a rare enough case that dropping it costs less than the
-    /// machinery to keep it.
+    /// This is the whole reason panning is cheap. A block's geometry is fixed by its footprint and
+    /// the ground under it, and neither moves when the chunk pans — the outline slides over ground
+    /// that stays where it is. So triangulating the roof, sampling the terrain for the base, and
+    /// winding the walls all happen once, for the margin ring as well as the chunk, and a pan step
+    /// only has to decide *which* of these blocks the outline covers now.
+    ///
+    /// Laid out as one vertex array and one index array rather than a mesh per building because that
+    /// is what a selection wants: the vertices are uploaded once and never rewritten, and a cut is a
+    /// gather of index spans out of `indices`.
+    struct Blocks: Sendable {
+        var vertices: [Tiles3DVertex] = []
+        var indices: [UInt32] = []
+        var blocks: [Block] = []
+        /// How many footprints could not be triangulated. Counted here because it is a property of
+        /// the fetch, not of a pan step.
+        var droppedDegenerate = 0
+
+        var isEmpty: Bool { blocks.isEmpty }
+    }
+
+    /// Which blocks the outline covers at one pan offset, as the indices that draw them.
+    struct Selection: Sendable {
+        /// Index spans of the kept blocks, gathered out of ``Blocks/indices``. These address the
+        /// arena's vertices directly, so nothing has to be re-indexed.
+        var indices: [UInt32] = []
+        var kept = 0
+        /// How many blocks were dropped for crossing or lying outside the outline. On a panning
+        /// chunk this counts the margin ring too, so it is not a measure of how ragged the rim is.
+        var droppedOutside = 0
+        var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+
+        var isEmpty: Bool { indices.isEmpty }
+        var bounds: BoundingBox { isEmpty ? BoundingBox() : BoundingBox(min: lo, max: hi) }
+    }
+
+    /// Carries footprints from geographic coordinates into diorama space.
+    ///
+    /// Done once per fetch, because the answer never changes: `TerrainAnchor` fixes the mapping for
+    /// the life of the chunk — a roll replaces the ground under the anchor, not the anchor — so a
+    /// corner's diorama position is as permanent as its latitude and longitude. Panning changes only
+    /// which of them the outline covers, which is ``extrude(footprints:heightField:boundary:panOffset:style:)``'s
+    /// question and a far cheaper one.
+    ///
+    /// Footprints with fewer than three corners are dropped here rather than counted, since they
+    /// could never have been extruded and reporting them once per cut would say a pan had lost
+    /// something.
+    @concurrent
+    static func project(
+        _ footprints: [BuildingFootprint],
+        anchor: TerrainAnchor
+    ) async -> [PlanarFootprint] {
+        var planar: [PlanarFootprint] = []
+        planar.reserveCapacity(footprints.count)
+
+        for (index, footprint) in footprints.enumerated() {
+            if index & 0xFF == 0, Task.isCancelled { return planar }
+            guard footprint.outline.count >= 3 else { continue }
+
+            var outline: [SIMD2<Float>] = []
+            outline.reserveCapacity(footprint.outline.count)
+            var lo = SIMD2<Float>(repeating: .greatestFiniteMagnitude)
+            var hi = SIMD2<Float>(repeating: -.greatestFiniteMagnitude)
+            for coordinate in footprint.outline {
+                let point = anchor.dioramaPoint(for: coordinate)
+                let corner = SIMD2(Float(point.x), Float(point.y))
+                lo = simd_min(lo, corner)
+                hi = simd_max(hi, corner)
+                outline.append(corner)
+            }
+
+            planar.append(
+                PlanarFootprint(
+                    outline: outline,
+                    minCorner: lo,
+                    maxCorner: hi,
+                    heightMeters: Float(footprint.heightMeters)
+                )
+            )
+        }
+        return planar
+    }
+
+    /// Extrudes every footprint the fetch covered, once, into one arena.
+    ///
+    /// ## Why this is separate from the cut
+    ///
+    /// The outline is fixed and the ground slides beneath it, so ground at diorama point P is drawn
+    /// at `P - panOffset`. Positions therefore stay in ground space — a footprint occupies the same
+    /// vertices however far the chunk has panned, and ``BuildingsEntity`` carries the whole mesh by
+    /// `-panOffset` on its transform — and it is only the *membership* test that moves.
+    ///
+    /// So none of the work here is a function of the pan: the roof triangulation, the winding flip,
+    /// the terrain samples that put the base on the ground. Doing it per pan step is what made the
+    /// first version of this too slow to drag against; the whole fetch is extruded once instead, and
+    /// ``select(from:boundary:panOffset:)`` picks blocks out of the result. The margin ring is
+    /// extruded along with the chunk, because it is exactly the ground a pan is about to reach.
+    ///
+    /// The one thing that *does* invalidate it is a roll: `baseY` comes from the height field, so
+    /// ground replaced under the blocks means building again. That is rare and off the main actor,
+    /// and until it lands the old arena is still drawable.
     ///
     /// - Parameters:
-    ///   - footprints: Footprints in geographic coordinates.
-    ///   - heightField: Supplies both the ground under each footprint and the geographic mapping.
-    ///   - boundary: The chunk's outline. Footprints not wholly inside it are dropped.
+    ///   - footprints: Footprints already in diorama space, from ``project(_:anchor:)``.
+    ///   - heightField: The ground each footprint stands on.
     ///   - style: Height defaults and the vertical scale to draw at.
     ///
     /// ## Isolation
@@ -65,70 +175,142 @@ enum BuildingExtruder {
     /// pinned to `@MainActor`, which is how the attempt was caught. What settled it was a temporary
     /// `Thread.isMainThread` probe on device — `false`, on a thread the store was not running on.
     ///
-    /// The cost this is worth is smaller than it first appeared, and the reason is worth recording:
-    /// 8,480 downtown footprints extrude in **31 ms in a Release build and 3,164 ms in a Debug one**.
-    /// The loop is scalar arithmetic over every corner of every footprint, the shape unoptimised
-    /// Swift punishes hardest — the same ~100× that `Tiles3DClipper` shows. So the multi-second stall
-    /// that motivated moving this off the main actor was a debug-build artifact. Two frames is still
-    /// worth not spending on the main actor, and the loop scales with `BuildingStyle
-    /// .maximumBuildings`, but do not quote seconds for it.
+    /// The cost is worth stating precisely, because it is the reason the split exists: 8,480
+    /// downtown footprints extrude in **31 ms in a Release build and 3,164 ms in a Debug one**. The
+    /// loop is scalar arithmetic over every corner of every footprint, the shape unoptimised Swift
+    /// punishes hardest — the same ~100× that `Tiles3DClipper` shows. Paid once at load that is a
+    /// stall nobody sees; paid per pan step in a debug build it is seconds of the mesh hanging past
+    /// the rim, which is what the split removes.
     @concurrent
-    static func extrude(
-        footprints: [BuildingFootprint],
+    static func build(
+        footprints: [PlanarFootprint],
         heightField: TerrainHeightField,
-        boundary: DioramaBoundary,
         style: BuildingStyle
-    ) async -> Result {
-        var result = Result(mesh: IndexedMesh(), kept: 0, droppedOutside: 0, droppedDegenerate: 0)
-
+    ) async -> Blocks {
+        var mesh = IndexedMesh()
         // A typical footprint is a quad: 4 side quads plus a roof fan is about 20 vertices.
-        result.mesh.reserve(vertices: footprints.count * 20, indices: footprints.count * 54)
+        mesh.reserve(vertices: footprints.count * 20, indices: footprints.count * 54)
 
-        let anchor = heightField.anchor
-        var outline: [SIMD2<Float>] = []
+        var blocks: [Block] = []
+        blocks.reserveCapacity(footprints.count)
+        var droppedDegenerate = 0
+        let scale = style.verticalScale(of: heightField)
 
         for (index, footprint) in footprints.enumerated() {
             // A preset switch mid-extrude should not pay for footprints nobody will see. Checked in
-            // batches because the cost is per-check, not per-footprint, and abandoned without
-            // logging: a partial count is not a result worth reporting.
-            if index & 0xFF == 0, Task.isCancelled { return result }
+            // batches because the cost is per-check, not per-footprint, and abandoned whole: half an
+            // arena is not something a later cut could safely select out of.
+            if index & 0xFF == 0, Task.isCancelled { return Blocks() }
 
-            outline.removeAll(keepingCapacity: true)
-            outline.reserveCapacity(footprint.outline.count)
-
-            var inside = true
-            for coordinate in footprint.outline {
-                let point = anchor.dioramaPoint(for: coordinate)
-                let planar = SIMD2(Float(point.x), Float(point.y))
-                if !boundary.contains(planar) {
-                    inside = false
-                    break
-                }
-                outline.append(planar)
-            }
-            guard inside else {
-                result.droppedOutside += 1
+            let vertexStart = mesh.vertices.count
+            let indexStart = mesh.indices.count
+            let height = footprint.heightMeters * scale
+            guard addBlock(footprint.outline, height: max(height, style.minimumDrawnHeight),
+                           heightField: heightField, into: &mesh)
+            else {
+                droppedDegenerate += 1
                 continue
             }
 
-            let height = Float(footprint.heightMeters) * style.verticalScale(of: heightField)
-            if addBlock(outline, height: max(height, style.minimumDrawnHeight),
-                        heightField: heightField, into: &result.mesh) {
-                result.kept += 1
-            } else {
-                result.droppedDegenerate += 1
+            var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+            var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+            for vertex in mesh.vertices[vertexStart...] {
+                lo = simd_min(lo, vertex.position)
+                hi = simd_max(hi, vertex.position)
             }
-        }
 
-        if result.droppedOutside > 0 || result.droppedDegenerate > 0 {
-            logger.info(
-                """
-                Extruded \(result.kept) buildings; dropped \(result.droppedOutside) crossing the \
-                outline and \(result.droppedDegenerate) that would not triangulate
-                """
+            blocks.append(
+                Block(
+                    outline: footprint.outline,
+                    minCorner: footprint.minCorner,
+                    maxCorner: footprint.maxCorner,
+                    indexStart: indexStart,
+                    indexCount: mesh.indices.count - indexStart,
+                    lo: lo,
+                    hi: hi
+                )
             )
         }
-        return result
+
+        return Blocks(
+            vertices: mesh.vertices,
+            indices: mesh.indices,
+            blocks: blocks,
+            droppedDegenerate: droppedDegenerate
+        )
+    }
+
+    /// Picks the blocks the outline covers at this pan offset.
+    ///
+    /// This is the whole of a pan step. No geometry is produced — the arena's vertices are already on
+    /// the GPU and never change — so what comes back is a list of indices, and drawing it is an index
+    /// rewrite rather than a mesh rebuild.
+    ///
+    /// Two things keep it cheap. Blocks are tested against their bounding boxes first, which settles
+    /// nearly all of a downtown fetch without walking a 128-sided ring; and neighbouring blocks that
+    /// are both kept occupy neighbouring spans of `blocks.indices`, so a run of them is copied in one
+    /// go instead of one span at a time. At rest almost every block inside the outline is in one long
+    /// run, so the gather is close to a single memcpy.
+    ///
+    /// ## Blocks crossing the rim are dropped, not clipped
+    ///
+    /// Clipping them correctly would mean clipping *against* a boundary that may be concave, and
+    /// Sutherland-Hodgman is exact only when the clip region is convex — the same trap
+    /// `TerrainSolidGenerator` documents, where intersecting a concave outline's edge half-planes
+    /// punches a notch at every reflex corner. The exact answer exists (clip the boundary against
+    /// each footprint, as the terrain does per cell) but a building straddling the rim is a rare
+    /// enough case that dropping it costs less than the machinery to keep it.
+    ///
+    /// It also has to stay a whole-block decision for the selection to work at all: a clipped block
+    /// would need new vertices, and new vertices are exactly what this avoids producing.
+    @concurrent
+    static func select(
+        from blocks: Blocks,
+        boundary: DioramaBoundary,
+        panOffset: SIMD2<Float> = .zero
+    ) async -> Selection {
+        var selection = Selection()
+        guard !blocks.blocks.isEmpty else { return selection }
+        selection.indices.reserveCapacity(blocks.indices.count)
+
+        // Sliding the outline over the ground is the same test as sliding the ground under the
+        // outline, and this way the blocks' own boxes never have to be recomputed.
+        let low = boundary.minCorner + panOffset
+        let high = low + boundary.extent
+
+        var runStart = -1
+        var runEnd = -1
+
+        for (index, block) in blocks.blocks.enumerated() {
+            if index & 0xFF == 0, Task.isCancelled { return selection }
+
+            // Boxes first. Most of a downtown fetch is nowhere near the outline at any one moment,
+            // and four comparisons settle those without walking the ring.
+            guard block.maxCorner.x >= low.x, block.minCorner.x <= high.x,
+                  block.maxCorner.y >= low.y, block.minCorner.y <= high.y,
+                  block.outline.allSatisfy({ boundary.contains($0 - panOffset) })
+            else {
+                selection.droppedOutside += 1
+                continue
+            }
+
+            if runStart < 0 {
+                runStart = block.indexStart
+            } else if runEnd != block.indexStart {
+                selection.indices.append(contentsOf: blocks.indices[runStart..<runEnd])
+                runStart = block.indexStart
+            }
+            runEnd = block.indexStart + block.indexCount
+
+            selection.kept += 1
+            selection.lo = simd_min(selection.lo, block.lo)
+            selection.hi = simd_max(selection.hi, block.hi)
+        }
+
+        if runStart >= 0 {
+            selection.indices.append(contentsOf: blocks.indices[runStart..<runEnd])
+        }
+        return selection
     }
 
     /// Adds one footprint's walls and roof. Returns `false` if the outline is degenerate.

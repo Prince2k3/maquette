@@ -128,6 +128,9 @@ public final class DioramaStore {
         rollTask = nil
         buildingsTask?.cancel()
         buildingsTask = nil
+        buildingsCutTask?.cancel()
+        buildingsCutTask = nil
+        buildings = nil
         rolling = nil
         samplerTemplate = nil
         effectPass = nil
@@ -417,6 +420,29 @@ public final class DioramaStore {
 
     private var buildingsTask: Task<Void, Never>?
 
+    /// What standing buildings on a chunk that pans needs to keep between selections.
+    private struct BuildingsState {
+        let style: BuildingStyle
+        /// Every footprint fetched, in diorama space — including the margin ring, which is outside
+        /// the outline at rest and is the whole reason a pan has anything new to show. Kept because a
+        /// roll makes the arena stale and it has to be built again from these.
+        let footprints: [BuildingExtruder.PlanarFootprint]
+        /// All of them extruded, once. A pan selects out of this rather than rebuilding it.
+        var blocks: BuildingExtruder.Blocks
+        let boundary: DioramaBoundary
+        /// The ground the blocks stand on. A roll replaces it.
+        var heightField: TerrainHeightField
+        /// The offset the drawn selection was made for.
+        var cutOffset: SIMD2<Float>
+        /// Set when the ground changed under an arena that is otherwise current.
+        var groundChanged = false
+        /// How far the chunk may slide before it is worth selecting again.
+        let threshold: Float
+    }
+
+    private var buildings: BuildingsState?
+    private var buildingsCutTask: Task<Void, Never>?
+
     /// Fetches OpenStreetMap footprints and stands them on the chunk, without holding up the load.
     ///
     /// Detached from the pipeline because Overpass is slow — a public instance answers a downtown
@@ -464,29 +490,126 @@ public final class DioramaStore {
             guard !Task.isCancelled else { return }
 
             let fetched = ContinuousClock.now
-            // Awaited rather than called: `extrude` is `@concurrent`, so this hands the whole scalar
-            // loop to the cooperative pool and comes back to the main actor holding the finished
-            // mesh. Structured, so cancelling `buildingsTask` still reaches into the loop.
-            let result = await BuildingExtruder.extrude(
-                footprints: footprints,
+            // Awaited rather than called: both of these are `@concurrent`, so this hands the whole
+            // scalar loop to the cooperative pool and comes back to the main actor holding the
+            // finished mesh. Structured, so cancelling `buildingsTask` still reaches into the loop.
+            let planar = await BuildingExtruder.project(footprints, anchor: heightField.anchor)
+            let blocks = await BuildingExtruder.build(
+                footprints: planar,
                 heightField: heightField,
-                boundary: boundary,
                 style: style
             )
-            guard !Task.isCancelled, !result.mesh.isEmpty else { return }
+            let offset = self.panOffset
+            let selection = await BuildingExtruder.select(
+                from: blocks,
+                boundary: boundary,
+                panOffset: offset
+            )
+            guard !Task.isCancelled else { return }
+
+            self.buildings = BuildingsState(
+                style: style,
+                footprints: planar,
+                blocks: blocks,
+                boundary: boundary,
+                heightField: heightField,
+                cutOffset: offset,
+                // A building is a few millimetres across at diorama scale, so the outline has to
+                // slide by something on that order before the cut it made is visibly stale. Tied to
+                // the chunk rather than fixed, because "a few millimetres" is only true at the size
+                // chunks usually are.
+                threshold: max(boundary.extent.x, boundary.extent.y) * 0.004
+            )
 
             let entity = BuildingsEntity(style: style)
-            entity.update(with: result.mesh, buildingCount: result.kept)
-            entity.setPanOffset(self.panOffset)
+            entity.install(blocks)
+            entity.show(selection)
+            entity.setPanOffset(offset)
             rootEntity.setBuildings(entity)
+            // The offset may have moved while the fetch was out, and this is the first selection, so
+            // nothing else would notice.
+            recutBuildingsIfNeeded()
 
             let finished = ContinuousClock.now
             logger.info("""
-                Stood \(result.kept) buildings on the chunk: fetch \
+                Stood \(selection.kept) buildings on the chunk, holding \(blocks.blocks.count) \
+                extruded for the pan: fetch \
                 \(String(format: "%.0f", (fetched - started).milliseconds)) ms, extrude \
                 \(String(format: "%.0f", (finished - fetched).milliseconds)) ms
                 """)
         }
+    }
+
+    /// Picks the buildings the outline covers again once the ground has slid far enough under it.
+    ///
+    /// Panning cannot be a transform alone. The mesh drawn at rest holds only the footprints inside
+    /// the outline *then*, so sliding it bodily carries those past the rim on the trailing side and
+    /// leaves the leading side empty — while the margin ring the fetch deliberately covers, which is
+    /// the ground now arriving, would never be drawn at all. Selecting again is what turns that ring
+    /// into visible geometry and takes the departed buildings away.
+    ///
+    /// A step is only ``BuildingExtruder/select(from:boundary:panOffset:)`` — a membership scan and a
+    /// gather of index spans. Everything expensive happened once, at ``BuildingExtruder/build(footprints:heightField:style:)``:
+    /// nothing about a block's geometry depends on the pan, so a step that re-extruded was doing the
+    /// heaviest work in the library at drag rate, and in a debug build that is seconds per step.
+    ///
+    /// A roll is the one thing that invalidates the arena, because `baseY` comes off the height
+    /// field. The old arena stays drawn while the new one is built, so the ground moves a moment
+    /// before the blocks re-seat on it.
+    ///
+    /// Shaped like ``rollTerrainIfNeeded()`` and for the same reason: one runs at a time and re-reads
+    /// the offset when it lands, because the offset it started from is stale by then. A drag can
+    /// still outrun it — which is harmless here in a way it is not for terrain. Positions are in
+    /// ground space and the entity's transform is current, so a stale selection is in exactly the
+    /// right place and merely a little late at the rim.
+    private func recutBuildingsIfNeeded() {
+        guard buildingsCutTask == nil, let state = buildings, state.style.followsPan else { return }
+        guard buildingsNeedCutting(state) else { return }
+
+        buildingsCutTask = Task { [self] in
+            defer { buildingsCutTask = nil }
+            while let state = buildings, !Task.isCancelled, buildingsNeedCutting(state) {
+                let offset = panOffset
+                let started = ContinuousClock.now
+
+                var blocks = state.blocks
+                if state.groundChanged {
+                    blocks = await BuildingExtruder.build(
+                        footprints: state.footprints,
+                        heightField: state.heightField,
+                        style: state.style
+                    )
+                }
+                let selection = await BuildingExtruder.select(
+                    from: blocks,
+                    boundary: state.boundary,
+                    panOffset: offset
+                )
+                guard !Task.isCancelled, buildings != nil else { return }
+
+                let entity = (dioramaEntity as? DioramaEntity)?.buildings
+                if state.groundChanged {
+                    buildings?.blocks = blocks
+                    entity?.install(blocks)
+                }
+                entity?.show(selection)
+                buildings?.cutOffset = offset
+                buildings?.groundChanged = false
+
+                logger.debug("""
+                    Drew \(selection.kept) buildings at \
+                    \(offset.x, format: .fixed(precision: 4)), \
+                    \(offset.y, format: .fixed(precision: 4)) in \
+                    \(String(format: "%.2f", (ContinuousClock.now - started).milliseconds)) ms\
+                    \(state.groundChanged ? " (re-extruded)" : "")
+                    """)
+            }
+        }
+    }
+
+    private func buildingsNeedCutting(_ state: BuildingsState) -> Bool {
+        state.groundChanged
+            || simd_distance_squared(panOffset, state.cutOffset) > state.threshold * state.threshold
     }
 
     /// Tiles of ground kept beyond the chunk, from the margin the configuration asks for.
@@ -638,7 +761,9 @@ public final class DioramaStore {
         (dioramaEntity as? DioramaEntity)?.terrain?.setPanOffset(target)
         (dioramaEntity as? DioramaEntity)?.tiles3D?.setPanOffset(target)
         // Buildings are anchored to geography like the content below, but they are geometry rather
-        // than placed entities, so they ride one transform instead of being repositioned.
+        // than placed entities, so they ride one transform instead of being repositioned. The
+        // transform keeps them over their own ground; which of them the outline covers is a separate
+        // question, answered off the main actor by `recutBuildingsIfNeeded` below.
         (dioramaEntity as? DioramaEntity)?.buildings?.setPanOffset(target)
         let resampled = ContinuousClock.now
         refreshEffect()
@@ -654,6 +779,7 @@ public final class DioramaStore {
         // Content is anchored to geography, so it has to move with the ground.
         applyContent(appliedContent)
 
+        recutBuildingsIfNeeded()
         rollTerrainIfNeeded()
     }
 
@@ -738,6 +864,14 @@ public final class DioramaStore {
             }
         )
         applyContent(appliedContent)
+
+        // The blocks stand on ground that has just been replaced, and a roll can move a sample by a
+        // few metres where the stitched seam falls differently — so they are re-seated even though
+        // the outline has not moved. The anchor survives a roll, so their footprints do not have to
+        // be projected again.
+        buildings?.heightField = roll.heightField
+        buildings?.groundChanged = true
+        recutBuildingsIfNeeded()
 
         logger.debug(
             """

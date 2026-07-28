@@ -281,22 +281,24 @@ struct BuildingExtruderTests {
             )
         }
 
-        let result = await BuildingExtruder.extrude(
-            footprints: [
+        let (blocks, selection) = await cut(
+            [
                 footprint(atDioramaX: 0, z: 0, half: 0.02),        // dead centre
                 footprint(atDioramaX: 0.49, z: 0, half: 0.02),     // straddling the rim
                 footprint(atDioramaX: 2, z: 2, half: 0.02)         // far outside
             ],
             heightField: heightField,
-            boundary: boundary,
-            style: .standard
+            boundary: boundary
         )
 
-        #expect(result.kept == 1)
-        #expect(result.droppedOutside == 2)
-        #expect(result.droppedDegenerate == 0)
-        for vertex in result.mesh.vertices {
-            #expect(boundary.contains(SIMD2(vertex.position.x, vertex.position.z)))
+        // All three are extruded — the arena covers the margin ring too — so what is under test is
+        // that the selection draws only the one inside the outline.
+        #expect(blocks.blocks.count == 3)
+        #expect(blocks.droppedDegenerate == 0)
+        #expect(selection.kept == 1)
+        #expect(selection.droppedOutside == 2)
+        for position in positions(selection, in: blocks) {
+            #expect(boundary.contains(SIMD2(position.x, position.z)))
         }
     }
 
@@ -315,8 +317,8 @@ struct BuildingExtruderTests {
         let heightField = flatHeightField()
         let anchor = heightField.anchor
         let style = BuildingStyle(minimumDrawnHeight: 0.01)
-        let result = await BuildingExtruder.extrude(
-            footprints: [
+        let (_, selection) = await cut(
+            [
                 BuildingFootprint(
                     outline: square(0.02).map {
                         anchor.coordinate(forDioramaX: Double($0.x), z: Double($0.y))
@@ -328,8 +330,201 @@ struct BuildingExtruderTests {
             boundary: DioramaBoundary.make(shape: .circular, extent: SIMD2(1, 1)),
             style: style
         )
-        #expect(result.kept == 1)
-        let span = result.mesh.bounds.max.y - result.mesh.bounds.min.y
+        #expect(selection.kept == 1)
+        let span = selection.bounds.max.y - selection.bounds.min.y
         #expect(abs(span - style.minimumDrawnHeight) < 1e-6)
+    }
+
+    // MARK: - Panning
+
+    /// Extrudes and selects in one call, the way the store does across two.
+    private func cut(
+        _ footprints: [BuildingFootprint],
+        heightField: TerrainHeightField,
+        boundary: DioramaBoundary,
+        panOffset: SIMD2<Float> = .zero,
+        style: BuildingStyle = .standard
+    ) async -> (blocks: BuildingExtruder.Blocks, selection: BuildingExtruder.Selection) {
+        let blocks = await BuildingExtruder.build(
+            footprints: await BuildingExtruder.project(footprints, anchor: heightField.anchor),
+            heightField: heightField,
+            style: style
+        )
+        return (
+            blocks,
+            await BuildingExtruder.select(from: blocks, boundary: boundary, panOffset: panOffset)
+        )
+    }
+
+    /// The positions a selection actually draws, which is what the arena's indices address.
+    private func positions(
+        _ selection: BuildingExtruder.Selection,
+        in blocks: BuildingExtruder.Blocks
+    ) -> [SIMD3<Float>] {
+        selection.indices.map { blocks.vertices[Int($0)].position }
+    }
+
+    /// Footprints laid along the X axis, in diorama space, ready to cut at any offset.
+    private func planar(atDioramaX offsets: [Float], anchor: TerrainAnchor) async
+        -> [BuildingExtruder.PlanarFootprint] {
+        await BuildingExtruder.project(
+            offsets.map { x in
+                BuildingFootprint(
+                    outline: square(0.02, at: SIMD2(x, 0)).map {
+                        anchor.coordinate(forDioramaX: Double($0.x), z: Double($0.y))
+                    },
+                    heightMeters: 20
+                )
+            },
+            anchor: anchor
+        )
+    }
+
+    /// A pan is not a transform applied to a fixed set. The outline stays put and the ground slides
+    /// under it, so ground that was outside the rim arrives inside it and has to be cut *in* — which
+    /// is the whole reason the fetch covers the margin ring — while ground the outline has left has
+    /// to be cut out rather than carried past the rim.
+    @Test func aPanCutsInGroundTheOutlineReachesAndCutsOutGroundItLeaves() async throws {
+        let heightField = flatHeightField()
+        let boundary = DioramaBoundary.make(shape: .circular, extent: SIMD2(1, 1))
+        // Spaced further apart than the chunk is wide, so the outline covers at most one of them at
+        // a time and there are offsets where it covers none.
+        let footprints = await planar(atDioramaX: [-1.2, 0, 1.2], anchor: heightField.anchor)
+        // Built once and selected from three times, which is the whole shape of the pan path.
+        let blocks = await BuildingExtruder.build(
+            footprints: footprints, heightField: heightField, style: .standard
+        )
+
+        func draw(at offset: SIMD2<Float>) async -> BuildingExtruder.Selection {
+            await BuildingExtruder.select(from: blocks, boundary: boundary, panOffset: offset)
+        }
+
+        let atRest = await draw(at: .zero)
+        #expect(atRest.kept == 1)
+        #expect(abs(atRest.bounds.center.x) < 1e-5)
+
+        // Panned east by 1.2: the far building is over the chunk now, the middle one has left.
+        let panned = await draw(at: SIMD2(1.2, 0))
+        #expect(panned.kept == 1)
+        // Positions stay in ground space — the entity's transform is what carries them onto the
+        // chunk — so the surviving block is the one that was at x = 1.2 all along.
+        #expect(abs(panned.bounds.center.x - 1.2) < 1e-5)
+
+        // Panned to where neither reaches, so the chunk is genuinely bare rather than showing a
+        // block that has drifted past the rim.
+        let between = await draw(at: SIMD2(0.6, 0))
+        #expect(between.kept == 0)
+        #expect(between.isEmpty)
+    }
+
+    /// A selection is made in ground space, which is what lets a stale one be drawn without a jump:
+    /// the store selects off the main actor and a drag outruns it, so what is on screen is routinely
+    /// one step behind the transform carrying it. Behind is fine; *displaced* would not be.
+    @Test func whatIsDrawnIsIndependentOfTheOffsetItWasSelectedAt() async throws {
+        let heightField = flatHeightField()
+        let boundary = DioramaBoundary.make(shape: .circular, extent: SIMD2(1, 1))
+        // Well inside the outline at both offsets, so both selections keep it and only the
+        // arithmetic that placed it is under test.
+        let footprints = await planar(atDioramaX: [0.3], anchor: heightField.anchor)
+        let blocks = await BuildingExtruder.build(
+            footprints: footprints, heightField: heightField, style: .standard
+        )
+
+        let early = await BuildingExtruder.select(from: blocks, boundary: boundary)
+        let late = await BuildingExtruder.select(
+            from: blocks, boundary: boundary, panOffset: SIMD2(0.05, 0.02)
+        )
+
+        #expect(early.kept == 1)
+        #expect(late.kept == 1)
+        #expect(positions(early, in: blocks) == positions(late, in: blocks))
+    }
+
+    /// Most of a downtown fetch is nowhere near the outline, so a cut rejects on bounding boxes
+    /// before testing corners against the ring. A box test that is too eager deletes buildings that
+    /// belong on the chunk, and it does it silently — the count still looks plausible.
+    @Test func rejectingOnBoxesAgreesWithTestingEveryCorner() async throws {
+        let heightField = flatHeightField()
+        let anchor = heightField.anchor
+        // Both shapes, because they exercise the box test from opposite sides. On a circle the box
+        // is slack — a footprint straddling the box's edge sits at the circle's extreme point and
+        // is outside the outline anyway — so an over-eager box goes unnoticed there. On a rectangle
+        // the box *is* the outline, and every rejection it makes is load-bearing.
+        let boundaries = [
+            DioramaBoundary.make(shape: .circular, extent: SIMD2(1, 1)),
+            DioramaBoundary.make(shape: .rectangular(width: 1, depth: 1), extent: SIMD2(1, 1)),
+        ]
+
+        // A lattice straddling the rim at every angle, so the disagreements a box test could cause
+        // are the ones actually sampled.
+        var centers: [Float] = []
+        for step in -12...12 { centers.append(Float(step) * 0.05) }
+        var placed: [SIMD2<Float>] = []
+        for x in centers {
+            for z in centers { placed.append(SIMD2(x, z)) }
+        }
+        let footprints = await BuildingExtruder.project(
+            placed.map { center in
+                BuildingFootprint(
+                    outline: square(0.02, at: center).map {
+                        anchor.coordinate(forDioramaX: Double($0.x), z: Double($0.y))
+                    },
+                    heightMeters: 20
+                )
+            },
+            anchor: anchor
+        )
+
+        let blocks = await BuildingExtruder.build(
+            footprints: footprints, heightField: heightField, style: .standard
+        )
+        #expect(blocks.blocks.count + blocks.droppedDegenerate == footprints.count)
+
+        for boundary in boundaries {
+            for offset in [SIMD2<Float>.zero, SIMD2(0.3, 0), SIMD2(-0.2, 0.4), SIMD2(2, 2)] {
+                let selection = await BuildingExtruder.select(
+                    from: blocks, boundary: boundary, panOffset: offset
+                )
+                let expected = blocks.blocks.count { block in
+                    block.outline.allSatisfy { boundary.contains($0 - offset) }
+                }
+                #expect(selection.kept == expected, "at offset \(offset)")
+                // Nothing may go missing between the two counts either.
+                #expect(selection.kept + selection.droppedOutside == blocks.blocks.count)
+            }
+        }
+    }
+
+    /// Projection happens once and every later cut reads it, so it has to name the same diorama
+    /// positions the anchor does — and carry the box those corners actually span.
+    @Test func projectionKeepsThePositionsTheAnchorNames() async throws {
+        let anchor = flatHeightField().anchor
+        let corners = square(0.02, at: SIMD2(0.1, -0.3))
+        let footprints = await BuildingExtruder.project(
+            [
+                BuildingFootprint(
+                    outline: corners.map {
+                        anchor.coordinate(forDioramaX: Double($0.x), z: Double($0.y))
+                    },
+                    heightMeters: 20
+                ),
+                // Fewer than three corners could never be extruded, so it is dropped here rather
+                // than counted as a loss on every cut.
+                BuildingFootprint(
+                    outline: [anchor.coordinate(forDioramaX: 0, z: 0)], heightMeters: 20
+                )
+            ],
+            anchor: anchor
+        )
+
+        let projected = try #require(footprints.first)
+        #expect(footprints.count == 1)
+        #expect(projected.outline.count == corners.count)
+        for (made, wanted) in zip(projected.outline, corners) {
+            #expect(simd_distance(made, wanted) < 1e-5)
+        }
+        #expect(simd_distance(projected.minCorner, SIMD2(0.08, -0.32)) < 1e-5)
+        #expect(simd_distance(projected.maxCorner, SIMD2(0.12, -0.28)) < 1e-5)
+        #expect(projected.heightMeters == 20)
     }
 }

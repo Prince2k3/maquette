@@ -313,37 +313,47 @@ enum DemoPresets {
             return DemoPreset(
                 id: "terraced",
                 title: "Terraced",
-                caption: "Mount Rainier cut into stacked contour steps",
+                caption: "Mount Rainier, painted from its own imagery",
                 configuration: configuration,
                 effect: .terraced
             )
         }(),
 
         {
-            // The toy register from the other direction: a smaller, gentler piece of ground on a
-            // coarser ladder, so each step is a wide plateau rather than a thin shelf. Yosemite Valley
-            // has the relief for it without the canyon's density of edges.
+            // The same effect, unmodified, over ground of a completely different colour — which is
+            // the whole point of measuring the palette rather than authoring it. This comes out in
+            // salt white, tan and brown; Rainier above comes out green, grey and snow. Same
+            // `.terraced`, nothing passed to either.
+            //
+            // Centred on the river rather than on the rim, which is the difference between a ladder
+            // that gets used and one that does not: from the rim, this terrain is mostly plateau
+            // under one outlying drop and terraces into a single sheet. From the water up, there is
+            // ground at every height between.
+            //
+            // Not Zion or Death Valley, both of which were tried. Zion at this radius measures olive
+            // — what the satellite sees of it is mostly piñon and juniper, not the red walls. Death
+            // Valley measures beautifully and then floods: its floor is below sea level, so the water
+            // plane fills the basin.
             var configuration = DioramaConfiguration(
-                center: CLLocationCoordinate2D(latitude: 37.7458, longitude: -119.5332),
-                radiusMeters: 5000,
-                elevationExaggeration: 1.8,
+                center: CLLocationCoordinate2D(latitude: 36.1000, longitude: -112.1000),
+                radiusMeters: 9000,
+                elevationExaggeration: 1.4,
                 chunk: TerrainChunkStyle(
                     baseDepth: .proportional(0.18),
                     wall: .strata(.earth),
                     // The plinth is what makes it read as a model of somewhere rather than a piece of
-                    // it. `.meadow` repaints it along with the chunk's own block, so the whole solid
-                    // below the steps comes out one colour.
+                    // it.
                     base: .plinth(color: Color(white: 0.35), height: 0.03, inset: -0.02)
                 ),
                 panRange: 0.8
             )
             camera(&configuration)
             return DemoPreset(
-                id: "terraced-toy",
-                title: "Terraced model",
-                caption: "Yosemite Valley as a painted contour model",
+                id: "terraced-desert",
+                title: "Terraced desert",
+                caption: "The Grand Canyon cut on the same ladder, in its own colours",
                 configuration: configuration,
-                effect: .terraced(.meadow)
+                effect: .terraced
             )
         }(),
     ]

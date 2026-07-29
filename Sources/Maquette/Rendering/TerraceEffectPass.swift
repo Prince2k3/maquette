@@ -1,6 +1,8 @@
+import CoreGraphics
 import Foundation
 import os
 import RealityKit
+import SwiftUI
 import simd
 
 /// Cuts the chunk into stacked flat steps and paints it from a colour ramp by height, the way a
@@ -15,6 +17,10 @@ import simd
 /// triangle is decides only which row of the palette strip it reads. See ``TerraceGeometry`` for why
 /// quantizing per vertex gives exactly-flat plateaus and exactly-one-cell risers without a single
 /// normal being averaged, and ``TerracePalette`` for how two rows stand in for two materials.
+///
+/// What it is painted comes from the place rather than from a preset: ``TerraceImagery`` averages the
+/// mosaic at each band's own height, so the same effect over the same ladder reads as ochre over
+/// canyon country and green over a forested valley. Measured once, at `apply`, and then held.
 ///
 /// The walls come along, and are not decoration. Quantization rounds heights down, so a wall left as
 /// the generator built it stands up to a full step proud of the surface it is supposed to meet, and
@@ -71,12 +77,7 @@ final class TerraceEffectPass: DioramaEffectPass {
 
         let surfaceMaterial: any RealityKit.Material
         do {
-            let image = TerracePalette.makeImage(
-                colors: style.colors,
-                count: bands.count,
-                riserShade: style.riserShade
-            )
-            guard let image else {
+            guard let image = paletteImage(for: bands, buffers: buffers, context: context) else {
                 Self.logger.error("Could not render the terrace palette; leaving the chunk as it is")
                 self.bands = nil
                 return
@@ -141,8 +142,11 @@ final class TerraceEffectPass: DioramaEffectPass {
     func reapply(to root: DioramaEntity, context: DioramaEffectContext) {
         guard container != nil else { return }
         // The chunk repainted itself, which is what a roll landing looks like: the imagery is new and
-        // the originals this effect saved are stale. Nothing here reads that imagery — the colour
-        // comes from height — so the only work is to hide the restored models again and rebuild.
+        // the originals this effect saved are stale. The palette was measured off that imagery, and
+        // is deliberately *not* measured again — a roll brings in a tile or two while the ground has
+        // barely moved, and re-measuring would repaint every band in the model at once. Same
+        // discipline as the ladder above and `InkImagery`'s tonal range. So the only work is to hide
+        // the restored models again and rebuild.
         body.forgetMaterials()
         restyleBody(of: root)
         refresh(on: root, context: context)
@@ -191,6 +195,56 @@ final class TerraceEffectPass: DioramaEffectPass {
             )
         }
     }
+
+    // MARK: - Palette
+
+    /// The strip the whole chunk is painted from, measured off the ground unless the style names a
+    /// ramp.
+    ///
+    /// Built here, at `apply`, and then held for the life of the effect — see `reapply` for why it is
+    /// never measured a second time.
+    private func paletteImage(
+        for bands: TerraceBands,
+        buffers: TerrainSolidGenerator.Buffers,
+        context: DioramaEffectContext
+    ) -> CGImage? {
+        if let colors = style.colors {
+            return TerracePalette.makeImage(
+                colors: colors,
+                count: bands.count,
+                riserShade: style.riserShade
+            )
+        }
+
+        if let imagery = context.imagery,
+           let measured = TerraceImagery.palette(
+               from: imagery,
+               positions: buffers.positions,
+               textureCoordinates: buffers.uvs,
+               bands: bands,
+               recipe: .init(saturation: style.saturation, contrast: style.contrast)
+           ) {
+            return TerracePalette.makeImage(bands: measured, riserShade: style.riserShade)
+        }
+
+        // A chunk with no imagery under it — an elevation-only diorama — has no colours to take, so
+        // it falls back to the warm earth a contour model is conventionally printed in.
+        Self.logger.info("No imagery to take the terrace palette from; using the default ramp")
+        return TerracePalette.makeImage(
+            colors: Self.fallbackRamp,
+            count: bands.count,
+            riserShade: style.riserShade
+        )
+    }
+
+    private static let fallbackRamp: [Color] = [
+        Color(red: 0.38, green: 0.14, blue: 0.10),
+        Color(red: 0.68, green: 0.26, blue: 0.13),
+        Color(red: 0.87, green: 0.44, blue: 0.17),
+        Color(red: 0.95, green: 0.63, blue: 0.29),
+        Color(red: 0.98, green: 0.80, blue: 0.53),
+        Color(red: 0.99, green: 0.93, blue: 0.80),
+    ]
 
     // MARK: - Bands
 

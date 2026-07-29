@@ -316,11 +316,24 @@ public struct TerraceStyle: Sendable, Equatable {
     /// would re-cut every step in the model at once — the whole thing would jump every frame of a
     /// drag.
     public var steps: ContourInterval
-    /// The colour ramp, lowest ground first.
+    /// The colour ramp, lowest ground first, or `nil` to take the colours off the ground itself.
     ///
-    /// Interpolated across however many steps the ladder produces, so its length is a description of
+    /// `nil` by default, and that default is the effect: each band is painted the average colour of
+    /// the imagery at that height, so canyon country comes out in ochres and a forested valley in
+    /// greens without anyone choosing. A ramp given here overrides that measurement and is
+    /// interpolated across however many steps the ladder produces, so its length is a description of
     /// the palette rather than of the terrain and the two need not agree.
-    public var colors: [Color]
+    public var colors: [Color]?
+    /// How far the measured colours are pushed away from what the camera recorded, in each of two
+    /// directions.
+    ///
+    /// Ignored when ``colors`` names a ramp. Aerial imagery is hazy to begin with and averaging a
+    /// whole band of it drags every band towards the same brown, so `saturation` scales a band's
+    /// distance from its own grey and `contrast` its distance from the ladder's mean brightness.
+    /// Both exaggerate differences the ground has; neither can invent one.
+    public var saturation: Float
+    /// See ``saturation``.
+    public var contrast: Float
     /// What a band's colour is multiplied by on the vertical face of its step, in `0...1`.
     ///
     /// The material is lit, so a step face already darkens where it turns away from the light. This
@@ -346,14 +359,9 @@ public struct TerraceStyle: Sendable, Equatable {
     /// Creates a terrace style.
     public init(
         steps: ContourInterval = .automatic(count: 16),
-        colors: [Color] = [
-            Color(red: 0.38, green: 0.14, blue: 0.10),
-            Color(red: 0.68, green: 0.26, blue: 0.13),
-            Color(red: 0.87, green: 0.44, blue: 0.17),
-            Color(red: 0.95, green: 0.63, blue: 0.29),
-            Color(red: 0.98, green: 0.80, blue: 0.53),
-            Color(red: 0.99, green: 0.93, blue: 0.80),
-        ],
+        colors: [Color]? = nil,
+        saturation: Float = 1.6,
+        contrast: Float = 1.5,
         riserShade: Float = 0.78,
         blockColor: Color? = nil,
         waterColor: Color? = Color(red: 0.35, green: 0.55, blue: 0.62),
@@ -361,7 +369,9 @@ public struct TerraceStyle: Sendable, Equatable {
         roughness: Float = 0.95
     ) {
         self.steps = steps
-        self.colors = colors.isEmpty ? [Color(white: 0.7)] : colors
+        self.colors = colors.map { $0.isEmpty ? [Color(white: 0.7)] : $0 }
+        self.saturation = max(0, saturation)
+        self.contrast = max(0, contrast)
         self.riserShade = max(0, min(1, riserShade))
         self.blockColor = blockColor
         self.waterColor = waterColor
@@ -369,32 +379,11 @@ public struct TerraceStyle: Sendable, Equatable {
         self.roughness = max(0, min(1, roughness))
     }
 
-    /// Warm earth tones over the chunk's own strata. The default.
+    /// The chunk's own colours, cut into steps. The default.
     public static let standard = TerraceStyle()
 
-    /// The toy register: green ground rising through rock to snow, on one moulded grey block.
-    public static let meadow = TerraceStyle(
-        steps: .automatic(count: 12),
-        colors: [
-            Color(red: 0.29, green: 0.46, blue: 0.29),
-            Color(red: 0.44, green: 0.62, blue: 0.34),
-            Color(red: 0.60, green: 0.72, blue: 0.42),
-            Color(red: 0.76, green: 0.75, blue: 0.58),
-            Color(red: 0.70, green: 0.68, blue: 0.65),
-            Color(red: 0.95, green: 0.96, blue: 0.97),
-        ],
-        riserShade: 0.82,
-        blockColor: Color(white: 0.72),
-        waterColor: Color(red: 0.55, green: 0.78, blue: 0.85),
-        backgroundColor: Color(red: 0.87, green: 0.92, blue: 0.95)
-    )
-
     /// Few, deep steps, the way a model cut from thick card comes out.
-    public static let card = TerraceStyle(
-        steps: .automatic(count: 8),
-        riserShade: 0.7,
-        blockColor: Color(red: 0.80, green: 0.71, blue: 0.58)
-    )
+    public static let card = TerraceStyle(steps: .automatic(count: 8), riserShade: 0.7)
 }
 
 /// A visual treatment applied over a built diorama.

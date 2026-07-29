@@ -415,6 +415,221 @@ struct TerraceTests {
         #expect(abs(middle.0 - 0.5) < 1e-5)
     }
 
+    // MARK: - The palette the ground paints
+
+    /// A two-tone image: the northern half one colour, the southern half another.
+    ///
+    /// Halves rather than a gradient because the thing being pinned is *which* half a band reads,
+    /// and a gradient would answer that with a shade rather than with a colour.
+    private func splitImage(
+        north: SIMD3<UInt8>,
+        south: SIMD3<UInt8>,
+        size: Int = 64
+    ) -> CGImage? {
+        guard let context = CGContext(
+            data: nil,
+            width: size,
+            height: size,
+            bitsPerComponent: 8,
+            bytesPerRow: size * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ), let buffer = context.data else { return nil }
+
+        let pixels = buffer.bindMemory(to: UInt8.self, capacity: size * size * 4)
+        for row in 0..<size {
+            // Row 0 is the top of a `CGContext` bitmap, which is north.
+            let colour = row < size / 2 ? north : south
+            for column in 0..<size {
+                let offset = (row * size + column) * 4
+                pixels[offset] = colour.x
+                pixels[offset + 1] = colour.y
+                pixels[offset + 2] = colour.z
+                pixels[offset + 3] = 255
+            }
+        }
+        return context.makeImage()
+    }
+
+    /// Vertices at a given height and texture coordinate, enough of them to average over.
+    private func samples(
+        _ pairs: [(y: Float, v: Float)],
+        each: Int = 16
+    ) -> (positions: [SIMD3<Float>], uvs: [SIMD2<Float>]) {
+        var positions: [SIMD3<Float>] = []
+        var uvs: [SIMD2<Float>] = []
+        for pair in pairs {
+            for index in 0..<each {
+                let u = (Float(index) + 0.5) / Float(each)
+                positions.append(SIMD3(u - 0.5, pair.y, 0))
+                uvs.append(SIMD2(u, pair.v))
+            }
+        }
+        return (positions, uvs)
+    }
+
+    private var plainRecipe: TerraceImagery.Recipe {
+        TerraceImagery.Recipe(saturation: 1, contrast: 1)
+    }
+
+    /// The claim the whole measured palette rests on: a band is painted the colour of the ground at
+    /// *that* height, not the colour of the chunk as a whole.
+    @Test("Each band takes the colour of the ground at its own height")
+    func bandsTakeTheColourOfTheirOwnGround() throws {
+        // North is green, south is red; the low ground is in the south and the high ground north.
+        let image = try #require(
+            splitImage(north: SIMD3(20, 200, 20), south: SIMD3(200, 20, 20))
+        )
+        let bands = try #require(TerraceBands(dividing: 0, 1, into: 4))
+        let ground = samples([(y: 0.05, v: 0.1), (y: 0.95, v: 0.9)])
+
+        let palette = try #require(
+            TerraceImagery.palette(
+                from: image,
+                positions: ground.positions,
+                textureCoordinates: ground.uvs,
+                bands: bands,
+                recipe: plainRecipe
+            )
+        )
+
+        #expect(palette.count == 4)
+        #expect(palette[0].x > palette[0].y)
+        #expect(palette[3].y > palette[3].x)
+    }
+
+    /// V counts up from the mosaic's southern edge while bitmap rows count down from its northern
+    /// one, and reading it the other way round is the trap this library has already fallen into twice
+    /// — once in `GLBParser` and once in `TerrainHeightField`. A mirrored palette is invisible on
+    /// symmetric ground and completely wrong on real ground.
+    @Test("A high texture coordinate reads the north of the mosaic")
+    func textureCoordinatesAreNotMirrored() throws {
+        let image = try #require(
+            splitImage(north: SIMD3(240, 240, 240), south: SIMD3(10, 10, 10))
+        )
+        let bands = try #require(TerraceBands(dividing: 0, 1, into: 2))
+        let ground = samples([(y: 0.1, v: 0.95), (y: 0.9, v: 0.05)])
+
+        let palette = try #require(
+            TerraceImagery.palette(
+                from: image,
+                positions: ground.positions,
+                textureCoordinates: ground.uvs,
+                bands: bands,
+                recipe: plainRecipe
+            )
+        )
+
+        // The low band sampled v ≈ 0.95, which is the north — the bright half.
+        #expect(palette[0].x > 0.7)
+        #expect(palette[1].x < 0.3)
+    }
+
+    /// Bands with no ground in them are ordinary: `paletteIndex` clamps, so terrain panned in from
+    /// outside the measured relief lands in a band nothing was measured for. Left at zero they would
+    /// stripe the model with a colour that is nowhere on the ground.
+    @Test("A band no ground landed in borrows from the nearest one that did")
+    func emptyBandsBorrowTheirNeighbour() throws {
+        let image = try #require(
+            splitImage(north: SIMD3(200, 40, 40), south: SIMD3(200, 40, 40))
+        )
+        let bands = try #require(TerraceBands(dividing: 0, 1, into: 6))
+        let ground = samples([(y: 0.55, v: 0.5)])
+
+        let palette = try #require(
+            TerraceImagery.palette(
+                from: image,
+                positions: ground.positions,
+                textureCoordinates: ground.uvs,
+                bands: bands,
+                recipe: plainRecipe
+            )
+        )
+
+        for colour in palette {
+            #expect(colour.x > 0.5)
+            #expect(simd_length(colour) > 0.1)
+        }
+    }
+
+    /// The exaggeration is allowed to widen a difference the ground has. It is not allowed to
+    /// manufacture one — a uniform stretch of desert has to come out uniform, however hard it is
+    /// pushed.
+    @Test("Exaggeration cannot invent a difference the ground does not have")
+    func uniformGroundStaysUniform() throws {
+        let image = try #require(
+            splitImage(north: SIMD3(150, 120, 90), south: SIMD3(150, 120, 90))
+        )
+        let bands = try #require(TerraceBands(dividing: 0, 1, into: 5))
+        let ground = samples([(y: 0.1, v: 0.2), (y: 0.5, v: 0.5), (y: 0.9, v: 0.8)])
+
+        let palette = try #require(
+            TerraceImagery.palette(
+                from: image,
+                positions: ground.positions,
+                textureCoordinates: ground.uvs,
+                bands: bands,
+                recipe: TerraceImagery.Recipe(saturation: 2, contrast: 3)
+            )
+        )
+
+        for colour in palette {
+            #expect(simd_length(colour - palette[0]) < 1e-4)
+        }
+    }
+
+    /// Averaging a photograph drags every band towards the same brown, so the exaggeration has to
+    /// actually separate them — and has to separate them in the direction the ground already went.
+    @Test("Contrast widens the gap between bands without reordering them")
+    func contrastSeparatesBands() throws {
+        let image = try #require(
+            splitImage(north: SIMD3(160, 150, 140), south: SIMD3(110, 100, 95))
+        )
+        let bands = try #require(TerraceBands(dividing: 0, 1, into: 2))
+        let ground = samples([(y: 0.1, v: 0.1), (y: 0.9, v: 0.9)])
+
+        func spread(contrast: Float) throws -> (low: Float, high: Float) {
+            let palette = try #require(
+                TerraceImagery.palette(
+                    from: image,
+                    positions: ground.positions,
+                    textureCoordinates: ground.uvs,
+                    bands: bands,
+                    recipe: TerraceImagery.Recipe(saturation: 1, contrast: contrast)
+                )
+            )
+            return (palette[0].x, palette[1].x)
+        }
+
+        let plain = try spread(contrast: 1)
+        let pushed = try spread(contrast: 2)
+
+        // The low band sampled the south, which is the darker half; that ordering must survive.
+        #expect(plain.low < plain.high)
+        #expect(pushed.low < pushed.high)
+        #expect(pushed.high - pushed.low > plain.high - plain.low)
+    }
+
+    /// Measured colours go onto the strip as they were measured. Interpolating between them would
+    /// blend each band with its neighbour and undo the measurement.
+    @Test("Measured colours reach the strip unblended")
+    func measuredColoursAreNotInterpolated() throws {
+        let colours: [SIMD3<Float>] = [SIMD3(1, 0, 0), SIMD3(0, 0, 1)]
+        let image = try #require(TerracePalette.makeImage(bands: colours, riserShade: 1))
+        let pixels = try #require(image.dataProvider?.data) as Data
+        let bytesPerRow = image.bytesPerRow
+
+        // The plateau row, at the sample point of each band's own column.
+        let row = image.height - 1
+        for (band, colour) in colours.enumerated() {
+            let u = TerraceGeometry.paletteU(band, count: colours.count)
+            let column = Int(u * Float(image.width))
+            let offset = row * bytesPerRow + column * 4
+            #expect(abs(Float(pixels[offset]) / 255 - colour.x) < 0.01)
+            #expect(abs(Float(pixels[offset + 2]) / 255 - colour.z) < 0.01)
+        }
+    }
+
     // MARK: - Helpers
 
     private static func bounds(

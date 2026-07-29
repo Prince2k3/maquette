@@ -40,6 +40,21 @@ enum TerracePalette {
     static func makeImage(colors: [Color], count: Int, riserShade: Float) -> CGImage? {
         guard count > 0, !colors.isEmpty else { return nil }
         let ramp = colors.map { StrataTexture.rgbComponents(of: $0) }
+        let bands = (0..<count).map { band -> SIMD3<Float> in
+            let (r, g, b) = color(atBand: band, of: count, ramp: ramp)
+            return SIMD3(r, g, b)
+        }
+        return makeImage(bands: bands, riserShade: riserShade)
+    }
+
+    /// Renders a strip from colours that were measured rather than interpolated.
+    ///
+    /// One colour per band and no ramp between them, because ``TerraceImagery`` has already asked the
+    /// ground what each band looks like — interpolating those answers would blend a band's colour
+    /// with its neighbour's and undo the measurement.
+    static func makeImage(bands: [SIMD3<Float>], riserShade: Float) -> CGImage? {
+        let count = bands.count
+        guard count > 0 else { return nil }
 
         let width = count * bandWidth
         let height = rowHeight * 2
@@ -59,7 +74,7 @@ enum TerracePalette {
         let shade = max(0, min(1, riserShade))
 
         for band in 0..<count {
-            let (r, g, b) = color(atBand: band, of: count, ramp: ramp)
+            let colour = bands[band]
             for column in (band * bandWidth)..<((band + 1) * bandWidth) {
                 for row in 0..<height {
                     // `CGContext` rows run top-down and V runs bottom-up, so the strip's *first*
@@ -67,9 +82,9 @@ enum TerracePalette {
                     let isRiser = row < rowHeight
                     let factor = isRiser ? shade : 1
                     let offset = (row * width + column) * 4
-                    pixels[offset] = byte(r * factor)
-                    pixels[offset + 1] = byte(g * factor)
-                    pixels[offset + 2] = byte(b * factor)
+                    pixels[offset] = byte(colour.x * factor)
+                    pixels[offset + 1] = byte(colour.y * factor)
+                    pixels[offset + 2] = byte(colour.z * factor)
                     pixels[offset + 3] = 255
                 }
             }

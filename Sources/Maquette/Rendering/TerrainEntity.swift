@@ -100,6 +100,20 @@ public class TerrainEntity: Entity {
     /// boundary clip for itself.
     var surfaceBuffers: TerrainSolidGenerator.Buffers? { geometry?.top }
 
+    /// The chunk's cut walls as they currently stand.
+    ///
+    /// Each quad's vertices run top, bottom, top, bottom, so the even ones are the rim — the same
+    /// convention `TerrainSolidGenerator.resample` relies on. An effect that moves the top surface has
+    /// to move these with it or the wall stands proud of the surface it is supposed to meet.
+    var wallBuffers: TerrainSolidGenerator.Buffers? { geometry?.walls }
+
+    /// The vertical span the wall texture's coordinates are normalized against.
+    var wallHeight: Float { geometry?.resampling.wallHeight ?? 0 }
+
+    /// The materials the chunk's own walls are drawn with, so an effect that replaces the wall
+    /// geometry can keep its strata rather than repainting them flat.
+    var wallMaterials: [any RealityKit.Material] { walls?.model?.materials ?? [] }
+
     /// Slides the terrain beneath the chunk's fixed outline.
     ///
     /// Only heights, shading, and imagery change — the chunk keeps its shape and position, so the

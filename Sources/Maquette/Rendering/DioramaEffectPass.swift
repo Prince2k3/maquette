@@ -52,6 +52,8 @@ extension DioramaEffect {
             return HologramEffectPass(style: style)
         case .ink(let style):
             return InkEffectPass(style: style)
+        case .terraced(let style):
+            return TerraceEffectPass(style: style)
         }
     }
 }

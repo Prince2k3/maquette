@@ -1,0 +1,217 @@
+import Foundation
+import os
+import RealityKit
+import simd
+
+/// Cuts the chunk into stacked flat steps and paints it from a colour ramp by height, the way a
+/// contour model is built up out of sheets of card.
+///
+/// Where the ink effect draws lines *over* the chunk, this one replaces the chunk's surface with a
+/// second copy of it — the same triangles with their heights quantized — and hides the original. That
+/// is a bigger intervention than a line layer, and it is what makes the step faces real geometry that
+/// catches the light rather than a pattern painted on a smooth slope.
+///
+/// The whole thing is one mesh with one material, plateaus and risers alike; which of the two a
+/// triangle is decides only which row of the palette strip it reads. See ``TerraceGeometry`` for why
+/// quantizing per vertex gives exactly-flat plateaus and exactly-one-cell risers without a single
+/// normal being averaged, and ``TerracePalette`` for how two rows stand in for two materials.
+///
+/// The walls come along, and are not decoration. Quantization rounds heights down, so a wall left as
+/// the generator built it stands up to a full step proud of the surface it is supposed to meet, and
+/// the chunk gets a ragged lip of strata all the way around its rim.
+@MainActor
+final class TerraceEffectPass: DioramaEffectPass {
+    private static let logger = Logger(subsystem: "com.maquette", category: "TerraceEffect")
+
+    private let style: TerraceStyle
+
+    private var body = EffectBody()
+    private var container: Entity?
+    private var surface: EffectLayer?
+    private var walls: EffectLayer?
+
+    /// Reused between refreshes so a pan step does not reallocate the whole chunk.
+    private var surfaceMesh = IndexedMesh()
+    private var wallMesh = IndexedMesh()
+
+    /// The ladder, measured at `apply` and then held.
+    ///
+    /// This is the one piece of state that must not be re-derived per step. A pan slides new ground
+    /// under the outline, so levels taken from whatever is currently on screen would move every step
+    /// in the model at once and the whole chunk would jump on every frame of a drag — the same
+    /// failure the wall texture's vertical reference, the elevation baseline, and `InkImagery`'s tonal
+    /// range are all frozen to avoid.
+    private var bands: TerraceBands?
+
+    private var baseDepth: Float = 0
+    private var wallHeight: Float = 0
+
+    init(style: TerraceStyle) {
+        self.style = style
+    }
+
+    func apply(to root: DioramaEntity, context: DioramaEffectContext) {
+        guard let terrain = root.terrain, let buffers = terrain.surfaceBuffers else {
+            Self.logger.info(
+                """
+                The terraced effect needs a raster terrain chunk and this diorama has none; \
+                leaving it as it is
+                """
+            )
+            return
+        }
+
+        guard let bands = makeBands(for: buffers, context: context) else {
+            Self.logger.info("This chunk has no relief to terrace; leaving it as it is")
+            return
+        }
+        self.bands = bands
+        baseDepth = terrain.baseDepth
+        wallHeight = terrain.wallHeight
+
+        let surfaceMaterial: any RealityKit.Material
+        do {
+            let image = TerracePalette.makeImage(
+                colors: style.colors,
+                count: bands.count,
+                riserShade: style.riserShade
+            )
+            guard let image else {
+                Self.logger.error("Could not render the terrace palette; leaving the chunk as it is")
+                self.bands = nil
+                return
+            }
+            surfaceMaterial = try DioramaMaterials.terraceSurfaceMaterial(
+                from: image,
+                roughness: style.roughness
+            )
+        } catch {
+            Self.logger.error("Could not build the terrace material: \(error)")
+            self.bands = nil
+            return
+        }
+
+        // The wall keeps whatever the chunk's own style painted it unless the style asks otherwise,
+        // because a stacked-card model *has* visible layers down its sides and the strata already are
+        // that. Taken from the model rather than rebuilt, so the procedural texture is not rendered a
+        // second time.
+        let wallMaterial: any RealityKit.Material = style.blockColor.map {
+            DioramaMaterials.litMaterial(color: $0, roughness: style.roughness)
+        } ?? terrain.wallMaterials.first ?? DioramaMaterials.litMaterial(
+            color: .init(white: 0.7),
+            roughness: style.roughness
+        )
+
+        restyleBody(of: root)
+
+        let container = Entity()
+        container.name = "TerraceEffect"
+        terrain.addChild(container)
+        self.container = container
+
+        let surface = EffectLayer(name: "TerraceSurface", material: surfaceMaterial)
+        let walls = EffectLayer(name: "TerraceWalls", material: wallMaterial)
+        container.addChild(surface.entity)
+        container.addChild(walls.entity)
+        self.surface = surface
+        self.walls = walls
+
+        refresh(on: root, context: context)
+    }
+
+    func refresh(on root: DioramaEntity, context: DioramaEffectContext) {
+        guard let bands, let surface, let walls, let terrain = root.terrain else { return }
+        guard let buffers = terrain.surfaceBuffers else { return }
+
+        TerraceGeometry.buildSurface(from: buffers, bands: bands, into: &surfaceMesh)
+        surface.update(with: surfaceMesh)
+
+        if let wallBuffers = terrain.wallBuffers {
+            TerraceGeometry.buildWalls(
+                from: wallBuffers,
+                bands: bands,
+                baseDepth: baseDepth,
+                wallHeight: wallHeight,
+                into: &wallMesh
+            )
+            walls.update(with: wallMesh)
+        }
+    }
+
+    func reapply(to root: DioramaEntity, context: DioramaEffectContext) {
+        guard container != nil else { return }
+        // The chunk repainted itself, which is what a roll landing looks like: the imagery is new and
+        // the originals this effect saved are stale. Nothing here reads that imagery — the colour
+        // comes from height — so the only work is to hide the restored models again and rebuild.
+        body.forgetMaterials()
+        restyleBody(of: root)
+        refresh(on: root, context: context)
+    }
+
+    func revert(from root: DioramaEntity) {
+        container?.removeFromParent()
+        container = nil
+        surface = nil
+        walls = nil
+        bands = nil
+        surfaceMesh.removeAll()
+        wallMesh.removeAll()
+        body.restore()
+    }
+
+    // MARK: - Body
+
+    /// Takes away the smooth chunk the terraced copy stands in for, and paints what is left.
+    private func restyleBody(of root: DioramaEntity) {
+        // Hidden rather than painted: both copies occupy the same space, and leaving the smooth one
+        // drawn would put it in a depth fight with the steps built from it.
+        body.hide(root.terrain?.surface)
+        body.hide(root.terrain?.walls)
+
+        if let blockColor = style.blockColor {
+            let material = DioramaMaterials.litMaterial(
+                color: blockColor,
+                roughness: style.roughness
+            )
+            body.replace(root.terrain?.bottom, with: material)
+            if let base = root.base {
+                body.replace(base as? ModelEntity, with: material)
+                for model in base.children.compactMap({ $0 as? ModelEntity }) {
+                    body.replace(model, with: material)
+                }
+            }
+        }
+
+        // Water is drawn as a mirror everywhere else in the library, and a mirror among flat painted
+        // steps reads as a hole in the model rather than as a lake.
+        if let waterColor = style.waterColor, let water = root.waterPlane as? ModelEntity {
+            body.replace(
+                water,
+                with: DioramaMaterials.litMaterial(color: waterColor, roughness: 0.25)
+            )
+        }
+    }
+
+    // MARK: - Bands
+
+    private func makeBands(
+        for buffers: TerrainSolidGenerator.Buffers,
+        context: DioramaEffectContext
+    ) -> TerraceBands? {
+        guard let relief = TerraceGeometry.relief(of: buffers.positions) else { return nil }
+
+        switch style.steps {
+        case .automatic(let count):
+            return TerraceBands(dividing: relief.lower, relief.upper, into: count)
+
+        case .elevationMeters(let spacing):
+            return TerraceBands(
+                everyMeters: Float(spacing),
+                elevationScale: context.elevationScale,
+                baselineElevation: context.baselineElevation,
+                lower: relief.lower,
+                upper: relief.upper
+            )
+        }
+    }
+}

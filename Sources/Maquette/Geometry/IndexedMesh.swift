@@ -46,4 +46,13 @@ struct IndexedMesh {
     mutating func appendTriangle(_ a: UInt32, _ b: UInt32, _ c: UInt32) {
         indices.append(contentsOf: [a, b, c])
     }
+
+    /// Appends triangles wholesale, for topology that is carried over rather than built.
+    ///
+    /// A caller reusing another mesh's indices unchanged — which is what an effect that only moves
+    /// vertices does — would otherwise pay `appendTriangle`'s per-triangle array literal for every one
+    /// of them. That is the same heap traffic `InkGeometry.addTubes` was measured losing time to.
+    mutating func appendIndices(_ source: [UInt32]) {
+        indices.append(contentsOf: source)
+    }
 }

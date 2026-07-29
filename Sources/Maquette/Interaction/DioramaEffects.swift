@@ -1,7 +1,8 @@
 import Foundation
 import SwiftUI
 
-/// How far apart a hologram's elevation contours sit.
+/// How far apart an effect's elevation bands sit — a hologram's contour lines, or the steps a
+/// terraced chunk is cut into.
 public enum ContourInterval: Sendable, Equatable {
     /// Divide the terrain's relief into this many bands.
     ///
@@ -296,6 +297,106 @@ public struct InkStyle: Sendable, Equatable {
     )
 }
 
+/// The look of the `.terraced` effect.
+///
+/// A model-maker's treatment: the terrain cut into stacked flat steps, the way a contour model is
+/// built up out of sheets of card, and painted from a colour ramp by height rather than from
+/// photography. What makes it read as a made object rather than as a low-resolution render is that
+/// the plateaus are exactly flat and the steps between them are vertical — see ``TerraceGeometry``
+/// for why quantizing per vertex delivers both for free.
+public struct TerraceStyle: Sendable, Equatable {
+    /// How the terrain's height is divided into steps.
+    ///
+    /// `.automatic(count:)` divides the chunk's own relief, so a flat delta and an alpine face both
+    /// come out with the same number of steps. `.elevationMeters` puts the steps on multiples of a
+    /// real elevation, the way a contour model is cut from a map.
+    ///
+    /// Either way the ladder is measured once, when the effect is switched on, and then held. Panning
+    /// slides new ground under the outline, and re-measuring against whatever is currently on screen
+    /// would re-cut every step in the model at once — the whole thing would jump every frame of a
+    /// drag.
+    public var steps: ContourInterval
+    /// The colour ramp, lowest ground first.
+    ///
+    /// Interpolated across however many steps the ladder produces, so its length is a description of
+    /// the palette rather than of the terrain and the two need not agree.
+    public var colors: [Color]
+    /// What a band's colour is multiplied by on the vertical face of its step, in `0...1`.
+    ///
+    /// The material is lit, so a step face already darkens where it turns away from the light. This
+    /// is what keeps the steps legible on the faces that do not — the ones turned towards it.
+    public var riserShade: Float
+    /// The colour of the chunk's earth — its cut walls, its bottom face, and any plinth — or `nil` to
+    /// leave whatever `TerrainChunkStyle` painted them.
+    ///
+    /// `nil` by default, because a stacked-card model *has* visible layers down its sides and the
+    /// chunk's strata already are that. A flat colour is the toy register instead, where the block
+    /// beneath reads as one moulded piece.
+    public var blockColor: Color?
+    /// The flat colour the sea-level plane is painted, when the chunk has one, or `nil` to leave it.
+    ///
+    /// Water is the one surface a flat treatment cannot leave alone: it is drawn as a mirror
+    /// everywhere else in the library, and a mirror among flat painted steps reads as a hole.
+    public var waterColor: Color?
+    /// The colour a view sits the chunk against.
+    public var backgroundColor: Color
+    /// How matte the painted surface is, in `0...1`. High reads as card or clay; low reads as plastic.
+    public var roughness: Float
+
+    /// Creates a terrace style.
+    public init(
+        steps: ContourInterval = .automatic(count: 16),
+        colors: [Color] = [
+            Color(red: 0.38, green: 0.14, blue: 0.10),
+            Color(red: 0.68, green: 0.26, blue: 0.13),
+            Color(red: 0.87, green: 0.44, blue: 0.17),
+            Color(red: 0.95, green: 0.63, blue: 0.29),
+            Color(red: 0.98, green: 0.80, blue: 0.53),
+            Color(red: 0.99, green: 0.93, blue: 0.80),
+        ],
+        riserShade: Float = 0.78,
+        blockColor: Color? = nil,
+        waterColor: Color? = Color(red: 0.35, green: 0.55, blue: 0.62),
+        backgroundColor: Color = Color(red: 0.10, green: 0.08, blue: 0.09),
+        roughness: Float = 0.95
+    ) {
+        self.steps = steps
+        self.colors = colors.isEmpty ? [Color(white: 0.7)] : colors
+        self.riserShade = max(0, min(1, riserShade))
+        self.blockColor = blockColor
+        self.waterColor = waterColor
+        self.backgroundColor = backgroundColor
+        self.roughness = max(0, min(1, roughness))
+    }
+
+    /// Warm earth tones over the chunk's own strata. The default.
+    public static let standard = TerraceStyle()
+
+    /// The toy register: green ground rising through rock to snow, on one moulded grey block.
+    public static let meadow = TerraceStyle(
+        steps: .automatic(count: 12),
+        colors: [
+            Color(red: 0.29, green: 0.46, blue: 0.29),
+            Color(red: 0.44, green: 0.62, blue: 0.34),
+            Color(red: 0.60, green: 0.72, blue: 0.42),
+            Color(red: 0.76, green: 0.75, blue: 0.58),
+            Color(red: 0.70, green: 0.68, blue: 0.65),
+            Color(red: 0.95, green: 0.96, blue: 0.97),
+        ],
+        riserShade: 0.82,
+        blockColor: Color(white: 0.72),
+        waterColor: Color(red: 0.55, green: 0.78, blue: 0.85),
+        backgroundColor: Color(red: 0.87, green: 0.92, blue: 0.95)
+    )
+
+    /// Few, deep steps, the way a model cut from thick card comes out.
+    public static let card = TerraceStyle(
+        steps: .automatic(count: 8),
+        riserShade: 0.7,
+        blockColor: Color(red: 0.80, green: 0.71, blue: 0.58)
+    )
+}
+
 /// A visual treatment applied over a built diorama.
 ///
 /// An effect is a restyle of the finished scene rather than a different way of building it, so
@@ -317,6 +418,7 @@ public struct DioramaEffect: Sendable, Equatable {
         case none
         case hologram(HologramStyle)
         case ink(InkStyle)
+        case terraced(TerraceStyle)
     }
 
     let kind: Kind
@@ -348,6 +450,18 @@ public struct DioramaEffect: Sendable, Equatable {
         DioramaEffect(kind: .ink(style))
     }
 
+    /// A model-maker's look: the terrain cut into stacked flat steps and painted by height.
+    ///
+    /// Only the raster terrain chunk carries it. The steps are the chunk's own surface quantized in
+    /// height, and a photorealistic 3D Tiles model is triangle soup with no heightfield to quantize,
+    /// so applying this to one logs and does nothing.
+    public static let terraced = DioramaEffect(kind: .terraced(.standard))
+
+    /// A terraced treatment with a specific look.
+    public static func terraced(_ style: TerraceStyle) -> DioramaEffect {
+        DioramaEffect(kind: .terraced(style))
+    }
+
     /// The color a view should sit the diorama against, or `nil` when the effect has no opinion.
     ///
     /// An effect that draws its own light needs darkness behind it to read — the contours are the
@@ -361,6 +475,8 @@ public struct DioramaEffect: Sendable, Equatable {
             return style.surfaceColor
         case .ink(let style):
             return style.paperColor
+        case .terraced(let style):
+            return style.backgroundColor
         }
     }
 }

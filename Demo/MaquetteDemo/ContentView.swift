@@ -290,6 +290,62 @@ enum DemoPresets {
                 effect: .ink
             )
         }(),
+
+        {
+            // A cone, and deliberately not the canyon the ink preset uses. `.automatic` spreads its
+            // bands evenly across the chunk's whole relief, so terrain that is mostly plateau under one
+            // outlying ridge — which is exactly what the canyon rim is at this radius — spends its
+            // ladder on ground that hardly appears and terraces into a single sheet of card. A
+            // stratovolcano puts ground at every height between its base and its summit, so every rung
+            // gets used and the steps come out as the concentric rings a contour model is made of.
+            //
+            // Pannable because the ladder is the one thing here that must *not* move with the ground —
+            // a drag is what proves the steps stay at fixed heights while new terrain slides through
+            // them, rather than the whole model re-cutting itself on every frame.
+            var configuration = DioramaConfiguration(
+                center: CLLocationCoordinate2D(latitude: 46.8523, longitude: -121.7603),
+                radiusMeters: 9000,
+                elevationExaggeration: 1.6,
+                chunk: .canyon,
+                panRange: 0.8
+            )
+            camera(&configuration)
+            return DemoPreset(
+                id: "terraced",
+                title: "Terraced",
+                caption: "Mount Rainier cut into stacked contour steps",
+                configuration: configuration,
+                effect: .terraced
+            )
+        }(),
+
+        {
+            // The toy register from the other direction: a smaller, gentler piece of ground on a
+            // coarser ladder, so each step is a wide plateau rather than a thin shelf. Yosemite Valley
+            // has the relief for it without the canyon's density of edges.
+            var configuration = DioramaConfiguration(
+                center: CLLocationCoordinate2D(latitude: 37.7458, longitude: -119.5332),
+                radiusMeters: 5000,
+                elevationExaggeration: 1.8,
+                chunk: TerrainChunkStyle(
+                    baseDepth: .proportional(0.18),
+                    wall: .strata(.earth),
+                    // The plinth is what makes it read as a model of somewhere rather than a piece of
+                    // it. `.meadow` repaints it along with the chunk's own block, so the whole solid
+                    // below the steps comes out one colour.
+                    base: .plinth(color: Color(white: 0.35), height: 0.03, inset: -0.02)
+                ),
+                panRange: 0.8
+            )
+            camera(&configuration)
+            return DemoPreset(
+                id: "terraced-toy",
+                title: "Terraced model",
+                caption: "Yosemite Valley as a painted contour model",
+                configuration: configuration,
+                effect: .terraced(.meadow)
+            )
+        }(),
     ]
 }
 

@@ -1,4 +1,6 @@
+import CoreGraphics
 import Foundation
+import Metal
 import RealityKit
 import SwiftUI
 
@@ -287,6 +289,45 @@ public enum DioramaMaterials {
         var material = UnlitMaterial()
         material.color = .init(tint: .white, texture: .init(texture))
         return material
+    }
+
+    /// Wraps a terrace palette strip as the terraced effect's surface material.
+    ///
+    /// Lit, which is the one place this treatment parts company with the ink one. Ink describes form
+    /// through the lines drawn around it and wants no shading competing with them; a terraced chunk
+    /// describes form through the steps themselves, and it is shading that tells a plateau from the
+    /// riser beside it when both are lit from the same side. Rough and non-metallic, so the result
+    /// reads as card or clay rather than as moulded plastic.
+    ///
+    /// The sampling is nearest-neighbour with no mipmaps on purpose. The strip is a handful of texels
+    /// across and every triangle samples a single point of it, so filtering could only ever blend a
+    /// band into the one beside it — and a mip chain on an image this small collapses the entire
+    /// palette to one colour within a couple of levels, which would drain the chunk of colour as the
+    /// camera pulled back.
+    @MainActor
+    public static func terraceSurfaceMaterial(
+        from image: CGImage,
+        roughness: Float
+    ) throws -> SimpleMaterial {
+        let texture = try TextureResource(
+            image: image,
+            options: .init(semantic: .color, mipmapsMode: .none)
+        )
+        var material = SimpleMaterial()
+        material.color = .init(tint: .white, texture: .init(texture, sampler: nearestSampler))
+        material.roughness = .float(max(0, min(1, roughness)))
+        material.metallic = .float(0)
+        return material
+    }
+
+    /// A sampler that reads a texel rather than a blend of its neighbours.
+    @MainActor
+    private static var nearestSampler: MaterialParameters.Texture.Sampler {
+        let descriptor = MTLSamplerDescriptor()
+        descriptor.minFilter = .nearest
+        descriptor.magFilter = .nearest
+        descriptor.mipFilter = .notMipmapped
+        return .init(descriptor)
     }
 
     // MARK: - Private

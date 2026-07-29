@@ -826,37 +826,74 @@ public final class DioramaStore {
         configuration.maximumPanOffset
     }
 
-    /// Movement asked for by a gesture that has not been applied to the ground yet.
-    private var pendingPan: SIMD2<Float>?
+    /// The gesture's path, which a step reads a fixed distance behind rather than draining.
+    private var panResampler = PanPathResampler()
 
-    /// Whether a flush of ``pendingPan`` is already on its way.
+    /// Whether a pan step is already on its way.
     private var isFlushingPan = false
+
+    /// Lands the tail of a gesture once the touches stop arriving.
+    private var panTailTask: Task<Void, Never>?
+
+    /// How long after the last touch the tail lands. Longer than a frame, so an ordinary gesture
+    /// cancels it and only a gesture that has actually stopped ever pays for it.
+    private static let panTailDelay: Duration = .milliseconds(32)
 
     /// Slides the terrain beneath the chunk's outline by a delta.
     ///
-    /// Accumulated and applied once per turn of the main actor rather than immediately, because a
-    /// pan step costs more than the interval a finger delivers touches at — 10–20 ms of resampling
-    /// and effect work against an event every 8 ms on a 120 Hz display. Applied as they arrive, the
-    /// steps queue behind each other and the ground goes on moving after the finger has stopped: a
-    /// measured 640 ms drag produced 80 steps spanning 975 ms, so a third of the movement happened
-    /// with nothing touching the screen. That reads as momentum nobody asked for, and it gets worse
-    /// the faster the events arrive.
+    /// Applied once per turn of the main actor rather than immediately, because a pan step costs
+    /// more than the interval a finger delivers touches at — 10–20 ms of resampling and effect work
+    /// against an event every 8 ms on a 120 Hz display. Applied as they arrive, the steps queue
+    /// behind each other and the ground goes on moving after the finger has stopped: a measured
+    /// 640 ms drag produced 80 steps spanning 975 ms, so a third of the movement happened with
+    /// nothing touching the screen. That reads as momentum nobody asked for, and it gets worse the
+    /// faster the events arrive. Applying one step per turn makes the gesture's own work an
+    /// addition, so the queue drains as fast as it fills.
     ///
-    /// Coalescing makes the gesture's own work an addition, so the queue drains as fast as it fills
-    /// and what the deltas add up to is applied in one step. The ground follows the finger and stops
-    /// with it, and a burst of events costs one pan rather than a dozen.
+    /// What that step *is* is ``PanPathResampler``'s question rather than a sum of the deltas since
+    /// the last one: touches and frames run on clocks that are not in phase, so summing gives a
+    /// frame that caught two touch samples two thirds the movement of one that caught three. The
+    /// distance is right and the speed is not, which is what reads as judder. Resampling the path at
+    /// the frame's own time gives every frame the movement its own duration earns.
     ///
-    /// - Parameter delta: Movement in diorama meters.
-    public func pan(by delta: SIMD2<Float>) {
-        pendingPan = (pendingPan ?? .zero) + delta
+    /// - Parameters:
+    ///   - delta: Movement in diorama meters.
+    ///   - timestamp: When the touches behind `delta` were sampled, in the clock the platform's
+    ///     events carry. Defaults to `nil` for inputs that timestamp nothing.
+    public func pan(by delta: SIMD2<Float>, at timestamp: TimeInterval? = nil) {
+        panTailTask?.cancel()
+        panTailTask = nil
+        panResampler.add(delta, touchTime: timestamp, now: ProcessInfo.processInfo.systemUptime)
+
         guard !isFlushingPan else { return }
         isFlushingPan = true
         Task { [weak self] in
             guard let self else { return }
             isFlushingPan = false
-            guard let pending = pendingPan else { return }
-            pendingPan = nil
-            setPanOffset(panOffset + pending)
+            flushPan()
+        }
+    }
+
+    /// Moves the ground as far as the gesture's path has reached by now, and arranges to come back
+    /// for the rest.
+    ///
+    /// The rest is real: a step reads the path one touch interval behind, so the newest movement is
+    /// always still in hand. Nothing else would ask for it once a gesture ends — the flush is driven
+    /// by touches arriving — and the ground would settle a touch interval short of where the finger
+    /// left it. The tail is one extra step, and only ever runs when the touches have stopped.
+    private func flushPan() {
+        let step = panResampler.step(now: ProcessInfo.processInfo.systemUptime)
+        if step != .zero {
+            setPanOffset(panOffset + step)
+        }
+
+        guard panResampler.hasUnappliedMovement else { return }
+        panTailTask?.cancel()
+        panTailTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.panTailDelay)
+            guard let self, !Task.isCancelled else { return }
+            panTailTask = nil
+            flushPan()
         }
     }
 
@@ -923,11 +960,14 @@ public final class DioramaStore {
         }
         guard target != panOffset else { return }
 
+        let moved = simd_length(target - panOffset)
         panOffset = target
         elevationSampler?.panOffset = target
 
-        // Split, because the two halves of a pan step are paid for differently: the resample is
-        // fixed by the chunk's vertex count, while an effect's cost rides on what it traces. Logging
+        // Split, because the three parts of a pan step are paid for differently: the resample is
+        // fixed by the chunk's vertex count, an effect's cost rides on what it traces, and how far
+        // the step moved is the gesture's own business rather than the chunk's — a steady drag whose
+        // steps vary in length is judder even when every step is cheap. Logging
         // one total would hide which of them a slow pan is.
         let started = ContinuousClock.now
         (dioramaEntity as? DioramaEntity)?.terrain?.setPanOffset(target)
@@ -942,7 +982,7 @@ public final class DioramaStore {
         let finished = ContinuousClock.now
         if effectPass != nil {
             logger.debug("""
-                Pan step: resample \
+                Pan step: moved \(String(format: "%.3f", moved * 1000)) mm, resample \
                 \(String(format: "%.1f", (resampled - started).milliseconds)) ms, \
                 effect \(String(format: "%.1f", (finished - resampled).milliseconds)) ms
                 """)

@@ -15,6 +15,12 @@ struct MultitouchDragTracker {
         let translation: CGSize
         /// How much the touches spread apart, in points. Always `0` for a single touch.
         let spreadChange: CGFloat
+        /// When the touches behind this update were sampled, in the clock the events carry.
+        ///
+        /// Touches are sampled on the digitizer's clock and applied on the display's, and the two
+        /// are not in phase — so this is what lets a pan be resampled at the frame's own time
+        /// instead of moving by however many touches the frame happened to catch.
+        let time: TimeInterval?
     }
 
     private var previousCentroid: CGPoint?
@@ -26,7 +32,7 @@ struct MultitouchDragTracker {
     /// Returns `nil` when there is nothing to act on yet — no touches, the first update of a
     /// gesture, or the frame a finger was added or lifted. Re-anchoring on those frames is what
     /// keeps the view from jumping when the midpoint suddenly relocates.
-    mutating func update(with locations: [CGPoint]) -> Update? {
+    mutating func update(with locations: [CGPoint], at time: TimeInterval? = nil) -> Update? {
         guard !locations.isEmpty else {
             reset()
             return nil
@@ -49,7 +55,8 @@ struct MultitouchDragTracker {
                 width: centroid.x - previousCentroid.x,
                 height: centroid.y - previousCentroid.y
             ),
-            spreadChange: spread - previousSpread
+            spreadChange: spread - previousSpread,
+            time: time
         )
     }
 

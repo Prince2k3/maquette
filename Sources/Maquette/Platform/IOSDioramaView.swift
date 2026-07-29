@@ -178,8 +178,14 @@ struct IOSDioramaView: View {
         .gesture(
             SpatialEventGesture(coordinateSpace: .local)
                 .onChanged { events in
-                    let locations = events.filter { $0.phase == .active }.map(\.location)
-                    guard let update = dragTracker.update(with: locations) else { return }
+                    let active = events.filter { $0.phase == .active }
+                    // The touches' own timestamps, not the delivery's: the point of carrying them is
+                    // that when a touch was sampled and when its frame runs are different questions.
+                    let update = dragTracker.update(
+                        with: active.map(\.location),
+                        at: active.map(\.timestamp).max()
+                    )
+                    guard let update else { return }
                     apply(update)
                 }
                 .onEnded { _ in
@@ -199,12 +205,15 @@ struct IOSDioramaView: View {
 
         if update.touchCount == 1 {
             if canPanTerrain {
-                store.pan(by: cameraController.terrainPanDelta(
-                    dragDeltaX: dx,
-                    dragDeltaY: dy,
-                    viewHeight: Float(viewSize.height),
-                    entityScale: entityScale
-                ))
+                store.pan(
+                    by: cameraController.terrainPanDelta(
+                        dragDeltaX: dx,
+                        dragDeltaY: dy,
+                        viewHeight: Float(viewSize.height),
+                        entityScale: entityScale
+                    ),
+                    at: update.time
+                )
             } else if enabledGestures.contains(.rotate) {
                 cameraController.rotate(deltaX: dx, deltaY: dy)
             }

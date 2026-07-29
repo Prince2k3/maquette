@@ -965,10 +965,12 @@ public final class DioramaStore {
         elevationSampler?.panOffset = target
 
         // Split, because the three parts of a pan step are paid for differently: the resample is
-        // fixed by the chunk's vertex count, an effect's cost rides on what it traces, and how far
-        // the step moved is the gesture's own business rather than the chunk's — a steady drag whose
-        // steps vary in length is judder even when every step is cheap. Logging
-        // one total would hide which of them a slow pan is.
+        // fixed by the chunk's vertex count (or, on the photorealistic path, by how much of the rim
+        // the outline moved across), an effect's cost rides on what it traces, and how far the step
+        // moved is the gesture's own business rather than the chunk's — a steady drag whose steps
+        // vary in length is judder even when every step is cheap. Logging one total would hide which
+        // of them a slow pan is. Logged on every path, so the pan can be measured where it is
+        // slowest rather than only where an effect happens to be attached.
         let started = ContinuousClock.now
         (dioramaEntity as? DioramaEntity)?.terrain?.setPanOffset(target)
         (dioramaEntity as? DioramaEntity)?.tiles3D?.setPanOffset(target)
@@ -980,13 +982,11 @@ public final class DioramaStore {
         let resampled = ContinuousClock.now
         refreshEffect()
         let finished = ContinuousClock.now
-        if effectPass != nil {
-            logger.debug("""
-                Pan step: moved \(String(format: "%.3f", moved * 1000)) mm, resample \
-                \(String(format: "%.1f", (resampled - started).milliseconds)) ms, \
-                effect \(String(format: "%.1f", (finished - resampled).milliseconds)) ms
-                """)
-        }
+        logger.debug("""
+            Pan step: moved \(String(format: "%.3f", moved * 1000)) mm, resample \
+            \(String(format: "%.1f", (resampled - started).milliseconds)) ms, \
+            effect \(String(format: "%.1f", (finished - resampled).milliseconds)) ms
+            """)
 
         // Content is anchored to geography, so it has to move with the ground.
         applyContent(appliedContent)

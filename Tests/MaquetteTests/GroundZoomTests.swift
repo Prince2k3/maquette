@@ -50,3 +50,77 @@ struct GroundZoomTests {
         #expect(DioramaStore.desiredTileZoom(base: 3, scale: 64) == 3)
     }
 }
+
+/// What a re-level must and must not change while the pinch it was triggered by carries on.
+///
+/// A re-level is the one thing in the library that changes *what a tile coordinate means*, and it
+/// takes hundreds of milliseconds to fetch — during which the pinch keeps moving and a roll may
+/// already be in flight against the level being replaced. Both of the things that can go wrong here
+/// fail silently on screen (a plausible piece of ground, placed with complete confidence), so they
+/// are pinned as arithmetic instead.
+@Suite("Re-levelling")
+struct RelevelTests {
+    private static let grandCanyon = Coordinate(latitude: 36.0544, longitude: -112.1401)
+
+    private func anchor(zoom: Int = 12) -> TerrainAnchor {
+        TerrainAnchor(
+            centeredOn: Self.grandCanyon,
+            zoom: zoom,
+            extent: SIMD2(0.8, 0.8),
+            radiusMeters: 6000
+        )
+    }
+
+    /// Why a re-level can swap the ground in whole with no teardown: at a fixed scale, the level is
+    /// invisible to the mapping. Only which tiles are fetched changes.
+    @Test("A change of level at the same scale names the same ground")
+    func levelDoesNotMoveTheGround() {
+        let base = anchor()
+        for scale in [4.0, 8.0, 16.0] {
+            let fine = base.atZoom(11).scaled(by: scale)
+            let coarse = base.atZoom(9).scaled(by: scale)
+            for point in [SIMD2<Double>(0, 0), SIMD2(0.31, -0.18), SIMD2(-0.4, 0.22)] {
+                let a = fine.coordinate(forDioramaX: point.x, z: point.y)
+                let b = coarse.coordinate(forDioramaX: point.x, z: point.y)
+                #expect(Turf.distance(from: a, to: b) < 0.01)
+            }
+        }
+    }
+
+    /// The re-level's own bug, stated as a distance. The mapping used to be built before the fetch
+    /// and applied after it, so the scale it carried was however far the pinch had got when the
+    /// level was chosen — and the ground snapped back to that as the sharper tiles landed.
+    @Test("A mapping built at the scale the fetch started at moves the ground")
+    func aStaleScaleMovesTheGround() {
+        let base = anchor()
+        let issuedAt = 4.0    // the scale when the re-level was decided
+        let landedAt = 5.6    // where the pinch had got to when the tiles arrived
+
+        let point = SIMD2<Double>(0.3, -0.2)
+        let live = base.atZoom(10).scaled(by: landedAt).coordinate(forDioramaX: point.x, z: point.y)
+        let stale = base.atZoom(10).scaled(by: issuedAt).coordinate(forDioramaX: point.x, z: point.y)
+
+        // Between a third and a half of the chunk's own radius — far too big to read as anything
+        // but the map flinching, and in the middle of a gesture that is moving anyway.
+        #expect(Turf.distance(from: live, to: stale) > 1000)
+
+        // What the fix restates instead: the mapping in force when the tiles land, which is exactly
+        // what a zoom step arriving a moment later would have produced.
+        let applied = base.atZoom(10).scaled(by: landedAt)
+        #expect(Turf.distance(
+            from: applied.coordinate(forDioramaX: point.x, z: point.y), to: live
+        ) < 0.01)
+    }
+
+    /// Why a roll in flight across a re-level has to be discarded rather than applied: a
+    /// ``TerrainTileSet`` is keyed by tile coordinate with no level in the key, so the very same key
+    /// names ground a continent away one level out.
+    @Test("The same tile key names different ground at a different level")
+    func aTileKeyIsMeaninglessWithoutItsLevel() {
+        let fine = TileMath.tileXY(for: Self.grandCanyon, zoom: 12)
+        let asIfCoarser = TileMath.coordinate(
+            forTilePoint: SIMD2(Double(fine.x) + 0.5, Double(fine.y) + 0.5), zoom: 11
+        )
+        #expect(Turf.distance(from: Self.grandCanyon, to: asIfCoarser) > 1_000_000)
+    }
+}

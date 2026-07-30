@@ -574,6 +574,7 @@ public final class DioramaStore {
                 tiles.imagery[TileCoordinate(x: entry.x, y: entry.y)] = entry.data
             }
             rolling = TerrainRollState(roller: roller, tiles: tiles, window: initialWindow)
+            tileGeneration += 1
         }
 
         startBuildingsFetch(heightField: heightField, boundary: boundary, rootEntity: rootEntity)
@@ -1173,6 +1174,21 @@ public final class DioramaStore {
     private var rolling: TerrainRollState?
     private var rollTask: Task<Void, Never>?
 
+    /// Which set of tile coordinates the chunk is currently speaking in.
+    ///
+    /// A ``TerrainTileSet`` is keyed by tile coordinate with no level in the key, so the same key
+    /// names entirely different ground at a different zoom. A fetch takes hundreds of milliseconds
+    /// and a re-level or a reload can land inside one, which would leave a roll applying level-11
+    /// tiles as though they were level-10 tiles — ground from a hundred kilometres away, placed with
+    /// complete confidence. Anything that changes what a tile coordinate *means* bumps this, and a
+    /// fetch that comes back to a different number is thrown away rather than applied.
+    ///
+    /// A ground zoom pointedly does not bump it. It changes the map the resident tiles are read
+    /// through, not which tiles they are, and a fetch in flight across one lands perfectly well —
+    /// see ``applyRoll(_:)``, which places whatever arrives through the mapping in force when it
+    /// arrives rather than the one it was requested under.
+    private var tileGeneration = 0
+
     /// Fetches more ground once the chunk comes within the margin ring of what is loaded.
     ///
     /// This runs ahead of the frontier rather than at it: the window a pan offset requires is the
@@ -1186,16 +1202,29 @@ public final class DioramaStore {
         guard !state.window.contains(state.roller.window(forPanOffset: panOffset)) else { return }
 
         rollTask = Task { [self] in
-            defer { rollTask = nil }
+            // Only a task that was not cancelled may clear the handle. `reset()` cancels this one
+            // and nils the handle itself, so a cancelled roll finishing its await later would
+            // otherwise clear the handle of the roll that replaced it — releasing the guard that
+            // keeps exactly one in flight.
+            defer { if !Task.isCancelled { rollTask = nil } }
             while let state = rolling, !Task.isCancelled {
                 let required = state.roller.window(forPanOffset: panOffset)
                 guard !state.window.contains(required) else { return }
 
+                let issuedAt = tileGeneration
                 guard let roll = await state.roller.load(window: required, have: state.tiles) else {
                     logger.warning("Terrain roll loaded nothing; staying on the ground already held")
                     return
                 }
                 guard !Task.isCancelled, rolling != nil else { return }
+
+                // A re-level or a reload landed while this was in flight, so these tile coordinates
+                // no longer name the ground the chunk is standing on. Start again against what the
+                // chunk is actually reading now; the tiles themselves are in the cache either way.
+                guard issuedAt == tileGeneration else {
+                    logger.debug("Discarded a roll that landed at z\(state.roller.zoom) after a re-level")
+                    continue
+                }
 
                 // The window is what the clamp lets the chunk pan across, so it may only advance
                 // once the ground behind it is actually on screen. Recording a roll that was
@@ -1208,8 +1237,18 @@ public final class DioramaStore {
     }
 
     /// Swaps in the ground a roll loaded, reporting whether it could.
+    ///
+    /// The grids are re-placed through the mapping in force *now* rather than kept where the roller
+    /// put them. A fetch takes hundreds of milliseconds and a pinch does not stop for it, so the
+    /// scale the roll was requested at is routinely not the scale it lands at — and a height field
+    /// built against the old one would put the chunk back a step of zoom the moment the ground
+    /// arrived, which reads as the map flinching mid-gesture. Placing at landing costs one height
+    /// field rebuild over the same grids and is exactly what the roller would have produced had it
+    /// been asked a moment later.
     @discardableResult
     private func applyRoll(_ roll: TerrainRoll) -> Bool {
+        guard let template = samplerTemplate else { return false }
+
         // The ground and its picture share one mapping, so they have to move together. `setTerrain`
         // resamples the surface's texture coordinates against the new window whether or not a new
         // texture comes with them, so applying a roll whose imagery did not composite would leave
@@ -1227,10 +1266,18 @@ public final class DioramaStore {
             return false
         }
 
+        let field = TerrainHeightField(
+            grids: roll.heightField.grids,
+            tilePositions: roll.heightField.tilePositions,
+            anchor: template.anchor,
+            elevationScale: template.elevationScale,
+            baselineElevation: template.globalMinElev
+        )
+
         mosaic = image
-        terrainField = roll.heightField
+        terrainField = field
         (dioramaEntity as? DioramaEntity)?.terrain?.setTerrain(
-            roll.heightField,
+            field,
             surfaceMaterial: material
         )
         // New ground means new heights, and the roll has just handed the chunk a fresh surface
@@ -1239,8 +1286,8 @@ public final class DioramaStore {
 
         // The sampler reads the same ground, so it moves with it or markers drift off the terrain.
         setTerrainProjection(
-            grids: roll.heightField.tilePositions.enumerated().map { index, position in
-                (x: position.x, y: position.y, grid: roll.heightField.grids[index])
+            grids: field.tilePositions.enumerated().map { index, position in
+                (x: position.x, y: position.y, grid: field.grids[index])
             }
         )
         applyContent(appliedContent)
@@ -1249,7 +1296,7 @@ public final class DioramaStore {
         // few metres where the stitched seam falls differently — so they are re-seated even though
         // the outline has not moved. The anchor survives a roll, so their footprints do not have to
         // be projected again.
-        buildings?.heightField = roll.heightField
+        buildings?.heightField = field
         buildings?.blocksStale = true
         buildings?.generation += 1
         recutBuildingsIfNeeded()
@@ -1337,8 +1384,7 @@ public final class DioramaStore {
     public func setGroundScale(_ scale: Float) {
         guard canZoomGround,
               let template = samplerTemplate,
-              let field = terrainField,
-              let rollState = rolling
+              let field = terrainField
         else { return }
 
         let limits = groundScaleLimits
@@ -1347,39 +1393,21 @@ public final class DioramaStore {
 
         let started = ContinuousClock.now
         let offset = panOffset * (groundScale / target)
-        let anchor = template.baseAnchor.atZoom(template.zoom).scaled(by: Double(target))
-        let elevationScale = template.baseElevationScale / target
+        guard let mapping = applyMapping(scale: target, zoom: template.zoom) else { return }
 
         // The grids in hand, read through the new mapping. Same tiles, same stitching, same frozen
         // baseline — only the map they are placed against has changed.
         let zoomed = TerrainHeightField(
             grids: field.grids,
             tilePositions: field.tilePositions,
-            anchor: anchor,
-            elevationScale: elevationScale,
+            anchor: mapping.anchor,
+            elevationScale: mapping.elevationScale,
             baselineElevation: template.globalMinElev
         )
 
         groundScale = target
         panOffset = offset
-        samplerTemplate?.anchor = anchor
-        samplerTemplate?.elevationScale = elevationScale
         terrainField = zoomed
-
-        let perTile = anchor.dioramaMetersPerTile
-        let margin = configuration.maximumPanOffset
-        rolling = TerrainRollState(
-            roller: rollState.roller.remapped(
-                anchor: anchor,
-                elevationScale: elevationScale,
-                marginTiles: SIMD2(
-                    Self.marginTiles(meters: margin.x, perTile: perTile.x),
-                    Self.marginTiles(meters: margin.y, perTile: perTile.y)
-                )
-            ),
-            tiles: rollState.tiles,
-            window: rollState.window
-        )
 
         (dioramaEntity as? DioramaEntity)?.terrain?.setTerrain(
             zoomed,
@@ -1389,7 +1417,7 @@ public final class DioramaStore {
         // Sea level is an elevation like any other, so it rides the elevation scale down. Moving the
         // plane rather than rebuilding it is enough: it is cut to the outline, which has not moved.
         if let water = (dioramaEntity as? DioramaEntity)?.waterPlane {
-            water.position.y = (0.0 - template.globalMinElev) * elevationScale
+            water.position.y = (0.0 - template.globalMinElev) * mapping.elevationScale
         }
         projection?.panOffset = offset
         refreshEffect()
@@ -1416,6 +1444,52 @@ public final class DioramaStore {
 
         relevelTerrainIfNeeded()
         rollTerrainIfNeeded()
+    }
+
+    /// Restates the map the chunk reads its resident grids through, at `scale` and tile level `zoom`.
+    ///
+    /// The two things that move the map land here — a ground zoom, which changes the scale and keeps
+    /// the level, and a re-level, which changes the level and keeps the scale — so there is one
+    /// place that knows an anchor, an elevation scale and a margin ring have to move together.
+    /// Splitting them was how the re-level came to apply an anchor built before its own fetch: it
+    /// restated the mapping from a scale that had been correct several hundred milliseconds and a
+    /// good deal of pinch ago, and the ground jumped back to it as the tiles landed.
+    ///
+    /// Both terms are derived from `baseAnchor`/`baseElevationScale` rather than from what is in
+    /// force, so a hundred steps of a pinch cannot accumulate drift the scale can no longer be read
+    /// back from.
+    ///
+    /// It moves the map only. The height field, the entity and everything standing on the ground are
+    /// the caller's to bring across, because a zoom re-reads the grids it already has while a
+    /// re-level brings its own.
+    @discardableResult
+    private func applyMapping(scale: Float, zoom: Int) -> (anchor: TerrainAnchor, elevationScale: Float)? {
+        guard let template = samplerTemplate, let state = rolling else { return nil }
+
+        let anchor = template.baseAnchor.atZoom(zoom).scaled(by: Double(scale))
+        let elevationScale = template.baseElevationScale / scale
+
+        samplerTemplate?.zoom = zoom
+        samplerTemplate?.anchor = anchor
+        samplerTemplate?.elevationScale = elevationScale
+
+        // A tile spans a different amount of chunk at every scale and level, so the ring the roller
+        // keeps beyond the outline is re-counted in the tiles it is now made of.
+        let perTile = anchor.dioramaMetersPerTile
+        let margin = configuration.maximumPanOffset
+        rolling = TerrainRollState(
+            roller: state.roller.remapped(
+                anchor: anchor,
+                elevationScale: elevationScale,
+                marginTiles: SIMD2(
+                    Self.marginTiles(meters: margin.x, perTile: perTile.x),
+                    Self.marginTiles(meters: margin.y, perTile: perTile.y)
+                )
+            ),
+            tiles: state.tiles,
+            window: state.window
+        )
+        return (anchor, elevationScale)
     }
 
     /// Zooms the ground by a multiplier, which is what a pinch produces.
@@ -1461,16 +1535,20 @@ public final class DioramaStore {
         guard desiredTileZoom(for: template, scale: groundScale) != template.zoom else { return }
 
         relevelTask = Task { [self] in
-            defer { relevelTask = nil }
+            // Same reasoning as the roll: only a task that was not cancelled may clear the handle,
+            // or a cancelled re-level finishing later releases the guard on the one that replaced it.
+            defer { if !Task.isCancelled { relevelTask = nil } }
             while let template = samplerTemplate, let state = rolling, !Task.isCancelled {
                 let wanted = desiredTileZoom(for: template, scale: groundScale)
                 guard wanted != template.zoom else { return }
 
-                let anchor = template.baseAnchor.atZoom(wanted).scaled(by: Double(groundScale))
-                let perTile = anchor.dioramaMetersPerTile
+                // Enough of a mapping to *ask* with. What the tiles are placed against is decided
+                // below, once they have arrived — see the note there.
+                let requested = template.baseAnchor.atZoom(wanted).scaled(by: Double(groundScale))
+                let perTile = requested.dioramaMetersPerTile
                 let margin = configuration.maximumPanOffset
                 let roller = state.roller.remapped(
-                    anchor: anchor,
+                    anchor: requested,
                     elevationScale: template.elevationScale,
                     marginTiles: SIMD2(
                         Self.marginTiles(meters: margin.x, perTile: perTile.x),
@@ -1481,6 +1559,7 @@ public final class DioramaStore {
                 // Nothing carries over: a `TerrainTileSet` is keyed by tile coordinate with no level
                 // in the key, so handing over the old tiles would have the new window read them as
                 // its own and place ground from somewhere else entirely.
+                let issuedAt = tileGeneration
                 guard let roll = await roller.load(
                     window: roller.window(forPanOffset: panOffset),
                     have: TerrainTileSet()
@@ -1490,17 +1569,26 @@ public final class DioramaStore {
                 }
                 guard !Task.isCancelled, rolling != nil else { return }
 
-                // The template names the map before the swap reads it: `applyRoll` rebuilds the
-                // projection through `samplerTemplate.anchor`, and the level it is about to hand
-                // over is the new one.
-                samplerTemplate?.zoom = wanted
-                samplerTemplate?.anchor = anchor
+                // Something else changed what a tile coordinate names while this was in flight — a
+                // reload, or a re-level that beat this one home. These tiles are level-`wanted`
+                // tiles and the chunk is no longer reading at that level, so go round again against
+                // what it is actually reading now.
+                guard issuedAt == tileGeneration else { continue }
+
+                // The mapping is restated at the scale in force *now*, not the one the fetch was
+                // issued under. A fetch is hundreds of milliseconds and a pinch does not stop for
+                // it, so `requested` is routinely a scale or more out of date by the time the tiles
+                // land — and applying it would haul the ground back to where the pinch had got to
+                // when it started, which reads as the map flinching as it sharpens.
+                let previousZoom = template.zoom
+                guard applyMapping(scale: groundScale, zoom: wanted) != nil else { return }
                 guard applyRoll(roll) else {
-                    samplerTemplate?.zoom = template.zoom
-                    samplerTemplate?.anchor = template.anchor
+                    applyMapping(scale: groundScale, zoom: previousZoom)
                     return
                 }
-                rolling = TerrainRollState(roller: roller, tiles: roll.tiles, window: roll.window)
+                rolling?.tiles = roll.tiles
+                rolling?.window = roll.window
+                tileGeneration += 1
                 logger.debug("Re-levelled terrain to z\(wanted) at ground scale \(self.groundScale)")
             }
         }

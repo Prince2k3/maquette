@@ -80,6 +80,15 @@ public final class DioramaStore {
     /// The active route preview entity, if one was applied via content.
     public private(set) var routePreviewEntity: RoutePreviewEntity?
 
+    /// The globe the chunk zooms out into, once ``loadGlobe(style:)`` has fetched it.
+    ///
+    /// Deliberately *not* a child of the diorama entity, and not cleared by ``reset()``. Zooming
+    /// back in somewhere else tears the chunk down and builds a new one, and the globe is what the
+    /// user is looking at while that happens — parented to the chunk it would be destroyed at the
+    /// exact moment it is doing its job. It also outlives the chunk conceptually: the world does not
+    /// depend on which part of it is on the table.
+    public private(set) var globe: GlobeEntity?
+
     /// How much of a streaming presentation has arrived, or `nil` if this one does not stream.
     ///
     /// Computed rather than stored so it stays live: the counters belong to the tile manager, and
@@ -150,6 +159,116 @@ public final class DioramaStore {
         routePreviewEntity = nil
         panOffset = .zero
         groundScale = 1
+    }
+
+    // MARK: - The Globe
+
+    /// Fetches the world and docks it under the chunk, ready for the zoom-out handoff.
+    ///
+    /// Idempotent and cheap to call again: a globe already built is left alone, so a view may ask
+    /// for it on every appearance. The imagery comes from the configuration's own
+    /// ``ImagerySource`` through the same tile cache the chunk uses, so a globe and the chunk
+    /// standing on it are made of the same pictures.
+    ///
+    /// A failure is logged and leaves ``globe`` nil rather than throwing: the world is an addition
+    /// to a diorama that already renders, and taking the whole view down because a low-zoom tile
+    /// server was unreachable would be the wrong trade.
+    public func loadGlobe(style: GlobeTransitionStyle) async {
+        guard globe == nil else { return }
+        do {
+            let image = try await GlobeEntity.fetchWorldImage(
+                provider: imageryProvider,
+                cache: tileCache,
+                zoom: style.imageryZoom
+            )
+            let entity = try GlobeEntity(
+                radius: style.radius,
+                worldImage: image,
+                rows: style.rows,
+                columns: style.columns
+            )
+            globe = entity
+            dockGlobe()
+            logger.info("Globe ready at radius \(style.radius)")
+        } catch {
+            logger.error("Globe could not be loaded: \(error.localizedDescription)")
+        }
+    }
+
+    /// Puts the globe under the chunk's current centre.
+    ///
+    /// Called whenever that centre changes, which is what keeps the handoff reversible: the point
+    /// the globe presents is always the ground the chunk is cut from. It is the caller's job to pick
+    /// *when* — see ``relocate(to:)``.
+    public func dockGlobe() {
+        applyDock(at: Coordinate(configuration.center))
+    }
+
+    /// Spins the world under the camera, by an offset measured on the ground in metres.
+    ///
+    /// The globe is looked at from directly overhead — see ``GlobeTransition/cameraElevation()`` —
+    /// so the coordinate it is docked at is the coordinate at the centre of the screen. Spinning it
+    /// is therefore the same operation as walking that coordinate, and the dock is *recomputed*
+    /// from where the walk lands rather than accumulating a rotation on top of the old one. Two
+    /// things follow, both of which an accumulated quaternion gets wrong: north stays at −Z however
+    /// far the world has been spun, so the map never rolls; and where the chunk will be cut from is
+    /// readable straight off ``globeDock``.
+    ///
+    /// - Parameters:
+    ///   - east: Ground distance to move the centre eastward, in metres. Negative for west.
+    ///   - north: Ground distance to move the centre northward, in metres. Negative for south.
+    public func steerGlobe(east: Double, north: Double) {
+        guard let dock = globeDock else { return }
+        let meters = (east * east + north * north).squareRoot()
+        guard meters > 0 else { return }
+        let bearing = atan2(east, north) * 180 / .pi
+        applyDock(at: Turf.destination(from: dock.coordinate, meters: meters, bearing: bearing))
+    }
+
+    private func applyDock(at coordinate: Coordinate) {
+        guard let globe else { return }
+        let dock = GlobeDock(coordinate: coordinate, radius: globe.radius)
+        globe.transform = Transform(matrix: dock.matrix)
+        globeDock = dock
+    }
+
+    /// The dock the globe is currently standing in, for a caller reading a coordinate off it.
+    ///
+    /// Recorded at the moment it is applied rather than derived from ``configuration``, because the
+    /// two are deliberately allowed to disagree: a relocate moves the centre immediately and the
+    /// globe is not re-docked until the transition says it may. A dock computed from the live centre
+    /// would then describe a rotation the globe has not performed, and a coordinate read through it
+    /// would land somewhere the user never pointed at.
+    public private(set) var globeDock: GlobeDock?
+
+    /// Rebuilds the chunk at a new centre, leaving everything else about the configuration alone.
+    ///
+    /// This is the second half of the globe handoff: the user spins the world, pinches back in, and
+    /// the chunk that reappears is cut from wherever they left facing. It is a full teardown and
+    /// reload rather than an in-place edit, because a chunk's boundary, anchor, height field,
+    /// imagery and projection are all derived from the centre — there is nothing left of the old
+    /// one worth keeping.
+    ///
+    /// The globe survives it deliberately, so the world stays on screen for the whole rebuild — and
+    /// it is pointedly **not** re-docked here. Re-docking rotates the entire world under a camera
+    /// that has not moved, and a relocate is issued the moment the pinch starts coming back in, with
+    /// the globe still at full opacity. The caller docks instead, at the one moment the globe is
+    /// wholly invisible; see ``GlobeTransition``.
+    public func relocate(to coordinate: Coordinate) async {
+        logger.info("Relocating to \(coordinate.latitude, format: .fixed(precision: 4)), \(coordinate.longitude, format: .fixed(precision: 4))")
+        reset()
+        configuration.center = coordinate.clLocationCoordinate
+        await load()
+    }
+
+    /// The tile provider the configuration's imagery source names.
+    private var imageryProvider: any TileProvider {
+        switch configuration.imagerySource {
+        case .esriSatellite:
+            SatelliteTileProvider()
+        case .mapTilerSatellite(let apiKey):
+            MapTilerSatelliteProvider(apiKey: apiKey)
+        }
     }
 
     // MARK: - Effects
@@ -267,12 +386,7 @@ public final class DioramaStore {
             MapTilerTerrainProvider(apiKey: apiKey)
         }
 
-        let satelliteProvider: any TileProvider = switch configuration.imagerySource {
-        case .esriSatellite:
-            SatelliteTileProvider()
-        case .mapTilerSatellite(let apiKey):
-            MapTilerSatelliteProvider(apiKey: apiKey)
-        }
+        let satelliteProvider: any TileProvider = imageryProvider
 
         let useMapTilerTerrain: Bool = if case .mapTiler = configuration.elevationSource { true } else { false }
 

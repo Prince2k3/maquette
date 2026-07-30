@@ -442,6 +442,10 @@ struct ContentView: View {
                 } else {
                     DioramaView(configuration: configuration)
                         .dioramaEffect(preset.effect)
+                        // Pinching widens the ground the chunk covers, and once it is covering about
+                        // as much world as a flat cut can, the chunk dissolves into the globe; spin
+                        // that and pinch back in to cut a chunk somewhere else.
+                        .globeTransition()
                         .id(preset.id)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 

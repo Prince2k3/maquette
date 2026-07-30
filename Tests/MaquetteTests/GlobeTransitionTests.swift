@@ -28,18 +28,18 @@ struct GlobeTransitionTests {
         var transition = GlobeTransition()
         // Bound to a local rather than inlined: #expect cannot call a mutating member.
         let withRoomLeft = transition.absorb(zoomDelta: -10, cameraDistance: 1.0, cameraElevation: 0.4, chunkHasRoom: true)
-        #expect(withRoomLeft == false)
+        #expect(withRoomLeft.consumed == false)
         #expect(transition.progress == 0)
         let atTheLimit = transition.absorb(zoomDelta: -10, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
-        #expect(atTheLimit)
+        #expect(atTheLimit.consumed)
         #expect(transition.progress > 0)
     }
 
     @Test("Zooming in at the chunk is never the transition's")
     func zoomingInAtRestIsDeclined() {
         var transition = GlobeTransition()
-        let consumed = transition.absorb(zoomDelta: 10, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
-        #expect(consumed == false)
+        let absorption = transition.absorb(zoomDelta: 10, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
+        #expect(absorption.consumed == false)
         #expect(transition.progress == 0)
     }
 
@@ -50,8 +50,8 @@ struct GlobeTransitionTests {
         let outward = transition.progress
         // Zooming back in is now the transition's, even though the chunk has room again — the chunk
         // is not what the user is looking at.
-        let consumed = transition.absorb(zoomDelta: 4, cameraDistance: 0.2, cameraElevation: 0.4, chunkHasRoom: true)
-        #expect(consumed)
+        let absorption = transition.absorb(zoomDelta: 4, cameraDistance: 0.2, cameraElevation: 0.4, chunkHasRoom: true)
+        #expect(absorption.consumed)
         #expect(transition.progress < outward)
     }
 
@@ -154,7 +154,7 @@ struct GlobeTransitionTests {
 
         // A hundred steps of the same gesture, from the chunk to the globe.
         for _ in 0..<200 {
-            guard transition.absorb(zoomDelta: -1.5, cameraDistance: entryDistance, cameraElevation: 0.4, chunkHasRoom: false) else {
+            guard transition.absorb(zoomDelta: -1.5, cameraDistance: entryDistance, cameraElevation: 0.4, chunkHasRoom: false).consumed else {
                 Issue.record("the transition declined a delta mid-flight")
                 return
             }
@@ -304,5 +304,177 @@ struct GlobeTransitionTests {
             previousChunk = transition.chunkOpacity
             previousGlobe = transition.globeOpacity
         }
+    }
+
+    // MARK: - The return leg
+
+    /// The defect the hold exists for: a pinch back in spends progress the whole way down while the
+    /// chunk it is fading to is still being fetched, so the globe finishes fading over nothing.
+    @Test("The globe stays whole while the ground under it is fetched")
+    func holdingKeepsTheGlobeDrawn() {
+        var transition = GlobeTransition()
+        atMaximum(&transition)
+        transition.beginHold()
+
+        // The finger does not stop for the fetch — this is the whole of a pinch back in.
+        for _ in 0..<200 {
+            _ = transition.absorb(zoomDelta: 1.5, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
+            #expect(transition.globeOpacity == 1, "the globe faded with no chunk behind it")
+            #expect(transition.chunkOpacity == 0)
+        }
+        #expect(transition.progress == 0, "the pinch's own progress should still have been spent")
+        #expect(transition.isHolding)
+    }
+
+    @Test("The hand-back runs to the chunk and stops there")
+    func handingBackReachesTheChunk() {
+        var transition = GlobeTransition()
+        atMaximum(&transition)
+        transition.beginHold()
+        _ = transition.absorb(zoomDelta: 1000, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
+        transition.endHold()
+        #expect(transition.isAnimating)
+        #expect(transition.isHolding == false)
+
+        // A frame at a time, at 60 Hz, for twice as long as the hand-back should take.
+        var previousChunk = transition.chunkOpacity
+        for _ in 0..<Int(GlobeTransition.returnDuration * 120) {
+            transition.advance(by: 1.0 / 60)
+            #expect(transition.chunkOpacity >= previousChunk - 1e-6, "the chunk faded back out")
+            previousChunk = transition.chunkOpacity
+        }
+        #expect(transition.isAnimating == false)
+        #expect(transition.isShowingGlobe == false)
+        #expect(transition.chunkOpacity == 1)
+        #expect(transition.globeOpacity == 0)
+    }
+
+    /// A finger that commits the relocation and then lifts leaves `progress` wherever the gesture
+    /// stopped. Since the displayed progress is the greater of the two, a hand-back that ran to
+    /// nothing would hand the scene back to *that* — and stall part way down with the rebuilt chunk
+    /// and the whole globe drawn at once.
+    @Test("The hand-back lands however far the pinch itself got")
+    func handingBackLandsFromAPartialPinch() {
+        var transition = GlobeTransition()
+        atMaximum(&transition)
+        transition.beginHold()
+
+        // Enough of a pinch back in to commit the relocation, and no more.
+        _ = transition.absorb(zoomDelta: 50, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
+        #expect(transition.progress > 0, "the pinch was meant to stop part way")
+
+        transition.endHold()
+        transition.advance(by: GlobeTransition.returnDuration * 2)
+        #expect(transition.isShowingGlobe == false, "the descent stalled where the finger left it")
+        #expect(transition.chunkOpacity == 1)
+        #expect(transition.globeOpacity == 0)
+    }
+
+    /// The camera comes down with the cross-fade rather than after it, because every framing term is
+    /// derived from the same displayed progress.
+    @Test("The camera descends over the hand-back, not at the end of it")
+    func handingBackDrivesTheCamera() {
+        var transition = GlobeTransition()
+        atMaximum(&transition, distance: 1.5)
+        transition.beginHold()
+        _ = transition.absorb(zoomDelta: 1000, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
+
+        let globeDistance = transition.globeDistance(radius: globeRadius, halfFieldOfView: narrowHalfFOV)
+        #expect(transition.cameraDistance(globeDistance: globeDistance) == globeDistance)
+        #expect(transition.cameraElevation() == .pi / 2)
+
+        transition.endHold()
+        transition.advance(by: GlobeTransition.returnDuration / 2)
+        let midway = transition.cameraDistance(globeDistance: globeDistance) ?? 0
+        #expect(midway < globeDistance, "the camera had not started coming back down")
+        #expect((transition.cameraElevation() ?? 0) < .pi / 2, "the tilt had not started unwinding")
+
+        transition.advance(by: GlobeTransition.returnDuration)
+        #expect(transition.cameraDistance(globeDistance: globeDistance) == 1.5)
+        #expect(transition.cameraElevation() == 0.4)
+    }
+
+    /// Pinching out again during a hand-back must not re-record the entry framing: the camera is on
+    /// the globe by then, so the transition would learn the globe's own distance as the place the
+    /// chunk was left and the return leg would end nowhere near it.
+    @Test("Pinching out mid-hand-back keeps the framing it departed from")
+    func absorbingDuringAHoldKeepsTheEntryFraming() {
+        var transition = GlobeTransition()
+        atMaximum(&transition, distance: 1.5)
+        transition.beginHold()
+        _ = transition.absorb(zoomDelta: 1000, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
+        transition.endHold()
+        transition.advance(by: GlobeTransition.returnDuration / 2)
+
+        // A zoom-out taken at the globe's own framing, which is what the camera is at mid-descent.
+        _ = transition.absorb(zoomDelta: -20, cameraDistance: 9.9, cameraElevation: .pi / 2, chunkHasRoom: false)
+
+        let globeDistance = transition.globeDistance(radius: globeRadius, halfFieldOfView: narrowHalfFOV)
+        transition.advance(by: GlobeTransition.returnDuration * 2)
+        _ = transition.absorb(zoomDelta: 1000, cameraDistance: 9.9, cameraElevation: .pi / 2, chunkHasRoom: false)
+        #expect(transition.cameraDistance(globeDistance: globeDistance) == 1.5)
+        #expect(transition.cameraElevation() == 0.4)
+    }
+
+    /// A rebuild that failed has nothing to hand back to, so dissolving anyway fades the world out
+    /// into an empty scene.
+    @Test("Abandoning a hold stays on the globe")
+    func abandoningAHoldStaysOnTheGlobe() {
+        var transition = GlobeTransition()
+        atMaximum(&transition)
+        transition.beginHold()
+        _ = transition.absorb(zoomDelta: 1000, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
+        transition.abandonHold()
+        #expect(transition.isAnimating == false)
+        #expect(transition.isHolding == false)
+        #expect(transition.globeOpacity == 1)
+        #expect(transition.chunkOpacity == 0)
+    }
+
+    /// The band the crossfade leaves the chunk invisible in — from about 0.985 up — used to fall
+    /// outside `progress >= 1`, so a pinch that stalled there faded the world and relocated nothing.
+    @Test("The chunk is spent as soon as it stops being drawn")
+    func globeOnlyMatchesWhatIsDrawn() {
+        var transition = GlobeTransition()
+        for _ in 0..<400 {
+            _ = transition.absorb(zoomDelta: -0.5, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
+            #expect(transition.isGlobeOnly == (transition.chunkOpacity <= 0.001))
+        }
+        #expect(transition.isGlobeOnly)
+    }
+
+    /// The return leg is committed by whichever step first draws the chunk again, and a pinch is
+    /// free to make that step as large as it likes: a fast flick reports the whole spread in one
+    /// update, which spends the handoff from 1 to 0 without ever passing through the middle.
+    @Test("A step that spends the whole handoff still commits the return")
+    func oneStepCommitsTheReturn() {
+        var transition = GlobeTransition()
+        atMaximum(&transition)
+        #expect(transition.isGlobeOnly)
+        let absorption = transition.absorb(zoomDelta: 1000, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
+        #expect(transition.progress == 0, "the step was meant to spend the whole range")
+        #expect(absorption.consumed)
+        #expect(absorption.committedReturn)
+    }
+
+    /// Committing is an *edge*, and a relocation is not cancellable — so a second commitment out of
+    /// the same return leg would rebuild the chunk twice at whatever the globe had been left on.
+    @Test("The return is committed once, by the step that crosses")
+    func theReturnIsCommittedOnce() {
+        var transition = GlobeTransition()
+        // Out to the globe: no step on the way out commits a return.
+        for _ in 0..<200 {
+            let outward = transition.absorb(zoomDelta: -1.5, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
+            #expect(outward.committedReturn == false)
+        }
+        #expect(transition.isGlobeOnly)
+
+        var commitments = 0
+        for _ in 0..<200 {
+            let inward = transition.absorb(zoomDelta: 1.5, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
+            if inward.committedReturn { commitments += 1 }
+        }
+        #expect(commitments == 1)
+        #expect(transition.progress == 0)
     }
 }

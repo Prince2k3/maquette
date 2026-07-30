@@ -96,19 +96,71 @@ public struct GlobeTransition: Sendable, Equatable {
     /// Orbit elevation the camera held when the transition began, so zooming back in returns to it.
     private var entryElevation: Float?
 
+    /// The globe carrying the scene on its own, while there is no chunk to hand back to.
+    private var hold: Hold?
+
+    private enum Hold: Equatable {
+        /// A relocation is in flight. The globe stays whole until the ground under it exists.
+        case waiting
+        /// The chunk has arrived, and the scene is coming back down to it: 1 → 0.
+        case returning(Float)
+    }
+
     public init(style: GlobeTransitionStyle = GlobeTransitionStyle()) {
         self.style = style
     }
 
+    /// The progress everything else is *derived* from: the pinch's own, or the globe's hold over it.
+    ///
+    /// The two come apart for exactly one reason. A relocation is a full teardown and reload, so for
+    /// its whole duration there is no chunk — and the pinch does not stop for it. Taking the greater
+    /// of the two is what keeps the globe covering the scene until there is something to hand back
+    /// to; see ``beginHold()``.
+    public var displayProgress: Float { max(progress, holdProgress ?? 0) }
+
+    private var holdProgress: Float? {
+        switch hold {
+        case .waiting: 1
+        case .returning(let value): value
+        case nil: nil
+        }
+    }
+
     /// Whether the globe is contributing anything to the scene.
-    public var isShowingGlobe: Bool { progress > 0 }
+    public var isShowingGlobe: Bool { displayProgress > 0 }
 
     /// Whether the chunk has gone entirely, so its input no longer means anything.
-    public var isGlobeOnly: Bool { progress >= 1 }
+    ///
+    /// Asked of the *drawing* rather than of the number, because the two part company near the top
+    /// of the range: easing takes the chunk's opacity to zero at about 0.985, and in that band the
+    /// globe is alone on screen while a pinch back in relocates nothing — the world simply fades and
+    /// the chunk is still where it was. A continuous pinch normally overshoots and clamps to 1, which
+    /// is what kept it rare rather than fixed.
+    public var isGlobeOnly: Bool { chunkOpacity <= 0.001 }
 
     // MARK: - Input
 
-    /// Offers a zoom delta to the transition, returning whether it was consumed.
+    /// What a zoom delta did to the transition.
+    public struct Absorption: Equatable, Sendable {
+        /// Whether the transition took the delta and nothing else should also apply it.
+        public var consumed: Bool
+
+        /// Whether this is the step that committed the return leg — the globe was alone on screen
+        /// and no longer is.
+        ///
+        /// Reported here rather than left for the caller to spot by sampling ``isGlobeOnly`` either
+        /// side of the call, because the edge is a fact about *this* step and a caller that samples
+        /// it does so around whatever else it happens to do in between. That is not hypothetical:
+        /// the view re-framed the camera between the two samples, and re-framing at zero progress
+        /// re-docks the globe onto the chunk's own centre — so a pinch step big enough to spend the
+        /// whole handoff at once landed the relocation on the ground it had just overwritten.
+        public var committedReturn: Bool
+
+        /// The delta belonged to somebody else.
+        static let ignored = Absorption(consumed: false, committedReturn: false)
+    }
+
+    /// Offers a zoom delta to the transition, reporting what it did.
     ///
     /// The sign is the orbit camera's: positive zooms in, negative zooms out.
     ///
@@ -117,14 +169,14 @@ public struct GlobeTransition: Sendable, Equatable {
     ///   - cameraDistance: The camera's current orbit distance, which the framing continues from.
     ///   - cameraElevation: The camera's current orbit tilt, which the framing returns to.
     ///   - chunkHasRoom: Whether the chunk can still absorb a zoom-out of its own.
-    /// - Returns: `true` if the transition took the delta and nothing else should also apply it.
     public mutating func absorb(
         zoomDelta delta: Float,
         cameraDistance: Float,
         cameraElevation: Float,
         chunkHasRoom: Bool
-    ) -> Bool {
-        if progress <= 0 {
+    ) -> Absorption {
+        let wasGlobeOnly = isGlobeOnly
+        if displayProgress <= 0 {
             // Only a zoom-out the chunk has nothing left for starts the handoff. Anything else is
             // ordinary zooming and belongs to the chunk.
             //
@@ -133,12 +185,12 @@ public struct GlobeTransition: Sendable, Equatable {
             // scale at which a flat cut stops making sense — the camera never enters into it, since
             // it has not moved and the chunk is the same size it always was. A fixed chunk has no
             // map to widen, so there the orbit's own furthest distance is the honest answer.
-            guard delta < 0, !chunkHasRoom else { return false }
+            guard delta < 0, !chunkHasRoom else { return .ignored }
             entryDistance = cameraDistance
             entryElevation = cameraElevation
         }
         progress = min(max(progress - delta * style.sensitivity, 0), 1)
-        return true
+        return Absorption(consumed: true, committedReturn: wasGlobeOnly && !isGlobeOnly)
     }
 
     /// Puts the transition back at the chunk, for a caller that is resetting the scene.
@@ -146,7 +198,80 @@ public struct GlobeTransition: Sendable, Equatable {
         progress = 0
         entryDistance = nil
         entryElevation = nil
+        hold = nil
     }
+
+    // MARK: - The Return Leg
+
+    /// Holds the globe whole while the chunk beneath it is rebuilt.
+    ///
+    /// The return leg is not the outbound one reversed, because the thing being faded *to* does not
+    /// exist yet: a relocation nils the chunk for the whole fetch, and the pinch carries on
+    /// regardless. Spent straight through the cross-fade that way, the globe finishes fading at
+    /// progress 0.5 with nothing behind it, the scene goes empty for as long as the ground takes to
+    /// arrive, and the rebuilt chunk then appears at full opacity having dissolved from nothing.
+    ///
+    /// Holding decouples the two clocks. The globe stays whole for as long as the rebuild takes —
+    /// which is honest, since the world is what the user is actually looking at — and the hand-back
+    /// is then a fixed animation that begins when there is something to animate.
+    public mutating func beginHold() {
+        hold = .waiting
+    }
+
+    /// Whether the globe is carrying the scene on its own, with no chunk under it.
+    public var isHolding: Bool {
+        if case .waiting = hold { return true }
+        return false
+    }
+
+    /// Hands the scene back to the chunk, over ``returnDuration``.
+    ///
+    /// The pinch's own progress is spent here, and that is the whole reason the hand-back lands
+    /// anywhere. ``displayProgress`` takes the *greater* of the two, so a hold that decays to nothing
+    /// hands the scene back to whatever the finger last left `progress` at — and a finger that
+    /// committed the relocation and then lifted leaves it wherever the gesture stopped, not at 0. The
+    /// descent then stalls there: measured on a scripted pinch, at about 0.5, which draws the rebuilt
+    /// chunk and the whole globe at once with the camera half way between them. A relocation is not
+    /// cancellable, so once there is ground to come down to, coming down is no longer the finger's
+    /// call.
+    public mutating func endHold() {
+        guard case .waiting = hold else { return }
+        hold = .returning(1)
+        progress = 0
+    }
+
+    /// Gives up on the hand-back and stays on the globe, for a rebuild that failed.
+    ///
+    /// Dissolving anyway would fade the world out into nothing, since the chunk the dissolve is for
+    /// is the thing that did not load. A whole globe with the failure reported over it is the honest
+    /// frame.
+    public mutating func abandonHold() {
+        hold = nil
+        progress = 1
+    }
+
+    /// Whether the transition is running an animation of its own and needs ticking.
+    public var isAnimating: Bool {
+        if case .returning = hold { return true }
+        return false
+    }
+
+    /// Advances the hand-back.
+    ///
+    /// - Parameter seconds: Wall-clock time elapsed since the last advance.
+    public mutating func advance(by seconds: Float) {
+        guard case .returning(let value) = hold else { return }
+        let next = value - seconds / Self.returnDuration
+        hold = next > 0 ? .returning(next) : nil
+    }
+
+    /// How long the scene takes to come back down from the globe to the rebuilt chunk.
+    ///
+    /// It drives the camera as well as the cross-fade — the framing is derived from
+    /// ``displayProgress`` like everything else — so this is how long the descent takes, not just
+    /// the fade. Long enough to read as coming back down rather than as a cut, short enough not to
+    /// keep a user waiting who has already finished pinching.
+    public static let returnDuration: Float = 0.7
 
     // MARK: - Framing
 
@@ -278,16 +403,16 @@ public struct GlobeTransition: Sendable, Equatable {
     /// near zero where they meet. An earlier 0.45/0.55 pair left the scene at 0.02 in the middle,
     /// which is very nearly a black frame.
     public var chunkOpacity: Float {
-        1 - smoothstep(ramp(progress, from: 0.5, to: 1))
+        1 - smoothstep(ramp(displayProgress, from: 0.5, to: 1))
     }
 
     public var globeOpacity: Float {
-        smoothstep(ramp(progress, from: 0, to: 0.5))
+        smoothstep(ramp(displayProgress, from: 0, to: 0.5))
     }
 
     // MARK: - Private
 
-    private var eased: Float { smoothstep(progress) }
+    private var eased: Float { smoothstep(displayProgress) }
 
     private func mix(_ a: Float, _ b: Float, _ t: Float) -> Float {
         a + (b - a) * t

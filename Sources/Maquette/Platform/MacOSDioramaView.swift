@@ -416,18 +416,19 @@ struct MacOSDioramaView: View {
     // MARK: - The Globe Handoff
 
     private func absorbIntoTransition(_ delta: Float) {
-        let wasGlobeOnly = transition.isGlobeOnly
-        let consumed = transition.absorb(
+        let absorption = transition.absorb(
             zoomDelta: delta,
             cameraDistance: cameraController.distance,
             cameraElevation: cameraController.elevation,
             chunkHasRoom: chunkHasZoomRoom
         )
-        guard consumed else { return }
-        applyTransitionFraming()
-        if wasGlobeOnly, !transition.isGlobeOnly {
+        guard absorption.consumed else { return }
+        // Relocate first, then frame: framing at zero progress re-docks the globe onto the chunk's
+        // own centre, which is the ground the landing is measured against. See the iOS view.
+        if absorption.committedReturn {
             beginRelocation()
         }
+        applyTransitionFraming()
     }
 
     /// Moves the orbit camera to the framing the transition's progress asks for.

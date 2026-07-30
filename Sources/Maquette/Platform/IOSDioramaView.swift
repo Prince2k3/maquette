@@ -1,6 +1,7 @@
 #if os(iOS)
 import SwiftUI
 import RealityKit
+import os
 
 /// iOS presentation of the diorama with embedded RealityView and touch gestures.
 ///
@@ -18,6 +19,10 @@ struct IOSDioramaView: View {
     @State private var viewSize: CGSize = CGSize(width: 400, height: 400)
     @State private var lastAnimationDate: Date?
     @State private var transition = GlobeTransition()
+    private let logger = Logger(subsystem: "com.maquette", category: "IOSDioramaView")
+    /// The transition's own animation clock, kept apart from the route preview's: the two run
+    /// independently and sharing one date would have each of them consuming the other's elapsed time.
+    @State private var lastTransitionDate: Date?
     @State private var chunkCenterY: Float = 0
     /// The orbit's own tilt range, captured before the transition starts widening it.
     @State private var chunkElevationLimits: ClosedRange<Float> = 0...0
@@ -149,6 +154,7 @@ struct IOSDioramaView: View {
     private var realityContent: some View {
         let needsAnimation = routePreviewController?.playbackState == .playing
             || cameraController.routeFollowPhase == .exiting
+            || transition.isAnimating
         TimelineView(.animation(paused: !needsAnimation)) { timeline in
             realityView()
                 .onChange(of: timeline.date) { _, newDate in
@@ -158,6 +164,7 @@ struct IOSDioramaView: View {
     }
 
     private func advanceAnimation(at date: Date) {
+        advanceTransition(at: date)
         guard let controller = routePreviewController else { return }
         RouteAnimationHelper.advanceAnimation(
             at: date,
@@ -211,6 +218,12 @@ struct IOSDioramaView: View {
                     content.add(entity)
                     updateEntityScale()
                 }
+            } else if let drawn = content.entities.first(where: { $0.name == "Maquette" }) {
+                // A relocation nils the store's entity for the whole rebuild. Left drawn, the chunk
+                // that is being replaced goes on rendering the *old* ground at whatever opacity the
+                // crossfade last set — which is what made the return leg read as a stale, dim
+                // diorama sitting under the globe rather than as ground being fetched.
+                content.remove(drawn)
             }
 
             if let globe = store.globe {
@@ -270,7 +283,10 @@ struct IOSDioramaView: View {
             // The globe has no ground to slide, so one finger spins it — which is also what one
             // finger does on a chunk that cannot pan.
             if transition.isShowingGlobe {
-                if enabledGestures.contains(.rotate) {
+                // Not while the globe is holding for a relocation: the landing coordinate is the
+                // dock, and the ground for it is already being fetched, so steering now would spin
+                // the world away from the chunk that is about to arrive under it.
+                if enabledGestures.contains(.rotate), !transition.isHolding {
                     steerGlobe(dx: dx, dy: dy)
                 }
                 return
@@ -424,18 +440,25 @@ struct IOSDioramaView: View {
     // MARK: - The Globe Handoff
 
     private func absorbIntoTransition(_ delta: Float) {
-        let wasGlobeOnly = transition.isGlobeOnly
-        let consumed = transition.absorb(
+        let absorption = transition.absorb(
             zoomDelta: delta,
             cameraDistance: cameraController.distance,
             cameraElevation: cameraController.elevation,
             chunkHasRoom: chunkHasZoomRoom
         )
-        guard consumed else { return }
-        applyTransitionFraming()
-        if wasGlobeOnly, !transition.isGlobeOnly {
+        guard absorption.consumed else { return }
+        // The relocation is decided *before* the camera is re-framed, and the order is the whole of
+        // it: framing at zero progress re-docks the globe onto the chunk's current centre — see
+        // `applyTransitionFraming` — and the dock is exactly what `beginRelocation` reads to decide
+        // where to land. Framed first, a pinch step large enough to spend the handoff in one go
+        // (progress 1 → 0, which is ~333 pt of spread at the default sensitivity, or one frame of a
+        // fast flick) overwrote the steered dock and then measured the landing against it: zero
+        // distance, early return, no relocation at all. What that looks like is the *old* chunk
+        // dissolving back in over a globe spun to another continent, with nothing logged.
+        if absorption.committedReturn {
             beginRelocation()
         }
+        applyTransitionFraming()
     }
 
     /// Moves the orbit camera to the framing the transition's progress asks for.
@@ -457,8 +480,10 @@ struct IOSDioramaView: View {
 
         // The dock is what makes the chunk and the globe agree about the origin, and moving it is a
         // rotation of the whole world — so it may only move while nothing is looking. Progress 0 is
-        // the one moment the globe is fully gone.
-        if transition.progress <= 0 {
+        // the one moment the globe is fully gone — and it has to be the *displayed* progress, since
+        // the pinch's own reaches 0 the instant the return leg is committed, while the globe is
+        // still the only thing on screen and holding for its ground.
+        if transition.displayProgress <= 0 {
             store.dockGlobe()
         }
     }
@@ -489,17 +514,58 @@ struct IOSDioramaView: View {
     /// then: measured, half a degree short of overhead, which is 42 km of ground and enough to
     /// relocate a chunk nobody asked to move.
     private func beginRelocation() {
-        guard let dock = store.globeDock else { return }
+        guard let dock = store.globeDock else {
+            logger.debug("Came back from the globe with nothing docked; keeping the chunk")
+            return
+        }
         let landing = dock.coordinate
         let current = Coordinate(store.configuration.center)
-        guard Turf.distance(from: current, to: landing) > store.configuration.radiusMeters / 4 else {
-            return  // Straight back to where they started; the chunk in hand is already the right one.
+        // Straight back to where they started; the chunk in hand is already the right one. Logged
+        // because it is indistinguishable on screen from a relocation that never fired at all.
+        let travelled = Turf.distance(from: current, to: landing)
+        guard travelled > store.configuration.radiusMeters / 4 else {
+            logger.debug("Came back onto the same ground (\(travelled, format: .fixed(precision: 0)) m); keeping the chunk")
+            return
         }
+        // The globe carries the scene for the whole rebuild, which the pinch knows nothing about:
+        // `relocate` nils the chunk entity from its first line to its last, so a crossfade run off
+        // the finger's own clock hands back to nothing — the globe finishes fading half way through
+        // the fetch, and the new chunk appears at full opacity with no dissolve at all.
+        transition.beginHold()
+        lastTransitionDate = nil
+        applyTransitionFraming()
+        applyTransitionVisibility()
         Task {
             await store.relocate(to: landing)
             store.applyContent(content)
             frameLoadedChunk()
+            if case .failed = store.loadingState {
+                // Nothing to hand back to. Staying on the globe keeps the failure legible — and the
+                // overlay stops being suppressed, so the error surfaces.
+                transition.abandonHold()
+            } else {
+                transition.endHold()
+            }
+            applyTransitionFraming()
+            applyTransitionVisibility()
         }
+    }
+
+    /// Advances the transition's own hand-back animation.
+    ///
+    /// Its clock is separate from the route preview's because the two run independently; sharing one
+    /// date would have whichever ticked first consume the other's elapsed time.
+    private func advanceTransition(at date: Date) {
+        guard transition.isAnimating else {
+            lastTransitionDate = nil
+            return
+        }
+        let elapsed = lastTransitionDate.map { Float(date.timeIntervalSince($0)) } ?? 0
+        lastTransitionDate = date
+        guard elapsed > 0 else { return }
+        transition.advance(by: elapsed)
+        applyTransitionFraming()
+        applyTransitionVisibility()
     }
 }
 #endif

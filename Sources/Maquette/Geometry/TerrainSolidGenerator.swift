@@ -29,7 +29,11 @@ public struct TerrainSolidParts {
 /// Values that must stay fixed across pan updates for the chunk to remain visually stable.
 struct ResamplingParameters {
     /// Chunk depth below Y = 0.
-    let baseDepth: Float
+    ///
+    /// Fixed across a pan — the chunk must not change thickness as the ground slides beneath it —
+    /// but *not* across a ground zoom, where the earth mass takes over whatever share of the
+    /// chunk's thickness the flattening terrain gives back. See ``TerrainEntity/baseDepth``.
+    var baseDepth: Float
     /// Vertical span the wall texture is normalized against.
     ///
     /// Frozen at generation. If it tracked the terrain currently under the boundary, the strata
@@ -130,7 +134,10 @@ public enum TerrainSolidGenerator {
         }
 
         // Walls: `appendWallQuad` emits its four vertices as top, bottom, top, bottom, so the
-        // even-indexed ones ride the surface and the odd-indexed ones stay pinned to the base.
+        // even-indexed ones ride the surface and the odd-indexed ones sit on the base. The base is
+        // written rather than left alone because a ground zoom moves it — see
+        // `TerrainEntity.baseDepth(atGroundScale:)` — and a pan, which does not, writes the value
+        // that is already there.
         for index in stride(from: 0, to: geometry.walls.positions.count, by: 2) {
             let position = geometry.walls.positions[index]
             let sample = SIMD2(position.x, position.z) + panOffset
@@ -139,10 +146,47 @@ public enum TerrainSolidGenerator {
             geometry.walls.uvs[index].y = parameters.wallHeight > 0
                 ? ((y + parameters.baseDepth) / parameters.wallHeight).clampedToUnitRange
                 : 0
+            if index + 1 < geometry.walls.positions.count {
+                geometry.walls.positions[index + 1].y = floor
+            }
         }
 
         // The bottom face is flat and untextured, so panning leaves it untouched.
     }
+
+    // MARK: - Depth
+
+    /// How deep the earth mass has to run at `scale` for a chunk to keep the thickness it was
+    /// generated with.
+    ///
+    /// A ground zoom is a change to the *map*, not to the object: the chunk stays exactly where it
+    /// is and the ground beneath it widens. But the terrain's own contribution to the chunk's
+    /// silhouette is `1 / scale` of what it was — that is the whole point of the elevation scale —
+    /// so a chunk whose earth mass stayed put would visibly thin out as the map pulled back and
+    /// thicken again on the way in. The earth mass takes back exactly what the terrain gives up, and
+    /// the strata wall keeps its height.
+    ///
+    /// Two things this deliberately does not do:
+    ///
+    /// - **It reads the scale, never the terrain currently under the rim.** Deriving the depth from
+    ///   the live surface would make the chunk's underside rise and fall on every pan step, which is
+    ///   the bobbing the frozen elevation baseline exists to prevent.
+    /// - **It cannot fully compensate a zoom *in*.** Past the scale where the terrain's magnified
+    ///   share would exceed the chunk's whole thickness there is no earth mass left to give up, so
+    ///   the chunk grows rather than inverting. ``minimumEarthMassShare`` is where it stops.
+    ///
+    /// - Parameters:
+    ///   - scale: The ground zoom in force.
+    ///   - generated: The earth mass the chunk was generated with, in diorama meters.
+    ///   - relief: The terrain's own share of the chunk's thickness at generation — the height of
+    ///     the tallest point of the rim above Y = 0.
+    static func baseDepth(atGroundScale scale: Float, generated: Float, relief: Float) -> Float {
+        guard scale > 0 else { return generated }
+        return max(generated + relief * (1 - 1 / scale), generated * minimumEarthMassShare)
+    }
+
+    /// The least of its generated earth mass a chunk keeps, however far the ground is zoomed in.
+    static let minimumEarthMassShare: Float = 0.25
 
     // MARK: - Geometry Accumulation
 

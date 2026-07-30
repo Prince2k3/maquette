@@ -19,11 +19,27 @@ public class TerrainEntity: Entity {
     /// The bottom face model, if the chunk is closed.
     public private(set) var bottom: ModelEntity?
     /// How far the chunk extends below diorama Y = 0, in diorama meters.
+    ///
+    /// Not a constant: it grows with the ground zoom, so that the chunk keeps the thickness it was
+    /// generated with. See ``baseDepth(atGroundScale:)``.
     public private(set) var baseDepth: Float = 0
     /// Highest point of the terrain surface in diorama-space Y.
     public private(set) var maxSurfaceY: Float = 0
     /// How far the terrain has slid beneath the chunk's outline, in diorama meters.
     public private(set) var panOffset: SIMD2<Float> = .zero
+    /// The ground zoom the chunk is currently drawn at.
+    public private(set) var groundScale: Float = 1
+    /// How far the chunk's underside has moved from where it was generated, in diorama meters.
+    ///
+    /// Negative once the earth mass has grown. The bottom face and the display base resting against
+    /// it are both flat and neither changes shape, so they are moved by this rather than rebuilt.
+    public private(set) var undersideShift: Float = 0
+
+    /// Depth of the earth mass at the ground scale the chunk was generated at.
+    private var generatedBaseDepth: Float = 0
+    /// The terrain's own share of the chunk's thickness at that scale — the height of the tallest
+    /// point of the rim above Y = 0.
+    private var generatedRelief: Float = 0
 
     /// Retained geometry, and the terrain it samples when the chunk can pan.
     private var geometry: TerrainSolidGenerator.Geometry?
@@ -51,6 +67,8 @@ public class TerrainEntity: Entity {
         super.init()
         self.name = "TerrainChunk"
         self.baseDepth = parts.baseDepth
+        self.generatedBaseDepth = parts.baseDepth
+        self.generatedRelief = max(parts.resampling.wallHeight - parts.baseDepth, 0)
         self.maxSurfaceY = parts.maxSurfaceY
 
         // Kept whether or not the chunk pans: an effect reads the surface triangles to trace its
@@ -149,10 +167,13 @@ public class TerrainEntity: Entity {
     ///     offset has to be divided by the same factor to hold the chunk over the same place. Passing
     ///     it here rather than calling ``setPanOffset(_:)`` afterwards is what keeps a zoom step to
     ///     one resample instead of two — and the first of those two would be against the old surface.
+    ///   - groundScale: The ground zoom the new surface is read at, or `nil` to keep the current
+    ///     one. A roll keeps it; a ground zoom sets it, and the earth mass moves with it.
     public func setTerrain(
         _ heightField: TerrainHeightField,
         surfaceMaterial: RealityKit.Material?,
-        panOffset newPanOffset: SIMD2<Float>? = nil
+        panOffset newPanOffset: SIMD2<Float>? = nil,
+        groundScale newGroundScale: Float? = nil
     ) {
         guard var geometry, self.heightField != nil else { return }
 
@@ -160,14 +181,41 @@ public class TerrainEntity: Entity {
         if let newPanOffset {
             self.panOffset = newPanOffset
         }
+        if let newGroundScale, newGroundScale > 0 {
+            self.groundScale = newGroundScale
+        }
         if let surfaceMaterial {
             surface?.model?.materials = [surfaceMaterial]
+        }
+
+        let depth = baseDepth(atGroundScale: groundScale)
+        if depth != baseDepth {
+            baseDepth = depth
+            undersideShift = generatedBaseDepth - depth
+            geometry.resampling.baseDepth = depth
+            // The bottom face is a flat disc of the outline, which the zoom does not change the
+            // shape of — so it is moved rather than regenerated, and `MeshResource.generate`'s
+            // asset compile stays out of the gesture.
+            bottom?.position.y = undersideShift
         }
 
         TerrainSolidGenerator.resample(&geometry, heightField: heightField, panOffset: panOffset)
         surfaceMesh?.update(from: geometry.top)
         wallMesh?.update(from: geometry.walls)
         self.geometry = geometry
+    }
+
+    /// How deep this chunk's earth mass has to run at `scale` for it to keep the thickness it was
+    /// generated with.
+    ///
+    /// See ``TerrainSolidGenerator/baseDepth(atGroundScale:generated:relief:)``, which is the rule
+    /// itself and is where it is explained.
+    public func baseDepth(atGroundScale scale: Float) -> Float {
+        TerrainSolidGenerator.baseDepth(
+            atGroundScale: scale,
+            generated: generatedBaseDepth,
+            relief: generatedRelief
+        )
     }
 
     /// Creates a terrain entity from a mesh and a pre-built material.

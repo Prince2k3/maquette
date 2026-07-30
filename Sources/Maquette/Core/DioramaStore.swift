@@ -1392,7 +1392,7 @@ public final class DioramaStore {
     /// The surface re-reads the tiles already in hand — one resample, no fetch — and the imagery
     /// stretches across the chunk until coarser tiles arrive to replace it.
     ///
-    /// Three things move together with the scale, and leaving any one of them out fails quietly:
+    /// Four things move together with the scale, and leaving any one of them out fails quietly:
     ///
     /// - **The pan offset divides by the same factor.** The ground under the chunk is
     ///   `originTile + panOffset · tilesPerDioramaMeter`, and scaling only the second term slides
@@ -1405,6 +1405,11 @@ public final class DioramaStore {
     /// - **The margin ring is re-counted.** A tile spans half as much diorama distance at twice the
     ///   scale, so the ring the roller keeps beyond the outline has to be measured in the new tiles
     ///   or the chunk pans off its own margin immediately.
+    /// - **The earth mass takes back what the terrain gives up.** The elevation scale is exactly
+    ///   what makes the chunk's *own* thickness change with the map, which it must not: the object
+    ///   on the table is the same object at every zoom. ``TerrainEntity/baseDepth(atGroundScale:)``
+    ///   deepens the earth mass by what the rim's terrain lost, so the strata wall keeps its height
+    ///   and the underside drops instead.
     ///
     /// The elevation baseline is deliberately *not* re-measured, for the reason a roll does not
     /// re-measure it: it is what diorama Y = 0 means, and moving it makes the chunk bob.
@@ -1438,15 +1443,21 @@ public final class DioramaStore {
         panOffset = offset
         terrainField = zoomed
 
-        (dioramaEntity as? DioramaEntity)?.terrain?.setTerrain(
+        let entity = dioramaEntity as? DioramaEntity
+        entity?.terrain?.setTerrain(
             zoomed,
             surfaceMaterial: nil,
-            panOffset: offset
+            panOffset: offset,
+            groundScale: target
         )
         // Sea level is an elevation like any other, so it rides the elevation scale down. Moving the
         // plane rather than rebuilding it is enough: it is cut to the outline, which has not moved.
-        if let water = (dioramaEntity as? DioramaEntity)?.waterPlane {
+        if let water = entity?.waterPlane {
             water.position.y = (0.0 - template.globalMinElev) * mapping.elevationScale
+        }
+        // The display base rests against the chunk's underside, which the earth mass has just moved.
+        if let base = entity?.base, let terrain = entity?.terrain {
+            base.position.y = terrain.undersideShift
         }
         projection?.panOffset = offset
         refreshEffect()
@@ -1468,6 +1479,7 @@ public final class DioramaStore {
             Ground zoom: scale \(target, format: .fixed(precision: 3)), \
             radius \(self.groundRadiusMeters, format: .fixed(precision: 0)) m, \
             tiles at z\(template.zoom), \
+            earth mass \(entity?.terrain?.baseDepth ?? 0, format: .fixed(precision: 4)) m, \
             \(String(format: "%.1f", (finished - started).milliseconds)) ms
             """)
 

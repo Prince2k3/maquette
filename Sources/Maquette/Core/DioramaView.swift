@@ -16,21 +16,24 @@ import SwiftUI
 /// )
 /// ```
 ///
-/// **With markers and polylines:**
+/// **With annotations:**
 /// ```swift
 /// DioramaView(configuration: config) {
-///     DioramaMarker(
-///         coordinate: CLLocationCoordinate2D(latitude: 36.1069, longitude: -112.1129),
+///     DioramaAnnotation.marker(
+///         at: CLLocationCoordinate2D(latitude: 36.1069, longitude: -112.1129),
 ///         tint: .red,
-///         systemImage: "mappin",
 ///         title: "Grand Canyon"
 ///     )
 ///
-///     DioramaPolyline(
-///         coordinates: [coord1, coord2, coord3],
-///         color: .blue,
-///         lineWidth: 0.003
-///     )
+///     DioramaAnnotation.line(through: [coord1, coord2, coord3], tint: .blue)
+/// }
+/// ```
+///
+/// **Or straight from GeoJSON:**
+/// ```swift
+/// let collection = try JSONDecoder().decode(FeatureCollection.self, from: data)
+/// DioramaView(configuration: config) {
+///     collection
 /// }
 /// ```
 ///

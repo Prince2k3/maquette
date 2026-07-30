@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Everything the library draws on a chunk — a pin, a route, an outline, a region to shade — is one
 /// of these plus a style. Keeping the geometry a standard, decodable value rather than a bespoke
-/// `DioramaMarker`-shaped struct is what lets real data be handed in unmodified.
+/// marker-shaped struct is what lets real data be handed in unmodified.
 ///
 /// `bbox` is not carried on a geometry. RFC 7946 §5 permits it on any object, but on a geometry it
 /// is a cache of the coordinates that are right there — `Turf.boundingBox(of:)`

@@ -5,36 +5,103 @@ import Testing
 
 @Suite("Diorama Content Builder Tests")
 struct DioramaContentBuilderTests {
-    @Test("Builder collects markers and polylines")
-    func collectsContent() {
+    private static let a = CLLocationCoordinate2D(latitude: 36.0, longitude: -112.0)
+    private static let b = CLLocationCoordinate2D(latitude: 36.1, longitude: -112.1)
+    private static let c = CLLocationCoordinate2D(latitude: 36.2, longitude: -112.2)
+
+    /// The geometry an item drew, so a test can say what it expected rather than pattern-matching
+    /// a nested enum three levels deep at every assertion.
+    private func geometry(of item: DioramaContentItem) -> Geometry? {
+        guard case .annotation(let annotation) = item else { return nil }
+        return annotation.feature.geometry
+    }
+
+    @Test("Builder collects annotations")
+    func collectsContent() throws {
         let group = buildContent {
-            DioramaMarker(
-                coordinate: CLLocationCoordinate2D(latitude: 36.0, longitude: -112.0),
-                title: "A"
-            )
-            DioramaPolyline(
-                coordinates: [
-                    CLLocationCoordinate2D(latitude: 36.0, longitude: -112.0),
-                    CLLocationCoordinate2D(latitude: 36.1, longitude: -112.1)
-                ],
-                id: "route"
-            )
+            DioramaAnnotation.marker(at: Self.a, title: "A")
+            DioramaAnnotation.line(through: [Self.a, Self.b], id: "route")
         }
 
         #expect(group.items.count == 2)
 
-        if case .marker(let marker) = group.items[0] {
-            #expect(marker.title == "A")
-        } else {
-            Issue.record("Expected marker at index 0")
+        let pin = try #require(group.items.first)
+        guard case .annotation(let marker) = pin, case .point(let point)? = marker.feature.geometry
+        else {
+            Issue.record("Expected a point annotation at index 0")
+            return
         }
+        #expect(marker.id == "A")
+        #expect(abs(point.coordinate.latitude - 36.0) < 1e-9)
 
-        if case .polyline(let polyline) = group.items[1] {
-            #expect(polyline.id == "route")
-            #expect(polyline.coordinates.count == 2)
-        } else {
-            Issue.record("Expected polyline at index 1")
+        guard case .annotation(let line) = group.items[1],
+              case .lineString(let string)? = line.feature.geometry
+        else {
+            Issue.record("Expected a line annotation at index 1")
+            return
         }
+        #expect(line.id == "route")
+        #expect(string.coordinates.count == 2)
+    }
+
+    @Test("An annotation takes the feature's own identity")
+    func identityComesFromTheFeature() {
+        // GeoJSON carries identity, and content re-applied after a pan has to replace the entity it
+        // made last time rather than adding a second one beside it.
+        let feature = Feature.point(Coordinate(Self.a), id: .string("summit"))
+        #expect(DioramaAnnotation(feature).id == "summit")
+        #expect(DioramaAnnotation(feature, id: "override").id == "override")
+
+        let numbered = Feature.point(Coordinate(Self.a), id: .number(42))
+        #expect(DioramaAnnotation(numbered).id == "42.0")
+
+        // No identity in the data is not an error — it just cannot be addressed later.
+        let anonymous = Feature.point(Coordinate(Self.a))
+        #expect(!DioramaAnnotation(anonymous).id.isEmpty)
+        #expect(DioramaAnnotation(anonymous).id != DioramaAnnotation(anonymous).id)
+    }
+
+    @Test("A decoded feature collection is content on its own")
+    func featureCollectionIsContent() throws {
+        let json = """
+        {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "type": "Feature",
+              "id": "trailhead",
+              "geometry": {"type": "Point", "coordinates": [-112.0, 36.0]},
+              "properties": {"name": "South Kaibab"}
+            },
+            {
+              "type": "Feature",
+              "geometry": {
+                "type": "LineString",
+                "coordinates": [[-112.0, 36.0], [-112.1, 36.1]]
+              },
+              "properties": null
+            }
+          ]
+        }
+        """
+        let collection = try JSONDecoder().decode(
+            FeatureCollection.self,
+            from: Data(json.utf8)
+        )
+        let group = buildContent { collection }
+
+        #expect(group.items.count == 2)
+        guard case .point = try #require(geometry(of: group.items[0])) else {
+            Issue.record("Expected the first feature to stay a point")
+            return
+        }
+        guard case .lineString = try #require(geometry(of: group.items[1])) else {
+            Issue.record("Expected the second feature to stay a line")
+            return
+        }
+        guard case .annotation(let first) = group.items[0] else { return }
+        #expect(first.id == "trailhead")
+        #expect(first.feature[property: "name"] == .string("South Kaibab"))
     }
 
     @Test("Conditional content with if/else works")
@@ -42,10 +109,7 @@ struct DioramaContentBuilderTests {
         let showMarker = true
         let group = buildContent {
             if showMarker {
-                DioramaMarker(
-                    coordinate: CLLocationCoordinate2D(latitude: 36.0, longitude: -112.0),
-                    title: "Visible"
-                )
+                DioramaAnnotation.marker(at: Self.a, title: "Visible")
             }
         }
 
@@ -54,10 +118,7 @@ struct DioramaContentBuilderTests {
         let hidden = false
         let group2 = buildContent {
             if hidden {
-                DioramaMarker(
-                    coordinate: CLLocationCoordinate2D(latitude: 36.0, longitude: -112.0),
-                    title: "Hidden"
-                )
+                DioramaAnnotation.marker(at: Self.a, title: "Hidden")
             }
         }
 
@@ -65,52 +126,38 @@ struct DioramaContentBuilderTests {
     }
 
     @Test("If/else branches work correctly")
-    func ifElseBranches() {
+    func ifElseBranches() throws {
         let useMarker = true
         let group = buildContent {
             if useMarker {
-                DioramaMarker(
-                    coordinate: CLLocationCoordinate2D(latitude: 36.0, longitude: -112.0),
-                    title: "Marker"
-                )
+                DioramaAnnotation.marker(at: Self.a, title: "Marker")
             } else {
-                DioramaPolyline(
-                    coordinates: [
-                        CLLocationCoordinate2D(latitude: 36.0, longitude: -112.0),
-                        CLLocationCoordinate2D(latitude: 36.1, longitude: -112.1)
-                    ]
-                )
+                DioramaAnnotation.line(through: [Self.a, Self.b])
             }
         }
 
         #expect(group.items.count == 1)
-        if case .marker = group.items[0] {
-            // Expected
-        } else {
-            Issue.record("Expected marker from if branch")
+        guard case .point = try #require(geometry(of: group.items[0])) else {
+            Issue.record("Expected a point from the if branch")
+            return
         }
     }
 
     @Test("For loop with buildArray works")
     func forLoopContent() {
-        let coordinates = [
-            CLLocationCoordinate2D(latitude: 36.0, longitude: -112.0),
-            CLLocationCoordinate2D(latitude: 36.1, longitude: -112.1),
-            CLLocationCoordinate2D(latitude: 36.2, longitude: -112.2)
-        ]
+        let coordinates = [Self.a, Self.b, Self.c]
 
         let group = buildContent {
-            for (i, coord) in coordinates.enumerated() {
-                DioramaMarker(coordinate: coord, title: "Pin \(i)")
+            for (index, coordinate) in coordinates.enumerated() {
+                DioramaAnnotation.marker(at: coordinate, title: "Pin \(index)")
             }
         }
 
         #expect(group.items.count == 3)
         for item in group.items {
-            if case .marker = item {
-                // Expected
-            } else {
-                Issue.record("Expected all items to be markers")
+            guard case .point? = geometry(of: item) else {
+                Issue.record("Expected every item to be a point")
+                return
             }
         }
     }
@@ -123,28 +170,34 @@ struct DioramaContentBuilderTests {
     }
 
     @Test("Mixed content types are preserved in order")
-    func mixedContent() {
+    func mixedContent() throws {
         let group = buildContent {
-            DioramaMarker(
-                coordinate: CLLocationCoordinate2D(latitude: 36.0, longitude: -112.0),
-                title: "First"
-            )
-            DioramaPolyline(
-                coordinates: [
-                    CLLocationCoordinate2D(latitude: 36.0, longitude: -112.0),
-                    CLLocationCoordinate2D(latitude: 36.1, longitude: -112.1)
-                ]
-            )
-            DioramaMarker(
-                coordinate: CLLocationCoordinate2D(latitude: 36.2, longitude: -112.2),
-                title: "Third"
-            )
+            DioramaAnnotation.marker(at: Self.a, title: "First")
+            DioramaAnnotation.line(through: [Self.a, Self.b])
+            DioramaAnnotation.marker(at: Self.c, title: "Third")
         }
 
         #expect(group.items.count == 3)
-        if case .marker = group.items[0] { } else { Issue.record("Expected marker at 0") }
-        if case .polyline = group.items[1] { } else { Issue.record("Expected polyline at 1") }
-        if case .marker = group.items[2] { } else { Issue.record("Expected marker at 2") }
+        guard case .point = try #require(geometry(of: group.items[0])),
+              case .lineString = try #require(geometry(of: group.items[1])),
+              case .point = try #require(geometry(of: group.items[2]))
+        else {
+            Issue.record("Expected point, line, point in that order")
+            return
+        }
+    }
+
+    @Test("The style says what an altitude means")
+    func styleCarriesTheAltitudeReference() {
+        // The feature carries a number and the style says how to read it — which is the whole
+        // reason altitude lives on the style rather than being inferred from the geometry.
+        #expect(DioramaAnnotation.marker(at: Self.a).style.altitude == .clampToGround)
+        #expect(
+            DioramaAnnotation.marker(at: Self.a, altitude: .relativeToGround)
+                .style.altitude == .relativeToGround
+        )
+        #expect(DioramaAnnotation.line(through: [Self.a, Self.b], lineWidth: 0.01)
+            .style.lineWidth == 0.01)
     }
 
     // MARK: - Helper

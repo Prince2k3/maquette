@@ -21,10 +21,9 @@ private struct RoutePreviewDemoView: View {
                     radiusMeters: 3000
                 )
             ) {
-                DioramaMarker(
-                    coordinate: coordinates.first ?? .init(),
+                DioramaAnnotation.marker(
+                    at: coordinates.first ?? .init(),
                     tint: .green,
-                    systemImage: "figure.hiking",
                     title: "South Kaibab Trailhead"
                 )
 

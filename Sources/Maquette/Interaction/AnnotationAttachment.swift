@@ -10,98 +10,172 @@ public protocol DioramaContent {
     var items: [DioramaContentItem] { get }
 }
 
-/// A concrete content item — either a marker, polyline, or route preview.
+/// A concrete content item — either an annotation or a route preview.
+///
+/// Annotations used to come in one case per shape, `marker` and `polyline`, which meant the shape a
+/// caller could draw was fixed by this enum: handing in a `.geojson` file meant unpacking it into
+/// whichever of the two it happened to resemble, and anything else had nowhere to go. An annotation
+/// is now a ``Feature`` plus a style, so what gets drawn is a property of the data.
 public enum DioramaContentItem: Sendable {
-    case marker(DioramaMarker)
-    case polyline(DioramaPolyline)
+    case annotation(DioramaAnnotation)
     case routePreview(DioramaRoutePreview)
 }
 
-// MARK: - Marker
+// MARK: - Annotation
 
-/// A map marker placed at a geographic coordinate on the diorama.
+/// A GeoJSON feature drawn on the diorama.
 ///
 /// ```swift
-/// DioramaMarker(
-///     coordinate: CLLocationCoordinate2D(latitude: 36.1069, longitude: -112.1129),
-///     tint: .red,
-///     systemImage: "mappin",
+/// DioramaAnnotation.marker(
+///     at: Coordinate(latitude: 36.1069, longitude: -112.1129),
 ///     title: "Grand Canyon"
 /// )
 /// ```
-public struct DioramaMarker: DioramaContent, Sendable {
-    /// The geographic coordinate where the marker is placed.
-    public let coordinate: CLLocationCoordinate2D
-    /// The tint color applied to the marker pin.
-    public let tint: Color
-    /// The SF Symbol name displayed on the marker head.
-    public let systemImage: String
-    /// A unique title/identifier for the marker.
-    public let title: String
-
-    /// Creates a diorama marker.
-    ///
-    /// - Parameters:
-    ///   - coordinate: Geographic location of the marker.
-    ///   - tint: Color of the marker pin. Defaults to `.red`.
-    ///   - systemImage: SF Symbol name for the marker head. Defaults to `"mappin"`.
-    ///   - title: Display title and identifier for the marker.
-    public init(
-        coordinate: CLLocationCoordinate2D,
-        tint: Color = .red,
-        systemImage: String = "mappin",
-        title: String = UUID().uuidString
-    ) {
-        self.coordinate = coordinate
-        self.tint = tint
-        self.systemImage = systemImage
-        self.title = title
-    }
-
-    public var items: [DioramaContentItem] { [.marker(self)] }
-}
-
-// MARK: - Polyline
-
-/// A polyline connecting geographic coordinates on the diorama surface.
+///
+/// The feature is the same value that came out of the data, unmodified — a point becomes a pin, a
+/// line becomes a ribbon, and a multi-geometry becomes one of each part. The style says how it
+/// looks and, through ``AnnotationStyle/altitude``, what any altitude on its positions means.
 ///
 /// ```swift
-/// DioramaPolyline(
-///     coordinates: [coord1, coord2, coord3],
-///     color: .blue,
-///     lineWidth: 0.003
-/// )
+/// let collection = try JSONDecoder().decode(FeatureCollection.self, from: data)
+/// DioramaView(configuration: config) {
+///     for feature in collection.features {
+///         DioramaAnnotation(feature)
+///     }
+/// }
 /// ```
-public struct DioramaPolyline: DioramaContent, Sendable {
-    /// Unique identifier for this polyline.
+public struct DioramaAnnotation: DioramaContent, Sendable, Identifiable {
+    /// Identity for the entity this becomes, so re-applying content replaces rather than duplicates.
+    ///
+    /// Taken from the feature's own `id` when it has one — GeoJSON carries identity and a caller's
+    /// data should keep it — and generated otherwise.
     public let id: String
-    /// The geographic coordinates that define the polyline path.
-    public let coordinates: [CLLocationCoordinate2D]
-    /// The color of the polyline ribbon.
-    public let color: Color
-    /// The width of the polyline ribbon in diorama-space meters.
-    public let lineWidth: Float
+    /// The feature to draw.
+    public var feature: Feature
+    /// How to draw it.
+    public var style: AnnotationStyle
 
-    /// Creates a diorama polyline.
+    /// Creates an annotation from a feature.
     ///
     /// - Parameters:
-    ///   - coordinates: Geographic coordinates defining the path.
-    ///   - color: Color of the polyline. Defaults to `.blue`.
-    ///   - lineWidth: Width in diorama meters. Defaults to `0.003`.
-    ///   - id: Unique identifier. Defaults to a generated UUID.
-    public init(
-        coordinates: [CLLocationCoordinate2D],
-        color: Color = .blue,
-        lineWidth: Float = 0.003,
-        id: String = UUID().uuidString
-    ) {
-        self.coordinates = coordinates
-        self.color = color
-        self.lineWidth = lineWidth
-        self.id = id
+    ///   - feature: The geometry and properties to draw.
+    ///   - style: How it is drawn. Defaults to a red pin and a blue ribbon.
+    ///   - id: Identity for the resulting entity. Defaults to the feature's own, or a fresh UUID.
+    public init(_ feature: Feature, style: AnnotationStyle = AnnotationStyle(), id: String? = nil) {
+        self.feature = feature
+        self.style = style
+        self.id = id ?? Self.identifier(for: feature)
     }
 
-    public var items: [DioramaContentItem] { [.polyline(self)] }
+    private static func identifier(for feature: Feature) -> String {
+        switch feature.id {
+        case .string(let value): value
+        case .number(let value): String(value)
+        case nil: UUID().uuidString
+        }
+    }
+
+    public var items: [DioramaContentItem] { [.annotation(self)] }
+}
+
+// MARK: - Convenience
+
+extension DioramaAnnotation {
+    /// A pin at a coordinate.
+    ///
+    /// - Parameters:
+    ///   - coordinate: Where the pin goes.
+    ///   - tint: Colour of the pin. Defaults to `.red`.
+    ///   - altitude: What any altitude on the coordinate means. Defaults to sitting on the ground.
+    ///   - title: Identity for the pin, and the `title` property on the feature it makes.
+    public static func marker(
+        at coordinate: Coordinate,
+        tint: Color = .red,
+        altitude: AltitudeReference = .clampToGround,
+        title: String = UUID().uuidString
+    ) -> DioramaAnnotation {
+        DioramaAnnotation(
+            Feature.point(coordinate, id: .string(title), properties: ["title": .string(title)]),
+            style: AnnotationStyle(tint: tint, altitude: altitude),
+            id: title
+        )
+    }
+
+    /// A pin at a CoreLocation coordinate.
+    public static func marker(
+        at coordinate: CLLocationCoordinate2D,
+        tint: Color = .red,
+        altitude: AltitudeReference = .clampToGround,
+        title: String = UUID().uuidString
+    ) -> DioramaAnnotation {
+        marker(at: Coordinate(coordinate), tint: tint, altitude: altitude, title: title)
+    }
+
+    /// A ribbon following a run of coordinates.
+    ///
+    /// - Parameters:
+    ///   - coordinates: The path, in order.
+    ///   - tint: Colour of the ribbon. Defaults to `.blue`.
+    ///   - lineWidth: Width in diorama metres. Defaults to `0.003`.
+    ///   - altitude: What any altitude on the coordinates means. Defaults to following the ground.
+    ///   - id: Identity for the ribbon.
+    public static func line(
+        through coordinates: [Coordinate],
+        tint: Color = .blue,
+        lineWidth: Float = 0.003,
+        altitude: AltitudeReference = .clampToGround,
+        id: String = UUID().uuidString
+    ) -> DioramaAnnotation {
+        DioramaAnnotation(
+            Feature.line(coordinates, id: .string(id)),
+            style: AnnotationStyle(tint: tint, lineWidth: lineWidth, altitude: altitude),
+            id: id
+        )
+    }
+
+    /// A ribbon following a run of CoreLocation coordinates.
+    public static func line(
+        through coordinates: [CLLocationCoordinate2D],
+        tint: Color = .blue,
+        lineWidth: Float = 0.003,
+        altitude: AltitudeReference = .clampToGround,
+        id: String = UUID().uuidString
+    ) -> DioramaAnnotation {
+        line(
+            through: coordinates.map { Coordinate($0) },
+            tint: tint,
+            lineWidth: lineWidth,
+            altitude: altitude,
+            id: id
+        )
+    }
+}
+
+// MARK: - Style
+
+/// How an annotation is drawn.
+///
+/// One style for every geometry rather than one type per shape: a feature collection routinely mixes
+/// points and lines under a single visual treatment, and splitting the style by shape would make the
+/// caller sort its own data before styling it. Fields that do not apply to a geometry are simply
+/// unused — `lineWidth` means nothing to a pin.
+public struct AnnotationStyle: Sendable {
+    /// Colour of the pin, or of the ribbon.
+    public var tint: Color
+    /// Width of a ribbon, in diorama metres.
+    public var lineWidth: Float
+    /// What an altitude carried on the feature's positions means.
+    public var altitude: AltitudeReference
+
+    public init(
+        tint: Color = .red,
+        lineWidth: Float = 0.003,
+        altitude: AltitudeReference = .clampToGround
+    ) {
+        self.tint = tint
+        self.lineWidth = lineWidth
+        self.altitude = altitude
+    }
 }
 
 // MARK: - Content Group
@@ -115,14 +189,23 @@ public struct DioramaContentGroup: DioramaContent, Sendable {
     }
 }
 
+extension FeatureCollection: DioramaContent {
+    /// Draws every feature in the collection with the default style.
+    ///
+    /// The whole point of speaking GeoJSON: a decoded document is content, with nothing in between.
+    public var items: [DioramaContentItem] {
+        features.map { .annotation(DioramaAnnotation($0)) }
+    }
+}
+
 // MARK: - Result Builder
 
-/// Result builder for declaring diorama content (markers, polylines) in a SwiftUI-like syntax.
+/// Result builder for declaring diorama content in a SwiftUI-like syntax.
 ///
 /// ```swift
 /// DioramaView(configuration: config) {
-///     DioramaMarker(coordinate: coord1, title: "A")
-///     DioramaPolyline(coordinates: [coord1, coord2])
+///     DioramaAnnotation.marker(at: coord1, title: "A")
+///     DioramaAnnotation.line(through: [coord1, coord2])
 /// }
 /// ```
 @resultBuilder
@@ -187,7 +270,17 @@ public struct DioramaProxy: Sendable {
     /// - Returns: A position relative to the diorama centre, or `nil` when the coordinate falls
     ///   outside the chunk's outline or on ground the diorama does not hold.
     public func position(for coordinate: CLLocationCoordinate2D) -> SIMD3<Float>? {
-        guard let position = projection.position(for: Coordinate(coordinate)) else { return nil }
+        position(for: Coordinate(coordinate))
+    }
+
+    /// Converts a coordinate to a 3D position, honouring any altitude it carries.
+    public func position(
+        for coordinate: Coordinate,
+        altitude: AltitudeReference = .clampToGround
+    ) -> SIMD3<Float>? {
+        guard let position = projection.position(for: coordinate, altitude: altitude) else {
+            return nil
+        }
         // Culled against the outline rather than a circle around it. The old test — distance from
         // the centre against half the diameter — is only the same question for a round chunk, and
         // clipped the corners off every square one.

@@ -410,6 +410,13 @@ struct ContentView: View {
 
     @State private var buildingsVisible = true
 
+    /// The globe is not a preset — it is a different screen, reached by the same picker.
+    ///
+    /// Keeping it out of `DemoPresets` is deliberate: a preset is a `DioramaConfiguration`, and the
+    /// globe is not configured, centred or cut. Faking one to get a chip in the picker would put the
+    /// globe inside the pipeline it is meant to sit beside.
+    @State private var showsGlobe = ProcessInfo.processInfo.environment["MAQUETTE_PRESET"] == "globe"
+
     private var preset: DemoPreset { DemoPresets.all[selection] }
 
     /// The preset's configuration with the live toggles folded in.
@@ -429,13 +436,18 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 header
 
-                DioramaView(configuration: configuration)
-                    .dioramaEffect(preset.effect)
-                    .id(preset.id)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if showsGlobe {
+                    GlobeDemoView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    DioramaView(configuration: configuration)
+                        .dioramaEffect(preset.effect)
+                        .id(preset.id)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                if preset.configuration.buildings != nil {
-                    buildingsToggle
+                    if preset.configuration.buildings != nil {
+                        buildingsToggle
+                    }
                 }
                 presetPicker
             }
@@ -454,9 +466,9 @@ struct ContentView: View {
 
     private var header: some View {
         VStack(spacing: 2) {
-            Text(preset.title)
+            Text(showsGlobe ? "Globe" : preset.title)
                 .font(.title2.weight(.semibold))
-            Text(preset.caption)
+            Text(showsGlobe ? "The whole world, textured from the same raster tiles" : preset.caption)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -468,24 +480,35 @@ struct ContentView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(Array(DemoPresets.all.enumerated()), id: \.element.id) { index, item in
-                    Button {
+                    chip(item.title, id: item.id, isSelected: !showsGlobe && index == selection) {
+                        showsGlobe = false
                         selection = index
-                    } label: {
-                        Text(item.title)
-                            .font(.subheadline.weight(.medium))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 9)
-                                    .fill(index == selection ? Color.accentColor : Color(white: 0.18))
-                            )
-                            .foregroundStyle(index == selection ? Color.white : Color.secondary)
                     }
-                    .accessibilityIdentifier("preset-\(item.id)")
                 }
+                chip("Globe", id: "globe", isSelected: showsGlobe) { showsGlobe = true }
             }
             .padding(.horizontal, 16)
         }
         .padding(.vertical, 12)
+    }
+
+    private func chip(
+        _ title: String,
+        id: String,
+        isSelected: Bool,
+        select: @escaping () -> Void
+    ) -> some View {
+        Button(action: select) {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(isSelected ? Color.accentColor : Color(white: 0.18))
+                )
+                .foregroundStyle(isSelected ? Color.white : Color.secondary)
+        }
+        .accessibilityIdentifier("preset-\(id)")
     }
 }

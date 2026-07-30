@@ -143,10 +143,23 @@ public class TerrainEntity: Entity {
     ///   - heightField: The new surface. It must share the anchor the chunk was built with, or the
     ///     terrain jumps.
     ///   - surfaceMaterial: Imagery composited over the same tiles, or `nil` to keep the current one.
-    public func setTerrain(_ heightField: TerrainHeightField, surfaceMaterial: RealityKit.Material?) {
+    ///   - newPanOffset: The offset the new surface should be sampled at, or `nil` to keep the
+    ///     current one. A roll keeps it, because the mapping is unchanged and the offset still names
+    ///     the ground it did before. A ground zoom does not: the mapping's scale has changed, and the
+    ///     offset has to be divided by the same factor to hold the chunk over the same place. Passing
+    ///     it here rather than calling ``setPanOffset(_:)`` afterwards is what keeps a zoom step to
+    ///     one resample instead of two — and the first of those two would be against the old surface.
+    public func setTerrain(
+        _ heightField: TerrainHeightField,
+        surfaceMaterial: RealityKit.Material?,
+        panOffset newPanOffset: SIMD2<Float>? = nil
+    ) {
         guard var geometry, self.heightField != nil else { return }
 
         self.heightField = heightField
+        if let newPanOffset {
+            self.panOffset = newPanOffset
+        }
         if let surfaceMaterial {
             surface?.model?.materials = [surfaceMaterial]
         }

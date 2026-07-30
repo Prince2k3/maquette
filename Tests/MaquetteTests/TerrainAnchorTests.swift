@@ -66,6 +66,44 @@ struct TerrainAnchorTests {
         #expect(simd_distance(before, after) < 1e-9)
     }
 
+    @Test("Zooming the ground keeps the chunk over the place it was looking at")
+    func scalingHoldsThePannedCentre() {
+        // The invariant the whole ground zoom rests on, and the one that fails silently: scaling
+        // about `originTile` holds diorama X/Z = 0, which is the chunk's centre only while the pan
+        // offset is zero. Dividing the offset by the same factor is what makes it hold at any offset.
+        let anchor = anchor()
+        let panOffset = SIMD2<Double>(0.31, -0.18)
+        let before = anchor.tilePoint(forDioramaX: panOffset.x, z: panOffset.y)
+
+        for scale in [0.25, 0.5, 2.0, 4.0, 16.0] {
+            let zoomed = anchor.scaled(by: scale)
+            let offset = panOffset / scale
+            let after = zoomed.tilePoint(forDioramaX: offset.x, z: offset.y)
+            #expect(simd_distance(before, after) < 1e-12)
+            // And the point of the exercise: the same chunk now spans that many times more ground.
+            #expect(abs(zoomed.dioramaMetersPerTile.x * scale - anchor.dioramaMetersPerTile.x) < 1e-9)
+        }
+    }
+
+    @Test("Restating the anchor at a coarser tile level names identical ground")
+    func atZoomNamesTheSameGround() {
+        // A re-level swaps the tiles under the chunk without moving it, so the two anchors have to
+        // agree about every position — not merely about the centre.
+        let anchor = anchor()
+        for level in [8, 10, 11, 13, 14] {
+            let restated = anchor.atZoom(level)
+            #expect(restated.zoom == level)
+            for x in stride(from: Double(-0.7), through: 0.7, by: 0.35) {
+                for z in stride(from: Double(-0.7), through: 0.7, by: 0.35) {
+                    let before = anchor.coordinate(forDioramaX: x, z: z)
+                    let after = restated.coordinate(forDioramaX: x, z: z)
+                    #expect(abs(before.latitude - after.latitude) < 1e-9)
+                    #expect(abs(before.longitude - after.longitude) < 1e-9)
+                }
+            }
+        }
+    }
+
     @Test("A mosaic anchor reproduces the mapping it replaced")
     func mosaicAnchorMatchesOldMapping() {
         // The old height field stretched whatever tiles were loaded across the extent. That is

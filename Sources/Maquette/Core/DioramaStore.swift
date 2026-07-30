@@ -137,15 +137,19 @@ public final class DioramaStore {
         buildingsCutTask = nil
         buildingsFetchTask?.cancel()
         buildingsFetchTask = nil
+        relevelTask?.cancel()
+        relevelTask = nil
         buildings = nil
         rolling = nil
         samplerTemplate = nil
+        terrainField = nil
         effectPass = nil
         loadingState = .idle
         dioramaEntity = nil
         projection = nil
         routePreviewEntity = nil
         panOffset = .zero
+        groundScale = 1
     }
 
     // MARK: - Effects
@@ -418,8 +422,13 @@ public final class DioramaStore {
             zoom: zoom,
             anchor: anchor,
             exaggeration: exaggeration,
-            globalMinElev: globalMinElev
+            globalMinElev: globalMinElev,
+            elevationScale: elevationScale,
+            baseAnchor: anchor,
+            baseElevationScale: elevationScale
         )
+        groundScale = 1
+        terrainField = heightField
         setTerrainProjection(grids: terrainGrids)
 
         // Panning slides the chunk off its fetched tiles sooner or later, so it keeps the machinery
@@ -775,19 +784,31 @@ public final class DioramaStore {
     /// because it is what names which ground a diorama position refers to, and the baseline because
     /// re-measuring it against the new window is what makes the chunk bob.
     private struct SamplerTemplate {
-        let zoom: Int
-        let anchor: TerrainAnchor
+        /// Tile level the resident grids are expressed at. Unchanged by a roll; moved by a ground
+        /// zoom, once the mosaic has stretched far enough to want coarser tiles instead.
+        var zoom: Int
+        /// The mapping the resident grids are read through, at the ground zoom in force.
+        var anchor: TerrainAnchor
         let exaggeration: Float
         let globalMinElev: Float
+        /// Raw elevation meters to diorama meters, at the ground zoom in force.
+        var elevationScale: Float
+        /// The mapping and the scale the chunk loaded at, so a ground zoom is *derived* from the
+        /// scale rather than accumulated across steps. A pinch is hundreds of steps, and multiplying
+        /// a mapping by a ratio each time would let the ground drift away from the scale it names.
+        let baseAnchor: TerrainAnchor
+        let baseElevationScale: Float
     }
 
     private var samplerTemplate: SamplerTemplate?
 
+    /// The stitched surface the chunk is drawn from, kept so a ground zoom can re-read the grids
+    /// already in hand against a new mapping instead of fetching to change scale.
+    private var terrainField: TerrainHeightField?
+
     private func setTerrainProjection(grids: [(x: Int, y: Int, grid: ElevationGrid)]) {
         guard let template = samplerTemplate, !grids.isEmpty else { return }
-        let elevationScale = configuration.terrainRegionExtent.x
-            / Float(configuration.terrainFetchRadiusMeters * 2.0)
-            * template.exaggeration
+        let elevationScale = template.elevationScale
         let heightField = TerrainHeightField(
             grids: grids.map(\.grid),
             tilePositions: grids.map { (x: $0.x, y: $0.y) },
@@ -1093,6 +1114,7 @@ public final class DioramaStore {
         }
 
         mosaic = image
+        terrainField = roll.heightField
         (dioramaEntity as? DioramaEntity)?.terrain?.setTerrain(
             roll.heightField,
             surfaceMaterial: material
@@ -1125,6 +1147,249 @@ public final class DioramaStore {
             """
         )
         return true
+    }
+
+    // MARK: - Ground Zoom
+
+    /// How much more ground the chunk covers than its configuration asked for.
+    ///
+    /// 1 is the region ``DioramaConfiguration/radiusMeters`` names; 2 is twice that much world
+    /// across the same chunk. This is the **map** zooming rather than the camera pulling back — the
+    /// chunk keeps its size, its outline and its place on the table, and only the ground beneath it
+    /// gets wider. Panning is unaffected and goes on working throughout, because a zoom and a pan
+    /// change different halves of the same mapping.
+    public private(set) var groundScale: Float = 1
+
+    /// The real-world radius the chunk currently spans.
+    public var groundRadiusMeters: Double { configuration.radiusMeters * Double(groundScale) }
+
+    /// The range the ground zoom may run over.
+    ///
+    /// The far end is a flat chunk's honest limit rather than Mercator's. Mercator itself only runs
+    /// out at tile level 0, where the whole planet is one tile — but a continent laid flat on a
+    /// tabletop is a projection nobody wants to look at, and the elevation grid backing it would be
+    /// a couple of hundred samples for a hemisphere. It stops at ``worldTileZoom`` instead, a few
+    /// levels short, which is the point where the sphere is the better answer and the globe takes
+    /// over.
+    ///
+    /// The near end stops a few steps in, because zooming in means magnifying the tiles already
+    /// fetched: the chunk never asks for a level finer than the one it loaded at, so past a small
+    /// factor it would be claiming detail that was never established to be there.
+    public var groundScaleLimits: ClosedRange<Float> {
+        guard let template = samplerTemplate, canZoomGround else { return 1...1 }
+        let levels = max(template.baseAnchor.zoom - Self.worldTileZoom, 0)
+        return Self.minimumGroundScale...max(exp2(Float(levels)), 1)
+    }
+
+    /// The tile level the chunk stops widening at, and the globe takes the gesture on from.
+    ///
+    /// Sixteen tiles across the world: a chunk at this level is spanning something like a thousand
+    /// kilometres, which is the scale at which the flat cut stops reading as a piece of the earth.
+    nonisolated static let worldTileZoom = 4
+
+    /// Whether the ground can be zoomed at all.
+    ///
+    /// It rides on the same machinery panning does — a resampled surface and a rolling fetch — so a
+    /// fixed chunk has neither the surface to re-read nor the tiles to widen onto.
+    public var canZoomGround: Bool { rolling != nil && terrainField != nil }
+
+    private static let minimumGroundScale: Float = 0.25
+
+    /// Widens or narrows the ground the chunk covers, keeping the chunk itself exactly as it is.
+    ///
+    /// Cheap, and for the same reason a pan step is: which ground a diorama position names is the
+    /// *anchor's* business, not the mosaic's, so multiplying the anchor's scale is the whole zoom.
+    /// The surface re-reads the tiles already in hand — one resample, no fetch — and the imagery
+    /// stretches across the chunk until coarser tiles arrive to replace it.
+    ///
+    /// Three things move together with the scale, and leaving any one of them out fails quietly:
+    ///
+    /// - **The pan offset divides by the same factor.** The ground under the chunk is
+    ///   `originTile + panOffset · tilesPerDioramaMeter`, and scaling only the second term slides
+    ///   the terrain sideways by however far it had been panned. Dividing the offset leaves the
+    ///   product exactly unchanged, so a zoom is about the place the chunk is looking at rather than
+    ///   about wherever it started.
+    /// - **The elevation scale divides by it too.** Covering twice the ground across the same
+    ///   physical width makes a metre of relief worth half as many diorama metres; hold it fixed and
+    ///   the mountains grow as the map pulls back.
+    /// - **The margin ring is re-counted.** A tile spans half as much diorama distance at twice the
+    ///   scale, so the ring the roller keeps beyond the outline has to be measured in the new tiles
+    ///   or the chunk pans off its own margin immediately.
+    ///
+    /// The elevation baseline is deliberately *not* re-measured, for the reason a roll does not
+    /// re-measure it: it is what diorama Y = 0 means, and moving it makes the chunk bob.
+    ///
+    /// - Parameter scale: The target scale, clamped to ``groundScaleLimits``.
+    public func setGroundScale(_ scale: Float) {
+        guard canZoomGround,
+              let template = samplerTemplate,
+              let field = terrainField,
+              let rollState = rolling
+        else { return }
+
+        let limits = groundScaleLimits
+        let target = min(max(scale, limits.lowerBound), limits.upperBound)
+        guard abs(target / groundScale - 1) > 1e-4 else { return }
+
+        let started = ContinuousClock.now
+        let offset = panOffset * (groundScale / target)
+        let anchor = template.baseAnchor.atZoom(template.zoom).scaled(by: Double(target))
+        let elevationScale = template.baseElevationScale / target
+
+        // The grids in hand, read through the new mapping. Same tiles, same stitching, same frozen
+        // baseline — only the map they are placed against has changed.
+        let zoomed = TerrainHeightField(
+            grids: field.grids,
+            tilePositions: field.tilePositions,
+            anchor: anchor,
+            elevationScale: elevationScale,
+            baselineElevation: template.globalMinElev
+        )
+
+        groundScale = target
+        panOffset = offset
+        samplerTemplate?.anchor = anchor
+        samplerTemplate?.elevationScale = elevationScale
+        terrainField = zoomed
+
+        let perTile = anchor.dioramaMetersPerTile
+        let margin = configuration.maximumPanOffset
+        rolling = TerrainRollState(
+            roller: rollState.roller.remapped(
+                anchor: anchor,
+                elevationScale: elevationScale,
+                marginTiles: SIMD2(
+                    Self.marginTiles(meters: margin.x, perTile: perTile.x),
+                    Self.marginTiles(meters: margin.y, perTile: perTile.y)
+                )
+            ),
+            tiles: rollState.tiles,
+            window: rollState.window
+        )
+
+        (dioramaEntity as? DioramaEntity)?.terrain?.setTerrain(
+            zoomed,
+            surfaceMaterial: nil,
+            panOffset: offset
+        )
+        // Sea level is an elevation like any other, so it rides the elevation scale down. Moving the
+        // plane rather than rebuilding it is enough: it is cut to the outline, which has not moved.
+        if let water = (dioramaEntity as? DioramaEntity)?.waterPlane {
+            water.position.y = (0.0 - template.globalMinElev) * elevationScale
+        }
+        projection?.panOffset = offset
+        refreshEffect()
+
+        setTerrainProjection(
+            grids: zoomed.tilePositions.enumerated().map { index, position in
+                (x: position.x, y: position.y, grid: zoomed.grids[index])
+            }
+        )
+        applyContent(appliedContent)
+
+        buildings?.heightField = zoomed
+        buildings?.blocksStale = true
+        buildings?.generation += 1
+        recutBuildingsIfNeeded()
+
+        let finished = ContinuousClock.now
+        logger.debug("""
+            Ground zoom: scale \(target, format: .fixed(precision: 3)), \
+            radius \(self.groundRadiusMeters, format: .fixed(precision: 0)) m, \
+            tiles at z\(template.zoom), \
+            \(String(format: "%.1f", (finished - started).milliseconds)) ms
+            """)
+
+        relevelTerrainIfNeeded()
+        rollTerrainIfNeeded()
+    }
+
+    /// Zooms the ground by a multiplier, which is what a pinch produces.
+    public func zoomGround(by factor: Float) {
+        guard factor > 0 else { return }
+        setGroundScale(groundScale * factor)
+    }
+
+    // MARK: - Tile Re-levelling
+
+    /// The tile level the ground zoom currently wants.
+    ///
+    /// Tile space doubles per level and so does the ground zoom, so one level answers one doubling
+    /// and the mosaic is never stretched by more than about √2 either way. Rounding rather than
+    /// flooring is what centres that: floor would let it reach 2× before correcting, which is
+    /// visibly soft. It never goes *finer* than the level the chunk loaded at — that would be asking
+    /// for detail the fetch never established was there — and stops at 0, where the world is one
+    /// tile and there is nothing coarser to ask for.
+    nonisolated static func desiredTileZoom(base: Int, scale: Float) -> Int {
+        let steps = Int(log2(Double(scale)).rounded())
+        let coarsest = min(worldTileZoom, base)
+        return min(max(base - steps, coarsest), base)
+    }
+
+    private func desiredTileZoom(for template: SamplerTemplate, scale: Float) -> Int {
+        Self.desiredTileZoom(base: template.baseAnchor.zoom, scale: scale)
+    }
+
+    private var relevelTask: Task<Void, Never>?
+
+    /// Fetches the ground again at a coarser tile level once the mosaic has stretched far enough.
+    ///
+    /// The zoom itself needs no fetch, which is what makes it cheap — but it *stretches* what is in
+    /// hand, and past a factor of two the imagery is visibly soft and the elevation grid carries
+    /// fewer samples across the chunk than the mesh has vertices. Coarser tiles are the fix rather
+    /// than more of the ones already held: a level out covers four times the ground per tile, so
+    /// staying put would mean four times the tiles for the same view.
+    ///
+    /// It lands the way a roll does — built off the main actor, swapped in whole, no teardown and no
+    /// spinner — because the anchor makes the two windows name identical ground.
+    private func relevelTerrainIfNeeded() {
+        guard relevelTask == nil, let template = samplerTemplate, rolling != nil else { return }
+        guard desiredTileZoom(for: template, scale: groundScale) != template.zoom else { return }
+
+        relevelTask = Task { [self] in
+            defer { relevelTask = nil }
+            while let template = samplerTemplate, let state = rolling, !Task.isCancelled {
+                let wanted = desiredTileZoom(for: template, scale: groundScale)
+                guard wanted != template.zoom else { return }
+
+                let anchor = template.baseAnchor.atZoom(wanted).scaled(by: Double(groundScale))
+                let perTile = anchor.dioramaMetersPerTile
+                let margin = configuration.maximumPanOffset
+                let roller = state.roller.remapped(
+                    anchor: anchor,
+                    elevationScale: template.elevationScale,
+                    marginTiles: SIMD2(
+                        Self.marginTiles(meters: margin.x, perTile: perTile.x),
+                        Self.marginTiles(meters: margin.y, perTile: perTile.y)
+                    )
+                )
+
+                // Nothing carries over: a `TerrainTileSet` is keyed by tile coordinate with no level
+                // in the key, so handing over the old tiles would have the new window read them as
+                // its own and place ground from somewhere else entirely.
+                guard let roll = await roller.load(
+                    window: roller.window(forPanOffset: panOffset),
+                    have: TerrainTileSet()
+                ) else {
+                    logger.warning("Tile re-level loaded nothing; staying at z\(template.zoom)")
+                    return
+                }
+                guard !Task.isCancelled, rolling != nil else { return }
+
+                // The template names the map before the swap reads it: `applyRoll` rebuilds the
+                // projection through `samplerTemplate.anchor`, and the level it is about to hand
+                // over is the new one.
+                samplerTemplate?.zoom = wanted
+                samplerTemplate?.anchor = anchor
+                guard applyRoll(roll) else {
+                    samplerTemplate?.zoom = template.zoom
+                    samplerTemplate?.anchor = template.anchor
+                    return
+                }
+                rolling = TerrainRollState(roller: roller, tiles: roll.tiles, window: roll.window)
+                logger.debug("Re-levelled terrain to z\(wanted) at ground scale \(self.groundScale)")
+            }
+        }
     }
 
     // MARK: - Content Application

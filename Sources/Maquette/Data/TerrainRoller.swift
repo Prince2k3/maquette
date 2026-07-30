@@ -110,6 +110,34 @@ struct TerrainRoller: Sendable {
     /// free tile server for a hundred images in one breath.
     private static let concurrentFetches = 8
 
+    /// The same fetcher reading a different map.
+    ///
+    /// The anchor is a `let` because a *roll* must never change it — that is the whole reason the
+    /// swap is invisible. Zooming the ground is the one thing that legitimately does: the chunk keeps
+    /// its outline and covers more world, so both the mapping and the ring of margin tiles are
+    /// restated and every subsequent roll is measured against the new pair. The providers, the cache
+    /// and the frozen baseline come across untouched, which is what keeps a zoom from re-measuring
+    /// the elevation datum and making the chunk bob.
+    func remapped(
+        anchor: TerrainAnchor,
+        elevationScale: Float,
+        marginTiles: SIMD2<Int>
+    ) -> TerrainRoller {
+        TerrainRoller(
+            zoom: anchor.zoom,
+            anchor: anchor,
+            elevationScale: elevationScale,
+            baselineElevation: baselineElevation,
+            chunkMin: chunkMin,
+            chunkMax: chunkMax,
+            marginTiles: marginTiles,
+            terrainProvider: terrainProvider,
+            satelliteProvider: satelliteProvider,
+            decodesMapTilerTerrain: decodesMapTilerTerrain,
+            cache: cache
+        )
+    }
+
     /// The tiles the chunk needs loaded at a given pan offset, plus the margin ring.
     func window(forPanOffset offset: SIMD2<Float>) -> TerrainTileWindow {
         let low = chunkMin + offset

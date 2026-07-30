@@ -1,0 +1,36 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "yosemite-valley",
+      "properties": {
+        "name": "Yosemite Valley",
+        "note": "An approximate outline of the valley floor, traced by hand between the rims. Not a survey and not the park's legal boundary — it is here to give the chunk a real-world shape to be cut to."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-119.6660, 37.7215],
+            [-119.6480, 37.7330],
+            [-119.6280, 37.7420],
+            [-119.6050, 37.7510],
+            [-119.5850, 37.7545],
+            [-119.5650, 37.7530],
+            [-119.5470, 37.7520],
+            [-119.5420, 37.7455],
+            [-119.5570, 37.7405],
+            [-119.5720, 37.7345],
+            [-119.5900, 37.7360],
+            [-119.6100, 37.7375],
+            [-119.6300, 37.7300],
+            [-119.6500, 37.7230],
+            [-119.6690, 37.7145],
+            [-119.6660, 37.7215]
+          ]
+        ]
+      }
+    }
+  ]
+}

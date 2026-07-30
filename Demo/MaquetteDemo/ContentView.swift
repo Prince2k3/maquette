@@ -21,7 +21,51 @@ enum DemoPresets {
         configuration.cameraDistance = 1.3
     }
 
-    static let all: [DemoPreset] = [
+    /// Every preset, in picker order.
+    ///
+    /// The outline preset decodes a bundled document, so it is dropped rather than faked when the
+    /// file is missing — a demo that silently substituted a circle would be showing the one thing
+    /// the preset exists to disprove.
+    static let all: [DemoPreset] = fixed + [outline].compactMap { $0 }
+
+    /// A chunk cut to a real-world boundary, framed by the boundary itself.
+    ///
+    /// Nothing here says where Yosemite is or how much ground to fetch: the ring does, through
+    /// `DioramaConfiguration(outline:)`. That is the whole difference from the Star preset above,
+    /// which cuts an equally arbitrary shape but in diorama metres about the origin — this one is in
+    /// longitude and latitude, so it lands on the ground it names, at true scale, wherever that
+    /// happens to be relative to the chunk's middle.
+    ///
+    /// The valley is a good test of the clip as well as the frame: it is long, it bends, and the
+    /// bend puts a reflex vertex on the south side, so a chunk that came back convex would be
+    /// visibly wrong rather than subtly so.
+    private static let outline: DemoPreset? = {
+        guard let url = Bundle.main.url(forResource: "yosemite-valley", withExtension: "geojson"),
+              let data = try? Data(contentsOf: url),
+              let document = try? JSONDecoder().decode(FeatureCollection.self, from: data),
+              var configuration = DioramaConfiguration(
+                  outline: document,
+                  elevationExaggeration: 1.6,
+                  chunk: .alpine
+              )
+        else { return nil }
+
+        camera(&configuration)
+        // A ribbon eleven kilometres long and four wide, so the shared framing crops the ends off
+        // it. Pull back until the whole outline is in the frame, and look down further than the
+        // other presets — the silhouette is what this one is about, and it is only a silhouette
+        // from above.
+        configuration.cameraDistance = 1.55
+        configuration.cameraElevation = 0.95
+        return DemoPreset(
+            id: "outline",
+            title: "Outline",
+            caption: "Yosemite Valley, cut to a GeoJSON boundary",
+            configuration: configuration
+        )
+    }()
+
+    private static let fixed: [DemoPreset] = [
         {
             var configuration = DioramaConfiguration(
                 center: CLLocationCoordinate2D(latitude: 36.0544, longitude: -112.1401),

@@ -150,57 +150,56 @@ public struct DioramaContentBuilder {
 
 // MARK: - Proxy
 
-/// Utility for converting geographic coordinates to 3D positions in the diorama's local coordinate space.
+/// Places geographic coordinates on the diorama for the content that annotates it.
+///
+/// A thin façade over a ``DioramaProjection``: the projection answers where a coordinate is, and
+/// this decides whether that place is on the model. Keeping the two apart matters because a line
+/// crossing the outline needs positions for the vertices that fall outside it, while a pin that
+/// lands outside is simply not drawn.
 public struct DioramaProxy: Sendable {
     let configuration: DioramaConfiguration
     let physicalDiameter: Float
-    let elevationSampler: ElevationSampler?
+
+    /// The mapping the diorama's own geometry was built with.
+    public let projection: any DioramaProjection
 
     /// Creates a proxy for coordinate conversion.
     ///
     /// - Parameters:
     ///   - configuration: The diorama configuration.
-    ///   - elevationSampler: Optional sampler for terrain height queries.
-    public init(configuration: DioramaConfiguration, elevationSampler: ElevationSampler? = nil) {
+    ///   - projection: The mapping the loaded diorama uses. Passing `nil` — which is what content
+    ///     applied before anything has loaded gets — falls back to an ``EllipsoidProjection`` built
+    ///     from the configuration alone. That is the same frame the photorealistic path uses and
+    ///     needs nothing but a centre and a scale, so it is a correct horizontal answer rather than
+    ///     a placeholder; only the height is unknown, and it resolves to the datum.
+    public init(configuration: DioramaConfiguration, projection: (any DioramaProjection)? = nil) {
         self.configuration = configuration
         self.physicalDiameter = configuration.physicalDiameter
-        self.elevationSampler = elevationSampler
+        self.projection = projection ?? EllipsoidProjection(
+            center: configuration.center,
+            radiusMeters: configuration.radiusMeters,
+            physicalDiameter: configuration.physicalDiameter
+        )
     }
 
     /// Converts a geographic coordinate to a 3D position in the diorama's local coordinate space.
     ///
-    /// When an `ElevationSampler` is available, uses the exact same tile-grid layout as the terrain
-    /// mesh generator so that markers and polylines sit precisely on the terrain surface. Falls back
-    /// to a spherical-Earth approximation for photorealistic mode or when no sampler is present.
-    ///
-    /// - Parameter coordinate: The geographic coordinate to project.
-    /// - Returns: A 3D position relative to the diorama center, or `nil` if outside bounds.
+    /// - Returns: A position relative to the diorama centre, or `nil` when the coordinate falls
+    ///   outside the chunk's outline or on ground the diorama does not hold.
     public func position(for coordinate: CLLocationCoordinate2D) -> SIMD3<Float>? {
-        // Prefer tile-based positioning when elevation sampler is available — this matches
-        // the terrain mesh coordinate system exactly.
-        if let sampler = elevationSampler {
-            return sampler.position(for: coordinate)
-        }
+        guard let position = projection.position(for: Coordinate(coordinate)) else { return nil }
+        // Culled against the outline rather than a circle around it. The old test — distance from
+        // the centre against half the diameter — is only the same question for a round chunk, and
+        // clipped the corners off every square one.
+        guard configuration.boundary.contains(SIMD2(position.x, position.z)) else { return nil }
+        return position
+    }
 
-        // Fallback: spherical Earth approximation (used when no terrain tiles are loaded)
-        let center = Coordinate(configuration.center)
-        let point = Coordinate(coordinate)
-
-        let earthRadius = 6_371_000.0
-        let latDiff = (point.latitude - center.latitude) * .pi / 180.0
-        let lonDiff = (point.longitude - center.longitude) * .pi / 180.0
-
-        let northMeters = latDiff * earthRadius
-        let eastMeters = lonDiff * earthRadius * cos(center.latitudeRadians)
-
-        let scale = Double(physicalDiameter) / (configuration.radiusMeters * 2.0)
-        let x = Float(eastMeters * scale)
-        let z = Float(-northMeters * scale) // North is -Z in RealityKit
-
-        // Check if within bounds
-        let dist = sqrt(x * x + z * z)
-        guard dist <= physicalDiameter / 2.0 else { return nil }
-
-        return SIMD3<Float>(x, 0, z)
+    /// Where a coordinate falls on the diorama's horizontal plane, outline or no outline.
+    ///
+    /// Always defined. Use this when a place beyond the chunk still has to have a position — the
+    /// far end of a route that leaves the model, for instance.
+    public func point(for coordinate: CLLocationCoordinate2D) -> SIMD2<Float> {
+        projection.point(for: Coordinate(coordinate))
     }
 }

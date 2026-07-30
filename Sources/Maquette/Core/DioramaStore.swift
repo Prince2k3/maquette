@@ -70,8 +70,12 @@ public final class DioramaStore {
     /// The active configuration.
     public var configuration: DioramaConfiguration
 
-    /// Elevation sampler for terrain height queries, available after terrain loading completes.
-    public private(set) var elevationSampler: ElevationSampler?
+    /// How geographic coordinates map onto this diorama, available once its geometry exists.
+    ///
+    /// The pipeline that built the geometry chooses it, so everything placed afterwards — markers,
+    /// routes, overlays — lands in the frame the geometry is actually in rather than in an
+    /// approximation of it.
+    public private(set) var projection: (any DioramaProjection)?
 
     /// The active route preview entity, if one was applied via content.
     public private(set) var routePreviewEntity: RoutePreviewEntity?
@@ -139,7 +143,7 @@ public final class DioramaStore {
         effectPass = nil
         loadingState = .idle
         dioramaEntity = nil
-        elevationSampler = nil
+        projection = nil
         routePreviewEntity = nil
         panOffset = .zero
     }
@@ -416,7 +420,7 @@ public final class DioramaStore {
             exaggeration: exaggeration,
             globalMinElev: globalMinElev
         )
-        setElevationSampler(grids: terrainGrids)
+        setTerrainProjection(grids: terrainGrids)
 
         // Panning slides the chunk off its fetched tiles sooner or later, so it keeps the machinery
         // to fetch more. What it does not keep is a limit: the ground rolls in as the offset grows.
@@ -765,7 +769,11 @@ public final class DioramaStore {
         return max(1, Int((Double(meters) / perTile).rounded(.up)))
     }
 
-    /// The parts of the sampler that survive a roll, so only its grids have to be replaced.
+    /// The parts of the projection that survive a roll, so only its grids have to be replaced.
+    ///
+    /// The anchor and the baseline are exactly the two things a roll must not change — the anchor
+    /// because it is what names which ground a diorama position refers to, and the baseline because
+    /// re-measuring it against the new window is what makes the chunk bob.
     private struct SamplerTemplate {
         let zoom: Int
         let anchor: TerrainAnchor
@@ -775,20 +783,19 @@ public final class DioramaStore {
 
     private var samplerTemplate: SamplerTemplate?
 
-    private func setElevationSampler(grids: [(x: Int, y: Int, grid: ElevationGrid)]) {
-        guard let template = samplerTemplate else { return }
-        elevationSampler = ElevationSampler(
+    private func setTerrainProjection(grids: [(x: Int, y: Int, grid: ElevationGrid)]) {
+        guard let template = samplerTemplate, !grids.isEmpty else { return }
+        let elevationScale = configuration.terrainRegionExtent.x
+            / Float(configuration.terrainFetchRadiusMeters * 2.0)
+            * template.exaggeration
+        let heightField = TerrainHeightField(
             grids: grids.map(\.grid),
             tilePositions: grids.map { (x: $0.x, y: $0.y) },
-            zoom: template.zoom,
-            center: configuration.center,
-            radiusMeters: configuration.terrainFetchRadiusMeters,
-            physicalDiameter: configuration.terrainRegionExtent.x,
-            exaggeration: template.exaggeration,
-            globalMinElev: template.globalMinElev,
-            anchor: template.anchor
+            anchor: template.anchor,
+            elevationScale: elevationScale,
+            baselineElevation: template.globalMinElev
         )
-        elevationSampler?.panOffset = panOffset
+        projection = TerrainProjection(heightField: heightField, panOffset: panOffset)
     }
 
     // MARK: - Photorealistic 3D Tiles Pipeline
@@ -809,6 +816,28 @@ public final class DioramaStore {
             panRange: configuration.panRange
         )
         rootEntity.setTiles3D(tiles3DEntity)
+        // The same two operations the entity itself applies — rotate into the local ENU frame about
+        // the centre, then scale — so a coordinate lands in the frame the geometry arrived in.
+        projection = EllipsoidProjection(
+            center: configuration.center,
+            radiusMeters: configuration.radiusMeters,
+            physicalDiameter: configuration.physicalDiameter,
+            datumElevation: tiles3DEntity.groundDatumElevation ?? 0
+        )
+    }
+
+    /// Follows the photorealistic model's underside as refinement and panning move it.
+    ///
+    /// The datum is measured over what is on screen, so it settles rather than being known at load.
+    /// Nothing else about the projection changes, which is why this re-stamps one field instead of
+    /// rebuilding it.
+    private func refreshPhotorealisticDatum() {
+        guard var ellipsoid = projection as? EllipsoidProjection,
+              let datum = (dioramaEntity as? DioramaEntity)?.tiles3D?.groundDatumElevation
+        else { return }
+        guard datum != ellipsoid.datumElevation else { return }
+        ellipsoid.datumElevation = datum
+        projection = ellipsoid
     }
 
     // MARK: - Panning
@@ -962,7 +991,7 @@ public final class DioramaStore {
 
         let moved = simd_length(target - panOffset)
         panOffset = target
-        elevationSampler?.panOffset = target
+        projection?.panOffset = target
 
         // Split, because the three parts of a pan step are paid for differently: the resample is
         // fixed by the chunk's vertex count (or, on the photorealistic path, by how much of the rim
@@ -974,6 +1003,7 @@ public final class DioramaStore {
         let started = ContinuousClock.now
         (dioramaEntity as? DioramaEntity)?.terrain?.setPanOffset(target)
         (dioramaEntity as? DioramaEntity)?.tiles3D?.setPanOffset(target)
+        refreshPhotorealisticDatum()
         // Buildings are anchored to geography like the content below, but they are geometry rather
         // than placed entities, so they ride one transform instead of being repositioned. The
         // transform keeps them over their own ground; which of them the outline covers is a separate
@@ -1072,7 +1102,7 @@ public final class DioramaStore {
         reapplyEffect()
 
         // The sampler reads the same ground, so it moves with it or markers drift off the terrain.
-        setElevationSampler(
+        setTerrainProjection(
             grids: roll.heightField.tilePositions.enumerated().map { index, position in
                 (x: position.x, y: position.y, grid: roll.heightField.grids[index])
             }
@@ -1114,7 +1144,7 @@ public final class DioramaStore {
 
         let proxy = DioramaProxy(
             configuration: configuration,
-            elevationSampler: elevationSampler
+            projection: projection
         )
 
         rootEntity.applyContent(

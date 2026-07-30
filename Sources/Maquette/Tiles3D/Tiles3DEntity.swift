@@ -211,6 +211,18 @@ public class Tiles3DEntity: Entity {
     /// The underside of the model that is actually on screen, in this entity's local space.
     private func lowestVisibleY() -> Float? { measuredBounds?.min.y }
 
+    /// The elevation the model's datum sits at, in metres above the ellipsoid, or `nil` before
+    /// anything has been measured.
+    ///
+    /// This entity's local origin is at ellipsoid height zero and its local Y is ENU up in real
+    /// metres, so the underside of the visible model *is* an ellipsoid height. ``EllipsoidProjection``
+    /// needs it to turn an absolute altitude back into a diorama height, since ``anchorGround()``
+    /// has already dropped the model by exactly this much. It moves as refinement settles, which is
+    /// why it is read per step rather than captured at load.
+    public var groundDatumElevation: Double? {
+        lowestVisibleY().map(Double.init)
+    }
+
     /// Drops the model so its lowest ground sits at diorama Y = 0.
     ///
     /// 3D Tiles arrive positioned against the WGS84 ellipsoid, and this entity's local origin is

@@ -125,12 +125,24 @@ public final class CameraController {
         let visibleHeight = 2 * distance * tan(fieldOfView / 2)
         let metersPerPoint = visibleHeight / viewHeight / entityScale
 
-        // Screen axes expressed in the diorama's horizontal plane.
+        return -groundDrag(deltaX: dragDeltaX, deltaY: dragDeltaY) * metersPerPoint
+    }
+
+    /// Which way the ground under the pointer moves for a screen drag, in the diorama's horizontal
+    /// plane and in the drag's own units — `x` eastward, `y` southward.
+    ///
+    /// The camera's azimuth is the whole of it: the diorama's axes are fixed and the *screen's* are
+    /// not, so a rightward drag means +X only while the camera is looking down −Z. Anything reading
+    /// a drag as ground has to go through this, and the globe is the case where forgetting to is
+    /// hardest to spot — the chunk visibly slides the wrong way, whereas a globe simply spins to
+    /// somewhere other than the place that was aimed at, which still looks like a globe spinning.
+    ///
+    /// Scale is the caller's, because what a screen point is worth is not the camera's business
+    /// alone: the chunk measures it at the orbit target and the globe at its own near surface.
+    public func groundDrag(deltaX: Float, deltaY: Float) -> SIMD2<Float> {
         let screenRight = SIMD2<Float>(cos(azimuth), -sin(azimuth))
         let screenDown = SIMD2<Float>(sin(azimuth), cos(azimuth))
-
-        let groundMovement = (screenRight * dragDeltaX + screenDown * dragDeltaY) * metersPerPoint
-        return -groundMovement
+        return screenRight * deltaX + screenDown * deltaY
     }
 
     /// Updates the target offset based on pan deltas.

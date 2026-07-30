@@ -185,6 +185,11 @@ struct MacOSDioramaView: View {
     /// would lag the pointer by the radius' share of the distance. It is measured in the camera's
     /// own space, where both terms carry `entityScale`, so the scale cancels and the drag tracks
     /// the pointer whatever the window's size.
+    ///
+    /// Which way is north on screen is the camera's to say, not the drag's. The transition drives
+    /// the tilt to overhead and leaves the *azimuth* exactly where the chunk was left — so a user
+    /// who turned the chunk before pinching out arrives at a globe whose north is off to one side,
+    /// and a drag read as though north were up walks the world somewhere they were not pointing.
     private func steerGlobe(dx: Float, dy: Float) {
         let radius = globeRadiusInView
         guard radius > 0, viewSize.height > 0 else { return }
@@ -192,11 +197,12 @@ struct MacOSDioramaView: View {
         let worldPerPoint = 2 * surface * tan(Self.halfFieldOfView) / Float(viewSize.height)
         let metersPerPoint = Double(worldPerPoint / radius) * Turf.earthRadiusMeters
 
-        // The ground follows the pointer, so the coordinate under the camera goes the other way.
-        // Looking straight down the dock's axis, north is up the screen and east is to the right.
+        // The ground follows the pointer, so the coordinate under the camera goes the other way —
+        // opposite in east, and opposite in south, which is northward.
+        let ground = cameraController.groundDrag(deltaX: dx, deltaY: dy)
         store.steerGlobe(
-            east: -Double(dx) * metersPerPoint,
-            north: Double(dy) * metersPerPoint
+            east: -Double(ground.x) * metersPerPoint,
+            north: Double(ground.y) * metersPerPoint
         )
     }
 

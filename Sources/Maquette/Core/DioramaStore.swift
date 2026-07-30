@@ -219,10 +219,39 @@ public final class DioramaStore {
     ///   - north: Ground distance to move the centre northward, in metres. Negative for south.
     public func steerGlobe(east: Double, north: Double) {
         guard let dock = globeDock else { return }
-        let meters = (east * east + north * north).squareRoot()
-        guard meters > 0 else { return }
-        let bearing = atan2(east, north) * 180 / .pi
-        applyDock(at: Turf.destination(from: dock.coordinate, meters: meters, bearing: bearing))
+        guard east != 0 || north != 0 else { return }
+        applyDock(at: Self.steered(dock.coordinate, east: east, north: north))
+    }
+
+    /// Where a coordinate lands when the map under it is dragged east and north.
+    ///
+    /// The two legs are walked *separately*, which is the difference between steering a north-up map
+    /// and flying a course. A single great circle on the resulting bearing is the shorter path and
+    /// the wrong one here: leaving on a bearing of 90° is not the same as staying on the parallel,
+    /// and the gap is not academic at the distances one screen point is worth on a globe — twenty
+    /// steps of 280 km due east from 45°N arrive 1.09° south of where they started, 121 km of
+    /// unasked-for drift from a drag that never left the horizontal.
+    ///
+    /// So north is walked along the meridian and east along the parallel. The meridian *is* a great
+    /// circle, so the closed form below is exactly ``Turf/destination(from:meters:bearing:)`` on a
+    /// bearing of 0 — with one difference that is the point of writing it out: Turf carries on over
+    /// the pole and comes down the far side with the longitude flipped by 180°, which on screen is
+    /// the entire world spinning half a turn mid-drag and then travelling backwards. The clamp stops
+    /// the walk at the edge instead.
+    ///
+    /// It stops at **Mercator's** limit rather than at the pole because that is where the data
+    /// stops: no tile covers the last five degrees, so the globe wears a smeared cap there and a
+    /// chunk relocated into it would be cut from imagery that does not exist.
+    nonisolated static func steered(_ origin: Coordinate, east: Double, north: Double) -> Coordinate {
+        let limit = GlobeGeometry.mercatorLimitDegrees
+        let degreesPerMeter = 180 / (.pi * Turf.earthRadiusMeters)
+        let latitude = min(max(origin.latitude + north * degreesPerMeter, -limit), limit)
+
+        // A parallel shrinks towards the poles, so the same ground distance is more longitude the
+        // further north it is walked. The clamp above is what keeps this from dividing by nothing.
+        let parallelRadius = Turf.earthRadiusMeters * cos(latitude * .pi / 180)
+        let longitude = Turf.normalizedLongitude(origin.longitude + east * 180 / (.pi * parallelRadius))
+        return Coordinate(longitude: longitude, latitude: latitude, altitude: origin.altitude)
     }
 
     private func applyDock(at coordinate: Coordinate) {

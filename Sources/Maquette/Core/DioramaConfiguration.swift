@@ -63,11 +63,67 @@ public enum DioramaShape: Sendable, Equatable {
     ///   - rotation: Rotation of the polygon about its center, in radians.
     case polygonal(sides: Int, rotation: Float)
     /// An arbitrary closed outline given as (x, z) points in diorama-space meters, centered on
-    /// the origin. Use for real-world outlines such as city limits or a park boundary.
+    /// the origin.
     case custom(points: [SIMD2<Float>])
+    /// A real-world outline, given as a GeoJSON ring in longitude/latitude — a city limit, a park
+    /// boundary, a watershed.
+    ///
+    /// The ring is resolved into diorama space through the same frame the terrain is fetched and
+    /// generated in, so the cut edge follows the real boundary at the terrain's own scale. It is
+    /// neither re-centred nor scaled to fit: an outline offset from the diorama's centre is drawn
+    /// offset, because that is where the ground it names is. Use ``GeographicFrame/init(fitting:padding:)``
+    /// to get the centre and radius that hold one.
+    ///
+    /// Only the ring is cut to. A polygon's holes are dropped rather than punched out, which needs
+    /// the clip to admit interior loops.
+    case geoJSON(ring: LinearRing)
 
     /// A hexagonal chunk, flat-topped.
     public static let hexagonal = DioramaShape.polygonal(sides: 6, rotation: 0)
+}
+
+public extension DioramaShape {
+    /// A chunk cut to the first polygon found in a geometry, or `nil` when it holds none.
+    ///
+    /// Real data rarely arrives as a bare ring: a boundary downloaded from anywhere is a `Polygon`
+    /// or a `MultiPolygon`, often inside a `GeometryCollection`. Everything is searched in document
+    /// order and the first exterior ring wins.
+    static func geoJSON(_ geometry: Geometry) -> DioramaShape? {
+        firstRing(in: geometry).map { .geoJSON(ring: $0) }
+    }
+
+    /// A chunk cut to a polygon's exterior ring.
+    static func geoJSON(_ polygon: Polygon) -> DioramaShape? {
+        polygon.exterior.map { .geoJSON(ring: $0) }
+    }
+
+    /// A chunk cut to the first polygon in a feature's geometry.
+    static func geoJSON(_ feature: Feature) -> DioramaShape? {
+        feature.geometry.flatMap(geoJSON)
+    }
+
+    /// A chunk cut to the first polygon in a feature collection.
+    ///
+    /// A boundary file with one feature in it — which is what most of them are — needs nothing else.
+    static func geoJSON(_ collection: FeatureCollection) -> DioramaShape? {
+        for feature in collection.features {
+            if let shape = geoJSON(feature) { return shape }
+        }
+        return nil
+    }
+
+    private static func firstRing(in geometry: Geometry) -> LinearRing? {
+        switch geometry {
+        case .polygon(let polygon):
+            return polygon.exterior
+        case .multiPolygon(let multiPolygon):
+            return multiPolygon.polygons.lazy.compactMap(\.exterior).first
+        case .geometryCollection(let geometries):
+            return geometries.lazy.compactMap(firstRing(in:)).first
+        case .point, .multiPoint, .lineString, .multiLineString:
+            return nil
+        }
+    }
 }
 
 /// Configuration for a diorama instance, defining its geographic region, visual style, and presentation parameters.
@@ -180,6 +236,103 @@ public struct DioramaConfiguration: Sendable {
         self.imagerySource = imagerySource
         self.elevationSource = elevationSource
     }
+
+    /// Creates a configuration framed on a real-world outline.
+    ///
+    /// ```swift
+    /// let park = try JSONDecoder().decode(FeatureCollection.self, from: data)
+    /// let configuration = DioramaConfiguration(outline: park)
+    /// ```
+    ///
+    /// The outline decides where the diorama is and how much ground it fetches — centre and radius
+    /// both come from ``GeographicFrame/init(fitting:padding:)`` — and the chunk is then cut to it.
+    /// Giving the centre and radius separately is what the designated initializer is for, and is
+    /// what to reach for when the outline sits off to one side of a larger region.
+    ///
+    /// - Returns: `nil` when the outline holds no polygon, or when it is a single point.
+    public init?(
+        outline: Geometry,
+        padding: Double = 0.05,
+        elevation: ElevationStyle = .realistic,
+        physicalDiameter: Float = 0.8,
+        zoomLevel: Int? = nil,
+        elevationExaggeration: Float = 1.0,
+        chunk: TerrainChunkStyle = .standard,
+        panRange: Float = 0,
+        buildings: BuildingStyle? = nil,
+        cameraElevation: Float? = nil,
+        cameraDistance: Float? = nil,
+        allowsARPlacement: Bool = false,
+        presentation: DioramaPresentation = .terrainChunk,
+        imagerySource: ImagerySource = .esriSatellite,
+        elevationSource: ElevationSource = .mapzen
+    ) {
+        guard let shape = DioramaShape.geoJSON(outline),
+              let frame = GeographicFrame(fitting: outline, padding: padding)
+        else { return nil }
+
+        self.init(
+            center: frame.center.clLocationCoordinate,
+            radiusMeters: frame.radiusMeters,
+            elevation: elevation,
+            shape: shape,
+            physicalDiameter: physicalDiameter,
+            zoomLevel: zoomLevel,
+            elevationExaggeration: elevationExaggeration,
+            chunk: chunk,
+            panRange: panRange,
+            buildings: buildings,
+            cameraElevation: cameraElevation,
+            cameraDistance: cameraDistance,
+            allowsARPlacement: allowsARPlacement,
+            presentation: presentation,
+            imagerySource: imagerySource,
+            elevationSource: elevationSource
+        )
+    }
+
+    /// Creates a configuration framed on the first polygon in a decoded GeoJSON document.
+    public init?(
+        outline: FeatureCollection,
+        padding: Double = 0.05,
+        elevation: ElevationStyle = .realistic,
+        physicalDiameter: Float = 0.8,
+        zoomLevel: Int? = nil,
+        elevationExaggeration: Float = 1.0,
+        chunk: TerrainChunkStyle = .standard,
+        panRange: Float = 0,
+        buildings: BuildingStyle? = nil,
+        cameraElevation: Float? = nil,
+        cameraDistance: Float? = nil,
+        allowsARPlacement: Bool = false,
+        presentation: DioramaPresentation = .terrainChunk,
+        imagerySource: ImagerySource = .esriSatellite,
+        elevationSource: ElevationSource = .mapzen
+    ) {
+        // Framed on the polygon that is cut to, not on the whole document: a boundary file that
+        // also carries labels or a route would otherwise fetch the ground those reach across.
+        guard let geometry = outline.features.lazy.compactMap(\.geometry)
+            .first(where: { DioramaShape.geoJSON($0) != nil })
+        else { return nil }
+
+        self.init(
+            outline: geometry,
+            padding: padding,
+            elevation: elevation,
+            physicalDiameter: physicalDiameter,
+            zoomLevel: zoomLevel,
+            elevationExaggeration: elevationExaggeration,
+            chunk: chunk,
+            panRange: panRange,
+            buildings: buildings,
+            cameraElevation: cameraElevation,
+            cameraDistance: cameraDistance,
+            allowsARPlacement: allowsARPlacement,
+            presentation: presentation,
+            imagerySource: imagerySource,
+            elevationSource: elevationSource
+        )
+    }
 }
 
 public extension DioramaConfiguration {
@@ -203,12 +356,22 @@ public extension DioramaConfiguration {
                 hi = simd_max(hi, point)
             }
             return hi - lo
+        case .geoJSON:
+            // The scale reference, not the outline's own size: a geographic outline is resolved at
+            // true scale, so what this has to say is how much diorama the fetched radius spans.
+            // Its actual footprint comes back as `boundary.extent`, and is smaller.
+            return SIMD2(physicalDiameter, physicalDiameter)
         }
+    }
+
+    /// The frame the diorama's ground is fetched and generated in.
+    var geographicFrame: GeographicFrame {
+        GeographicFrame(center: center, radiusMeters: radiusMeters)
     }
 
     /// The outline the terrain chunk is cut to.
     var boundary: DioramaBoundary {
-        DioramaBoundary.make(shape: shape, extent: horizontalExtent)
+        DioramaBoundary.make(shape: shape, extent: horizontalExtent, frame: geographicFrame)
     }
 
     /// Converts real-world meters into diorama-space meters.

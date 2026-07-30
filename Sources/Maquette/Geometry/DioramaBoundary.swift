@@ -69,10 +69,15 @@ public struct DioramaBoundary: Sendable {
     ///   - shape: The diorama shape to realize.
     ///   - extent: Available horizontal extent in diorama meters (X width, Z depth).
     ///   - segmentsPerCurve: Number of straight segments used to approximate curved edges.
+    ///   - frame: The geographic frame a `.geoJSON` outline is read against — the centre and radius
+    ///     the chunk's terrain is fetched with. Ignored by every other shape. Passing `nil` fits the
+    ///     outline to `extent` about its own middle instead, which is well defined but agrees with
+    ///     no particular ground; ``DioramaConfiguration`` always passes its own frame.
     public static func make(
         shape: DioramaShape,
         extent: SIMD2<Float>,
-        segmentsPerCurve: Int = 128
+        segmentsPerCurve: Int = 128,
+        frame: GeographicFrame? = nil
     ) -> DioramaBoundary {
         switch shape {
         case .circular:
@@ -107,6 +112,16 @@ public struct DioramaBoundary: Sendable {
 
         case .custom(let points):
             return DioramaBoundary(vertices: points)
+
+        case .geoJSON(let ring):
+            // No padding on the fallback: with no frame there is no fetched region for the outline
+            // to sit inside, so it simply fills the extent the way every other shape does.
+            guard let frame = frame
+                ?? GeographicFrame(fitting: .polygon(Polygon(exterior: ring)), padding: 0)
+            else {
+                preconditionFailure("A geographic outline needs positions spanning more than a point")
+            }
+            return DioramaBoundary(vertices: frame.points(for: ring, extent: extent))
         }
     }
 

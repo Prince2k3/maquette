@@ -18,6 +18,7 @@ struct MacOSDioramaView: View {
     @State private var lastDragTranslation: CGSize = .zero
     @State private var viewSize: CGSize = CGSize(width: 400, height: 400)
     @State private var lastAnimationDate: Date?
+    @State private var lastTransitionDate: Date?
     @State private var transition = GlobeTransition()
     @State private var chunkCenterY: Float = 0
     /// The orbit's own tilt range, captured before the transition starts widening it.
@@ -210,6 +211,7 @@ struct MacOSDioramaView: View {
     private var realityContent: some View {
         let needsAnimation = routePreviewController?.playbackState == .playing
             || cameraController.routeFollowPhase == .exiting
+            || transition.isAnimating
         TimelineView(.animation(paused: !needsAnimation)) { timeline in
             realityView()
                 .onChange(of: timeline.date) { _, newDate in
@@ -219,6 +221,7 @@ struct MacOSDioramaView: View {
     }
 
     private func advanceAnimation(at date: Date) {
+        advanceTransition(at: date)
         guard let controller = routePreviewController else { return }
         RouteAnimationHelper.advanceAnimation(
             at: date,
@@ -227,6 +230,23 @@ struct MacOSDioramaView: View {
             cameraController: cameraController,
             lastAnimationDate: &lastAnimationDate
         )
+    }
+
+    /// Advances whichever leg of the handoff is playing.
+    ///
+    /// Its clock is separate from the route preview's because the two run independently; sharing one
+    /// date would have whichever ticked first consume the other's elapsed time.
+    private func advanceTransition(at date: Date) {
+        guard transition.isAnimating else {
+            lastTransitionDate = nil
+            return
+        }
+        let elapsed = lastTransitionDate.map { Float(date.timeIntervalSince($0)) } ?? 0
+        lastTransitionDate = date
+        guard elapsed > 0 else { return }
+        transition.advance(by: elapsed)
+        applyTransitionFraming()
+        applyTransitionVisibility()
     }
 
     private func realityView() -> some View {
@@ -305,6 +325,9 @@ struct MacOSDioramaView: View {
                 .modifiers(.option)
                 .onChanged { value in
                     let delta = consumeDragDelta(value.translation)
+                    // The handoff is an animation and owns the camera while it plays; see
+                    // `IOSDioramaView.apply`.
+                    guard !transition.isBusy else { return }
                     // The globe is seen from directly overhead and the transition owns that tilt,
                     // so there is no orbit left to give: the drag spins the world instead.
                     if transition.isShowingGlobe {
@@ -321,6 +344,9 @@ struct MacOSDioramaView: View {
             DragGesture(minimumDistance: 1)
                 .onChanged { value in
                     let delta = consumeDragDelta(value.translation)
+                    // Consumed first, then refused: the baseline has to stay current or the whole
+                    // of an animation's worth of drag lands as one jump when it finishes.
+                    guard !transition.isBusy else { return }
                     // The globe has no ground to slide, so a plain drag spins it.
                     if transition.isShowingGlobe {
                         if enabledGestures.contains(.rotate) {

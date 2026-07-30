@@ -276,6 +276,12 @@ struct IOSDioramaView: View {
     /// either the caller disabled it or the configuration set no pan range — a single touch orbits
     /// instead, so a fixed diorama still responds the way it always has.
     private func apply(_ update: MultitouchDragTracker.Update) {
+        // The handoff is an animation, and while it plays it owns the camera, the crossfade and the
+        // dock alike. A drag admitted here would fight all three: steering during the wait spins the
+        // world away from the ground already being fetched for it, and a rotate during either leg
+        // pulls against a tilt the transition is driving to a specific angle.
+        guard !transition.isBusy else { return }
+
         let dx = Float(update.translation.width)
         let dy = Float(update.translation.height)
 
@@ -283,10 +289,7 @@ struct IOSDioramaView: View {
             // The globe has no ground to slide, so one finger spins it — which is also what one
             // finger does on a chunk that cannot pan.
             if transition.isShowingGlobe {
-                // Not while the globe is holding for a relocation: the landing coordinate is the
-                // dock, and the ground for it is already being fetched, so steering now would spin
-                // the world away from the chunk that is about to arrive under it.
-                if enabledGestures.contains(.rotate), !transition.isHolding {
+                if enabledGestures.contains(.rotate) {
                     steerGlobe(dx: dx, dy: dy)
                 }
                 return
@@ -450,11 +453,12 @@ struct IOSDioramaView: View {
         // The relocation is decided *before* the camera is re-framed, and the order is the whole of
         // it: framing at zero progress re-docks the globe onto the chunk's current centre — see
         // `applyTransitionFraming` — and the dock is exactly what `beginRelocation` reads to decide
-        // where to land. Framed first, a pinch step large enough to spend the handoff in one go
-        // (progress 1 → 0, which is ~333 pt of spread at the default sensitivity, or one frame of a
-        // fast flick) overwrote the steered dock and then measured the landing against it: zero
-        // distance, early return, no relocation at all. What that looks like is the *old* chunk
-        // dissolving back in over a globe spun to another continent, with nothing logged.
+        // where to land. Framed first, that overwrites the steered dock and then measures the
+        // landing against it: zero distance, early return, no relocation at all. What that looks
+        // like is the *old* chunk dissolving back in over a globe spun to another continent, with
+        // nothing logged. It is a narrower hazard now the return is committed at progress 1 rather
+        // than scrubbed down to 0, but ordering it correctly costs nothing and it is exactly the
+        // kind of thing that comes back.
         if absorption.committedReturn {
             beginRelocation()
         }
@@ -480,10 +484,8 @@ struct IOSDioramaView: View {
 
         // The dock is what makes the chunk and the globe agree about the origin, and moving it is a
         // rotation of the whole world — so it may only move while nothing is looking. Progress 0 is
-        // the one moment the globe is fully gone — and it has to be the *displayed* progress, since
-        // the pinch's own reaches 0 the instant the return leg is committed, while the globe is
-        // still the only thing on screen and holding for its ground.
-        if transition.displayProgress <= 0 {
+        // the one moment the globe is fully gone.
+        if transition.progress <= 0 {
             store.dockGlobe()
         }
     }
@@ -551,7 +553,7 @@ struct IOSDioramaView: View {
         }
     }
 
-    /// Advances the transition's own hand-back animation.
+    /// Advances whichever leg of the handoff is playing.
     ///
     /// Its clock is separate from the route preview's because the two run independently; sharing one
     /// date would have whichever ticked first consume the other's elapsed time.

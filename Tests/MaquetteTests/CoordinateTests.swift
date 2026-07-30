@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Maquette
 
@@ -8,6 +9,15 @@ struct CoordinateTests {
         let coord = Coordinate(latitude: 40.7128, longitude: -74.0060)
         #expect(coord.latitude == 40.7128)
         #expect(coord.longitude == -74.0060)
+        #expect(coord.altitude == nil)
+    }
+
+    @Test("Both argument orders name the same place")
+    func bothArgumentOrders() {
+        #expect(
+            Coordinate(latitude: 40.7128, longitude: -74.0060)
+                == Coordinate(longitude: -74.0060, latitude: 40.7128)
+        )
     }
 
     @Test("Latitude and longitude radians conversion")
@@ -17,46 +27,11 @@ struct CoordinateTests {
         #expect(abs(coord.longitudeRadians - .pi / 2) < 0.0001)
     }
 
-    @Test("Distance between two coordinates using Haversine")
-    func haversineDistance() {
-        let nyc = Coordinate(latitude: 40.7128, longitude: -74.0060)
-        let la = Coordinate(latitude: 34.0522, longitude: -118.2437)
-        let distance = nyc.distance(to: la)
-        // NYC to LA is approximately 3,944 km
-        #expect(distance > 3_900_000 && distance < 4_000_000)
-    }
-
-    @Test("Distance to self is zero")
-    func distanceToSelf() {
-        let coord = Coordinate(latitude: 51.5074, longitude: -0.1278)
-        let distance = coord.distance(to: coord)
-        #expect(distance < 0.01)
-    }
-
-    @Test("Offset by meters returns reasonable coordinates")
-    func offsetByMeters() {
-        let coord = Coordinate(latitude: 0.0, longitude: 0.0)
-        let offset = coord.offset(northMeters: 111_320, eastMeters: 0)
-        // ~1 degree of latitude ≈ 111,320 meters
-        #expect(abs(offset.latitude - 1.0) < 0.01)
-        #expect(abs(offset.longitude) < 0.01)
-    }
-
-    @Test("Round-trip distance via offset")
-    func roundTripOffset() {
-        let origin = Coordinate(latitude: 48.8566, longitude: 2.3522) // Paris
-        let offset = origin.offset(northMeters: 1000, eastMeters: 1000)
-        let distance = origin.distance(to: offset)
-        // Should be approximately sqrt(2) * 1000 ≈ 1414 meters
-        #expect(distance > 1400 && distance < 1430)
-    }
-
-    @Test("Description format")
+    @Test("Description names which number is which")
     func descriptionFormat() {
         let coord = Coordinate(latitude: 40.712800, longitude: -74.006000)
-        let desc = coord.description
-        #expect(desc.contains("40.712800"))
-        #expect(desc.contains("-74.006000"))
+        #expect(coord.description.contains("lat: 40.712800"))
+        #expect(coord.description.contains("lon: -74.006000"))
     }
 
     @Test("Hashable conformance")
@@ -69,5 +44,60 @@ struct CoordinateTests {
 
         let set: Set<Coordinate> = [a, b, c]
         #expect(set.count == 2)
+    }
+
+    @Test("An altitude is part of the position, not decoration")
+    func altitudeIsPartOfTheValue() {
+        let flat = Coordinate(latitude: 1, longitude: 2)
+        let grounded = Coordinate(latitude: 1, longitude: 2, altitude: 0)
+        #expect(flat != grounded)
+        #expect(flat.at(altitude: 0) == grounded)
+        #expect(grounded.horizontal == flat)
+    }
+
+    // MARK: - GeoJSON representation
+
+    @Test("Encodes as a GeoJSON position, longitude first")
+    func encodesLongitudeFirst() throws {
+        let json = try JSONEncoder().encode(Coordinate(latitude: 40.7128, longitude: -74.0060))
+        let values = try JSONDecoder().decode([Double].self, from: json)
+        #expect(values == [-74.0060, 40.7128])
+    }
+
+    @Test("Decodes a two-element position in longitude/latitude order")
+    func decodesLongitudeFirst() throws {
+        let coordinate = try JSONDecoder().decode(
+            Coordinate.self,
+            from: Data("[-74.0060, 40.7128]".utf8)
+        )
+        #expect(coordinate.longitude == -74.0060)
+        #expect(coordinate.latitude == 40.7128)
+        #expect(coordinate.altitude == nil)
+    }
+
+    @Test("A third element is an altitude and survives the round trip")
+    func altitudeRoundTrip() throws {
+        let original = Coordinate(latitude: 46.85, longitude: -121.76, altitude: 4392)
+        let decoded = try JSONDecoder().decode(
+            Coordinate.self,
+            from: JSONEncoder().encode(original)
+        )
+        #expect(decoded == original)
+    }
+
+    @Test("Positions longer than three elements keep their first three")
+    func extraElementsIgnored() throws {
+        let coordinate = try JSONDecoder().decode(
+            Coordinate.self,
+            from: Data("[1, 2, 3, 4, 5]".utf8)
+        )
+        #expect(coordinate == Coordinate(longitude: 1, latitude: 2, altitude: 3))
+    }
+
+    @Test("A position of fewer than two elements is rejected")
+    func shortPositionRejected() {
+        #expect(throws: (any Error).self) {
+            try JSONDecoder().decode(Coordinate.self, from: Data("[1]".utf8))
+        }
     }
 }

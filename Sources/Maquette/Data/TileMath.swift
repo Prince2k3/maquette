@@ -89,10 +89,10 @@ public enum TileMath {
         zoom: Int
     ) -> [TileCoordinate] {
         // Compute bounding box corners
-        let north = center.offset(northMeters: radiusMeters, eastMeters: 0)
-        let south = center.offset(northMeters: -radiusMeters, eastMeters: 0)
-        let east = center.offset(northMeters: 0, eastMeters: radiusMeters)
-        let west = center.offset(northMeters: 0, eastMeters: -radiusMeters)
+        let north = Turf.destination(from: center, meters: radiusMeters, bearing: 0)
+        let south = Turf.destination(from: center, meters: radiusMeters, bearing: 180)
+        let east = Turf.destination(from: center, meters: radiusMeters, bearing: 90)
+        let west = Turf.destination(from: center, meters: radiusMeters, bearing: 270)
 
         let topLeft = Coordinate(latitude: north.latitude, longitude: west.longitude)
         let bottomRight = Coordinate(latitude: south.latitude, longitude: east.longitude)

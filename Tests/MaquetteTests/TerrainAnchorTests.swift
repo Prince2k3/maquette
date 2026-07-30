@@ -40,7 +40,7 @@ struct TerrainAnchorTests {
         let anchor = anchor(extent: extent, radius: radius)
 
         let east = anchor.coordinate(forDioramaX: Double(extent) / 2, z: 0)
-        let metersEast = Self.grandCanyon.distance(to: east)
+        let metersEast = Turf.distance(from: Self.grandCanyon, to: east)
         // Mercator stretches with latitude, so the east-west span is exact only at the anchor's
         // own latitude — which is where this samples.
         #expect(abs(metersEast - radius) / radius < 0.01)

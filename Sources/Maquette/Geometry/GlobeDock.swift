@@ -66,8 +66,27 @@ public struct GlobeDock: Sendable, Equatable {
 
     /// The docked transform as a matrix, for callers assembling one directly.
     public var matrix: simd_float4x4 {
+        matrix(scale: 1)
+    }
+
+    /// The docked transform with the globe grown or shrunk **about the docked point**.
+    ///
+    /// This is what the handoff animates, and the pivot is the whole of it. ``GlobeEntity`` builds
+    /// its mesh about its own origin, so the entity's origin *is* the sphere's centre — scaling the
+    /// entity on its own would leave that centre where it is and slide the docked coordinate off the
+    /// diorama origin, which swings the entire world under a camera that is aimed at it. Lowering the
+    /// sphere by `radius · scale` instead keeps its topmost point on the origin at every size, so the
+    /// globe grows out of the ground the chunk is standing on.
+    ///
+    /// Only the placement scales. ``dioramaPoint(for:)`` and ``coordinate(facing:)`` still answer at
+    /// full size, which is right for both of their callers: steering and relocation run only once the
+    /// transition has settled, where the scale is 1 by construction.
+    public func matrix(scale: Float) -> simd_float4x4 {
         var transform = simd_float4x4(rotation)
-        transform.columns.3 = SIMD4(center, 1)
+        transform.columns.0 *= scale
+        transform.columns.1 *= scale
+        transform.columns.2 *= scale
+        transform.columns.3 = SIMD4(center * scale, 1)
         return transform
     }
 

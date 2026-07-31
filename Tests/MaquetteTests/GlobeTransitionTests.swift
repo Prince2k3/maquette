@@ -241,6 +241,120 @@ struct GlobeTransitionTests {
         }
     }
 
+    // MARK: - How the globe arrives
+
+    /// The globe's apparent radius on screen, in radians, at the transition's current progress —
+    /// the quantity a viewer actually reads, which is what makes it the one to assert on. A distance
+    /// and a scale that both move can trade off against each other without anything visible changing.
+    private func apparentRadius(_ transition: GlobeTransition, entry: Float) -> Float {
+        let framed = transition.globeDistance(radius: globeRadius, halfFieldOfView: narrowHalfFOV)
+        let distance = transition.cameraDistance(globeDistance: framed) ?? entry
+        let drawn = globeRadius * transition.globeScale
+        #expect(distance > drawn, "the camera was inside the globe at progress \(transition.progress)")
+        return asin(min(drawn / distance, 1))
+    }
+
+    /// The mid-leg defect, stated as an invariant.
+    ///
+    /// A globe of radius 2 sitting under a chunk orbited at 3.2 is already around the camera when the
+    /// handoff begins, so a leg that only pulls the camera back plays *backwards*: measured on a
+    /// 402 × 874 pt phone, the sphere subtended 21.8° against a 14.88° frame half-angle a quarter of
+    /// the way out, hung 14.7° off-axis, and shrank into its framing from there. Growing the globe
+    /// about its docked point instead is what makes it emerge from the ground the chunk stands on.
+    @Test("The globe grows into its frame rather than shrinking into it")
+    func theGlobeGrowsIntoItsFrame() {
+        // The widest orbit a departure can start from: `orbitLimit` for an 0.8 m chunk.
+        let entry: Float = 3.2
+        var transition = GlobeTransition()
+        _ = transition.absorb(zoomDelta: -1, cameraDistance: entry, cameraElevation: 0.4, chunkHasRoom: false)
+
+        let framed = transition.globeDistance(radius: globeRadius, halfFieldOfView: narrowHalfFOV)
+        let settled = asin(globeRadius / framed)
+
+        var previous = apparentRadius(transition, entry: entry)
+        #expect(previous < settled / 10, "the globe should emerge from the chunk, not appear whole")
+
+        var frames = 0
+        while transition.isAnimating, frames < 600 {
+            transition.advance(by: Self.frame)
+            let radius = apparentRadius(transition, entry: entry)
+            #expect(radius >= previous - 1e-6,
+                    "the globe shrank at progress \(transition.progress): \(radius) after \(previous)")
+            #expect(radius <= settled + 1e-5,
+                    "the globe overflowed its own framing at progress \(transition.progress): \(radius)")
+            previous = radius
+            frames += 1
+        }
+        #expect(abs(previous - settled) < 1e-5, "the leg did not land on the framing it settles at")
+    }
+
+    /// And it holds from *any* orbit, which is the part that cannot be checked by looking at one
+    /// departure. The entry distance is wherever the user left the camera, and the bound
+    /// `s·G ≤ entry·(1 − s) + G·s` is satisfied for every `s ≤ 1` at every positive entry — including
+    /// one further out than the globe's own framing, where the camera comes inward instead.
+    @Test("No orbit the chunk was left at can crop the globe")
+    func noEntryOrbitCropsTheGlobe() {
+        for entry in [Float(0.4), 1.5, 3.2, 9.0, 30.0] {
+            var transition = GlobeTransition()
+            _ = transition.absorb(zoomDelta: -1, cameraDistance: entry, cameraElevation: 0.4, chunkHasRoom: false)
+            let framed = transition.globeDistance(radius: globeRadius, halfFieldOfView: narrowHalfFOV)
+            let settled = asin(globeRadius / framed)
+            var frames = 0
+            while transition.isAnimating, frames < 600 {
+                transition.advance(by: Self.frame)
+                #expect(apparentRadius(transition, entry: entry) <= settled + 1e-5,
+                        "entry \(entry) overflowed the frame at progress \(transition.progress)")
+                frames += 1
+            }
+        }
+    }
+
+    /// The return is the leg the defect was actually caught on — a captured frame mid-descent had the
+    /// globe wider than the screen with the chunk a translucent disc floating on it — so it gets its
+    /// own test rather than being assumed symmetric.
+    @Test("Coming back, the globe shrinks away rather than swelling first")
+    func theGlobeShrinksAwayOnTheReturn() {
+        let entry: Float = 3.2
+        var transition = GlobeTransition()
+        atMaximum(&transition, distance: entry)
+        let framed = transition.globeDistance(radius: globeRadius, halfFieldOfView: narrowHalfFOV)
+        let settled = asin(globeRadius / framed)
+
+        let absorption = transition.absorb(
+            zoomDelta: 1, cameraDistance: framed, cameraElevation: .pi / 2, chunkHasRoom: true
+        )
+        #expect(absorption.committedReturn, "the return did not commit")
+
+        var previous = apparentRadius(transition, entry: entry)
+        #expect(abs(previous - settled) < 1e-5, "the return did not start from the settled framing")
+        var frames = 0
+        while transition.isAnimating, frames < 600 {
+            transition.advance(by: Self.frame)
+            let radius = apparentRadius(transition, entry: entry)
+            #expect(radius <= previous + 1e-6,
+                    "the globe swelled at progress \(transition.progress): \(radius) after \(previous)")
+            previous = radius
+            frames += 1
+        }
+        #expect(previous < settled / 10, "the globe should shrink back into the chunk, not cut away whole")
+    }
+
+    /// The camera aims at where the globe *currently is*, not at where it will end up. The target's
+    /// globe term is the scaled sphere's own centre, so the two cannot come apart — aiming a radius
+    /// below the origin while the sphere is still a bead there would point the camera under it.
+    @Test("The camera aims at the globe it is actually drawing")
+    func theTargetTracksTheDrawnGlobe() {
+        var transition = GlobeTransition()
+        _ = transition.absorb(zoomDelta: -1, cameraDistance: 3.2, cameraElevation: 0.4, chunkHasRoom: false)
+        var frames = 0
+        while transition.isAnimating, frames < 600 {
+            transition.advance(by: Self.frame)
+            let target = transition.cameraTarget(chunkCenterY: 0, globeRadius: globeRadius)
+            #expect(abs(target.y - -globeRadius * transition.globeScale) < 1e-6)
+            frames += 1
+        }
+    }
+
     @Test("The camera keeps its own distance until the handoff starts")
     func distanceIsTheCamerasUntilItIsNot() {
         var transition = GlobeTransition()

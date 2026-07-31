@@ -288,12 +288,40 @@ public struct GlobeTransition: Sendable, Equatable {
 
     // MARK: - Framing
 
+    /// How large the globe is drawn, as a fraction of its full size — 0 at the chunk, 1 at the globe.
+    ///
+    /// Without this the leg reads backwards. A globe whose radius is comparable to the chunk's orbit
+    /// is already in the camera's lap when the handoff begins, so a transition that only pulls the
+    /// camera back is the camera flying out of a world it was inside: the globe appears at its
+    /// *largest* halfway through, cropped by both edges of the screen, and **shrinks** into its
+    /// framing. Measured on a 402 × 874 pt phone before this existed, the sphere subtended 21.8°
+    /// against a 14.88° frame half-angle at a quarter of the way through, and was still 4.4× the
+    /// chunk's apparent size at the crossover where both halves are fully opaque.
+    ///
+    /// Growing it instead makes the globe emerge from the ground the chunk is standing on, and the
+    /// curve is `eased` rather than anything shaped separately because that is what makes the
+    /// framing provable. The apparent radius is `asin(R·s / d)` with `d = mix(entry, G, eased)`, and
+    /// substituting `s = eased` gives `s·G ≤ entry·(1 − s) + G·s` for every `s ≤ 1` — so the globe is
+    /// **never** drawn larger than the framing it settles at, at any point of any leg, from any orbit
+    /// the chunk was left at. It grows strictly monotonically into that frame rather than reaching it
+    /// from outside.
+    ///
+    /// Scaling is ``GlobeDock/matrix(scale:)``'s job, not the entity's, because the pivot has to be
+    /// the docked point rather than the sphere's centre — see there.
+    public var globeScale: Float { eased }
+
     /// Where the orbit camera should look, given the height it framed the chunk at.
     ///
     /// Slides from the chunk's own vertical midpoint down the Y axis to the globe's centre, so the
     /// user ends up orbiting the sphere rather than a point on its surface. The docked coordinate
     /// stays between the camera and the centre throughout, which is what makes the place the chunk
     /// was still be the place the globe shows.
+    ///
+    /// The second term is *derived*, not a lerp towards a fixed point: ``GlobeDock`` hangs the sphere
+    /// one radius below the origin and ``globeScale`` shrinks that along with everything else, so
+    /// `−globeRadius · globeScale` **is** where the centre of the globe currently drawn actually is.
+    /// Aiming at the full-size centre instead would point the camera below a sphere that has not
+    /// grown down there yet.
     ///
     /// **Both arguments are in the camera's own space, not the diorama's.** The chunk and the globe
     /// are drawn under a scale the camera is not, so a target taken straight from
@@ -303,9 +331,9 @@ public struct GlobeTransition: Sendable, Equatable {
     ///
     /// - Parameters:
     ///   - chunkCenterY: The chunk's vertical midpoint, scaled.
-    ///   - globeRadius: The globe's radius, scaled — its centre hangs one radius below the origin.
+    ///   - globeRadius: The globe's radius, scaled — at **full** size; the shrink is applied here.
     public func cameraTarget(chunkCenterY: Float, globeRadius: Float) -> SIMD3<Float> {
-        SIMD3(0, mix(chunkCenterY, -globeRadius, eased), 0)
+        SIMD3(0, chunkCenterY * (1 - eased) - globeRadius * globeScale, 0)
     }
 
     /// How far the orbit should tilt, or nil while the camera still owns it.

@@ -500,6 +500,10 @@ struct MacOSDioramaView: View {
         if let distance = transition.cameraDistance(globeDistance: globeDistanceInView) {
             cameraController.distance = distance
         }
+        // The globe grows out of the chunk rather than the camera retreating from a sphere it was
+        // already inside — see `GlobeTransition.globeScale`. It goes through the store because the
+        // pivot is the dock, not the entity's own origin.
+        store.setGlobeScale(transition.globeScale)
 
         // The dock is what makes the chunk and the globe agree about the origin, and moving it is a
         // rotation of the whole world — so it may only move while nothing is looking. Progress 0 is

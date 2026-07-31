@@ -254,10 +254,31 @@ public final class DioramaStore {
         return Coordinate(longitude: longitude, latitude: latitude, altitude: origin.altitude)
     }
 
+    /// Draws the globe at a fraction of its full size, pivoted on the docked coordinate.
+    ///
+    /// This is what the handoff grows through — see ``GlobeTransition/globeScale`` for why the leg
+    /// needs it and ``GlobeDock/matrix(scale:)`` for why the pivot cannot be the sphere's centre. It
+    /// only ever moves during a leg; anything that reads a coordinate off the globe runs settled,
+    /// where it is 1.
+    ///
+    /// Floored rather than clamped to zero, because a scale of zero is a singular transform and
+    /// RealityKit is entitled to do anything at all with one. At this size the globe is a few
+    /// thousandths of a diorama metre across and fully transparent besides.
+    public func setGlobeScale(_ scale: Float) {
+        let scale = max(scale, 0.001)
+        guard scale != globeScale else { return }
+        globeScale = scale
+        guard let dock = globeDock else { return }
+        globe?.transform = Transform(matrix: dock.matrix(scale: scale))
+    }
+
+    /// The fraction of its full size the globe is currently drawn at.
+    public private(set) var globeScale: Float = 1
+
     private func applyDock(at coordinate: Coordinate) {
         guard let globe else { return }
         let dock = GlobeDock(coordinate: coordinate, radius: globe.radius)
-        globe.transform = Transform(matrix: dock.matrix)
+        globe.transform = Transform(matrix: dock.matrix(scale: globeScale))
         globeDock = dock
     }
 

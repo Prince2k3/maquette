@@ -51,6 +51,93 @@ struct GroundZoomTests {
     }
 }
 
+/// The breadth a chunk comes back at after the globe has carried the scene.
+///
+/// A departure is a journey out — widen, re-level, widen again — and the way home is the same steps
+/// in reverse, so the chunk that reappears has to be cut at the breadth the user left at. What that
+/// costs if it is dropped is the whole return: `load()` builds every chunk at its configuration's own
+/// radius, and from the ceiling that is a couple of hundred times too narrow.
+@Suite("Returning from the globe")
+struct GlobeReturnZoomTests {
+    /// The scale the ground zoom runs out at, which is where the globe takes the gesture on — so it
+    /// is also the scale nearly every relocation departs from.
+    private func ceilingScale(base: Int) -> Float {
+        max(exp2(Float(base - DioramaStore.worldTileZoom)), 1)
+    }
+
+    @Test("A chunk restored to the departure scale spans the ground the globe was showing")
+    func theBreadthComesBack() {
+        // The configuration's radius does not change across a relocate, so the scale is the whole of
+        // the difference between the chunk the user left and the chunk they are handed back.
+        let configured = 5_000.0
+        let scale = ceilingScale(base: 12)
+        #expect(configured * Double(scale) == 1_280_000)
+        // What dropping it costs, stated as the thing the user sees: five kilometres of ground where
+        // they were looking at more than a thousand.
+        #expect(configured * Double(scale) / configured == 256)
+    }
+
+    @Test("Restoring the scale asks for the level the departure ended on, in one step")
+    func theRestoreLandsOnTheDepartureLevel() {
+        // The re-level ladder is walked a level at a time on the way out, because the pinch arrives a
+        // step at a time. A restore is one jump, and it has to resolve straight to the far end rather
+        // than eight fetches down a ladder the user is waiting on.
+        for base in [10, 11, 12, 13] {
+            let scale = ceilingScale(base: base)
+            #expect(DioramaStore.desiredTileZoom(base: base, scale: scale) == DioramaStore.worldTileZoom)
+        }
+    }
+
+    /// What a roll costs if it is allowed out at the level the restore is already replacing.
+    ///
+    /// The restore lands the whole scale in one step, so between it and the re-level the chunk is
+    /// reading tiles a couple of hundred levels' worth of ground too fine — and a roll issued in that
+    /// window asks for its margin in tiles that now span almost none of the chunk. Every one of them
+    /// is discarded on arrival, because a re-level fetches its own window from scratch.
+    @Test("A roll taken before the re-level would ask for the whole journey in fine tiles")
+    func aRollAtTheStaleLevelIsAFetchStorm() {
+        let base = TerrainAnchor(
+            centeredOn: Coordinate(latitude: 36.0544, longitude: -112.1401),
+            zoom: 12,
+            extent: SIMD2(0.8, 0.8),
+            radiusMeters: 5_000
+        )
+        let scale = ceilingScale(base: 12)
+
+        func tilesAcross(_ anchor: TerrainAnchor) -> Double {
+            0.8 / anchor.dioramaMetersPerTile.x
+        }
+
+        // What the chunk stands on once the re-level has landed: a handful of world-level tiles.
+        let settled = tilesAcross(base.atZoom(DioramaStore.worldTileZoom).scaled(by: Double(scale)))
+        #expect(settled < 4)
+
+        // And what it would ask for in the gap, at the level it has not yet left. Squared, because a
+        // window is two-dimensional — which is where the four figures come from.
+        let stale = tilesAcross(base.scaled(by: Double(scale)))
+        #expect(stale / settled == Double(scale))
+        #expect(stale * stale > 1_000)
+
+        // So the gate is the same question the re-level asks itself: the level the scale wants is not
+        // the level the tiles are at, and until it is there is nothing worth rolling for.
+        #expect(DioramaStore.desiredTileZoom(base: 12, scale: scale) != 12)
+    }
+
+    /// Why the restore goes through the ground zoom rather than being fetched at the coarse level
+    /// directly, which would be cheaper: the limits are measured from the level the chunk *loaded*
+    /// at, so loading coarse leaves nothing to zoom.
+    @Test("Loading at the coarse level instead would leave the chunk unable to zoom at all")
+    func theLimitsAreMeasuredFromTheLoadedLevel() {
+        // The ladder a chunk loaded at its native level still has in front of it.
+        #expect(exp2(Float(12 - DioramaStore.worldTileZoom)) == 256)
+        // And what is left if the coarse level is where it loaded: one rung, which is none.
+        #expect(exp2(Float(DioramaStore.worldTileZoom - DioramaStore.worldTileZoom)) == 1)
+        // Nor could it re-level back in, for the same reason — it never asks finer than it fetched.
+        #expect(DioramaStore.desiredTileZoom(base: DioramaStore.worldTileZoom, scale: 0.25)
+            == DioramaStore.worldTileZoom)
+    }
+}
+
 /// What a re-level must and must not change while the pinch it was triggered by carries on.
 ///
 /// A re-level is the one thing in the library that changes *what a tile coordinate means*, and it

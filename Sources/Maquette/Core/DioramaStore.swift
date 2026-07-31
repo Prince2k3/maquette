@@ -283,11 +283,50 @@ public final class DioramaStore {
     /// that has not moved, and a relocate is issued the moment the pinch starts coming back in, with
     /// the globe still at full opacity. The caller docks instead, at the one moment the globe is
     /// wholly invisible; see ``GlobeTransition``.
+    ///
+    /// **The ground zoom survives it too, and that is what makes the handoff reversible.** A pinch
+    /// out is a journey the user takes in steps — the map widens, re-levels, widens again, and the
+    /// globe takes over at the far end — so the chunk that comes back has to be cut at the breadth
+    /// they left at, and the way home is the same steps in reverse. ``load()`` builds every chunk at
+    /// its configuration's own radius, which for a departure from the ceiling is a factor of a couple
+    /// of hundred too narrow: the user lands on a five-kilometre chunk of somewhere they were
+    /// looking at a thousand kilometres of, and a further pinch in — the only gesture that makes
+    /// sense there — can only go the wrong way.
     public func relocate(to coordinate: Coordinate) async {
-        logger.info("Relocating to \(coordinate.latitude, format: .fixed(precision: 4)), \(coordinate.longitude, format: .fixed(precision: 4))")
+        // Captured before `reset()`, which puts the scale back to 1 along with everything else.
+        let departureScale = groundScale
+        logger.info("""
+            Relocating to \(coordinate.latitude, format: .fixed(precision: 4)), \
+            \(coordinate.longitude, format: .fixed(precision: 4)) \
+            at ground scale \(departureScale, format: .fixed(precision: 3))
+            """)
         reset()
         configuration.center = coordinate.clLocationCoordinate
         await load()
+        await restoreGroundScale(departureScale)
+    }
+
+    /// Re-widens a freshly loaded chunk to the ground zoom the one it replaced was showing.
+    ///
+    /// Two things here are deliberate and both fail quietly if they are dropped.
+    ///
+    /// **The scale is restored rather than the tile level**, because the level is derived and the
+    /// scale is not: ``groundScaleLimits`` is measured from `baseAnchor.zoom`, which has to stay the
+    /// level the chunk *loaded* at or the range collapses and the ground can never be zoomed again.
+    /// Handing `load()` a coarse zoom to fetch at directly would be cheaper — it would save the fine
+    /// fetch this throws away — but it would also generate the chunk's earth mass against terrain
+    /// that has already been flattened by the scale, so the block would come back thinner than it
+    /// departed. Going through ``setGroundScale(_:)`` means the thickness rule sees the same
+    /// generated relief a chunk loaded here directly would have.
+    ///
+    /// **The re-level is awaited**, because the zoom itself fetches nothing: it stretches the tiles
+    /// in hand, and stretching a fine mosaic by a couple of hundred is not something to hand back
+    /// to the user. The caller holds the globe over this whole call, so the wait costs a still frame
+    /// rather than a visible one.
+    private func restoreGroundScale(_ scale: Float) async {
+        guard abs(scale - 1) > 1e-4, canZoomGround else { return }
+        setGroundScale(scale)
+        await relevelTask?.value
     }
 
     /// The tile provider the configuration's imagery source names.
@@ -1493,7 +1532,21 @@ public final class DioramaStore {
             """)
 
         relevelTerrainIfNeeded()
-        rollTerrainIfNeeded()
+        // **A roll at a level that is being replaced is pure waste.** The re-level fetches its own
+        // whole window rather than carrying tiles over — it must, since a tile key means nothing
+        // without its level — so anything a roll brought at the old level is discarded on arrival,
+        // which is what the "discarded a roll" line above reports. On an ordinary pinch step that is
+        // one wasted window; on the jump ``restoreGroundScale(_:)`` makes it is a fetch storm, since
+        // the scale lands a couple of hundred out ahead of the tiles and the margin ring is counted
+        // in tiles that now span almost none of the chunk. Measured on a globe return from the
+        // ceiling: **1,608 z12 tiles requested and thrown away**, against the 20 the re-level
+        // actually drew with.
+        //
+        // The re-level hands the roll back on both of its failure paths, so a level that cannot be
+        // reached does not leave the chunk without its margin.
+        if let template = samplerTemplate, desiredTileZoom(for: template, scale: target) == template.zoom {
+            rollTerrainIfNeeded()
+        }
     }
 
     /// Restates the map the chunk reads its resident grids through, at `scale` and tile level `zoom`.
@@ -1615,6 +1668,9 @@ public final class DioramaStore {
                     have: TerrainTileSet()
                 ) else {
                     logger.warning("Tile re-level loaded nothing; staying at z\(template.zoom)")
+                    // The zoom step declined to roll on the strength of this re-level, so the margin
+                    // ring is this one's to restore before it gives up.
+                    rollTerrainIfNeeded()
                     return
                 }
                 guard !Task.isCancelled, rolling != nil else { return }
@@ -1634,6 +1690,7 @@ public final class DioramaStore {
                 guard applyMapping(scale: groundScale, zoom: wanted) != nil else { return }
                 guard applyRoll(roll) else {
                     applyMapping(scale: groundScale, zoom: previousZoom)
+                    rollTerrainIfNeeded()
                     return
                 }
                 rolling?.tiles = roll.tiles

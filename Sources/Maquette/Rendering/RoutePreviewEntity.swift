@@ -55,6 +55,11 @@ class RoutePreviewEntity: Entity {
         physicalSize: Float,
         yOffset: Float
     ) throws {
+        // Guarded here, not just in the mesh generator: an empty array would trap on the range
+        // below (`1..<0`) before any throw could happen, and a single point has no route to draw.
+        guard routePoints.count >= 2 else {
+            throw DioramaError.meshGenerationFailed(reason: "A route preview needs at least 2 points")
+        }
         self.routePoints = routePoints
         self.style = style
         self.yOffset = yOffset

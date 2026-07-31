@@ -32,6 +32,23 @@ struct PolylineMeshGeneratorTests {
         }
     }
 
+    @Test("A route preview with too few points throws rather than trapping")
+    @MainActor
+    func routePreviewGuardsDegenerateInput() {
+        // The empty case used to trap on `1..<0` before the mesh generator's own throw could
+        // fire, which for a public-facing throwing initializer read as a crash, not an error.
+        for points in [[], [SIMD3<Float>(0, 0, 0)]] {
+            #expect(throws: DioramaError.self) {
+                _ = try RoutePreviewEntity(
+                    routePoints: points,
+                    style: RoutePreviewStyle(),
+                    physicalSize: 0.8,
+                    yOffset: 0
+                )
+            }
+        }
+    }
+
     @Test("Multi-point polyline produces mesh with correct geometry")
     @MainActor
     func multiPointPolyline() throws {

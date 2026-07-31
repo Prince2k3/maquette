@@ -1318,6 +1318,16 @@ public final class DioramaStore {
             // keeps exactly one in flight.
             defer { if !Task.isCancelled { rollTask = nil } }
             while let state = rolling, !Task.isCancelled {
+                // The gate at the zoom step covers only *issuing* this task, and a roll outlives the
+                // step that started it — so the loop has to ask again. A roll admitted at scale 1.3,
+                // where the level in hand was still the level wanted, goes on re-issuing at that
+                // level as the pinch runs to scale 12, and every window it brings is thrown away by
+                // the re-level that follows. Each of those is a fetch and a discard for ground
+                // nothing will read: measured on one full-width pinch, ungated gave four rolls and
+                // two `Discarded a roll …` lines against two rolls and none with this in.
+                guard let template = samplerTemplate,
+                      desiredTileZoom(for: template, scale: groundScale) == template.zoom else { return }
+
                 let required = state.roller.window(forPanOffset: panOffset)
                 guard !state.window.contains(required) else { return }
 
@@ -1684,6 +1694,13 @@ public final class DioramaStore {
 
     private var relevelTask: Task<Void, Never>?
 
+    /// How long the ground scale must hold still before a re-level commits to a tile level.
+    ///
+    /// Long enough that an ordinary pinch is over by the time it elapses, short enough to disappear
+    /// against the window fetch that follows it — a fetch is several hundred milliseconds, so this
+    /// costs a fraction of the one it saves.
+    private static let relevelSettleInterval = Duration.milliseconds(120)
+
     /// Fetches the ground again at a coarser tile level once the mosaic has stretched far enough.
     ///
     /// The zoom itself needs no fetch, which is what makes it cheap — but it *stretches* what is in
@@ -1702,7 +1719,22 @@ public final class DioramaStore {
             // Same reasoning as the roll: only a task that was not cancelled may clear the handle,
             // or a cancelled re-level finishing later releases the guard on the one that replaced it.
             defer { if !Task.isCancelled { relevelTask = nil } }
-            while let template = samplerTemplate, let state = rolling, !Task.isCancelled {
+            while !Task.isCancelled {
+                // **Let the pinch finish before choosing a level.** This fires from the first zoom
+                // step to cross the threshold, which is the *start* of a gesture whose end is
+                // several rungs coarser — and a window fetch is far longer than the gesture, so the
+                // level asked for is stale before it is even in flight. The guard below then
+                // discards those tiles on landing, correctly, but the fetch has already been paid
+                // for: measured on a full-width outward pinch, a z11 window was fetched and thrown
+                // away before the z8 the chunk actually wanted could be asked for at all. One short
+                // settle is a tenth of the wait it removes.
+                while !Task.isCancelled {
+                    let before = groundScale
+                    try? await Task.sleep(for: Self.relevelSettleInterval)
+                    guard !Task.isCancelled else { return }
+                    if groundScale == before { break }
+                }
+                guard let template = samplerTemplate, let state = rolling, !Task.isCancelled else { return }
                 let wanted = desiredTileZoom(for: template, scale: groundScale)
                 guard wanted != template.zoom else { return }
 
@@ -1742,6 +1774,19 @@ public final class DioramaStore {
                 // tiles and the chunk is no longer reading at that level, so go round again against
                 // what it is actually reading now.
                 guard issuedAt == tileGeneration else { continue }
+
+                // And the *level* is re-decided against the scale in force now, for the same reason
+                // the mapping below is. A pinch runs to its end in a couple of hundred milliseconds
+                // and a window fetch takes longer than that, so the level that was wanted when this
+                // was issued is routinely several rungs finer than the one wanted when it lands —
+                // and applying it anyway buys a mosaic that is still stretched, at the cost of a
+                // whole height-field rebuild, a re-composite, a resample, and a `tileGeneration`
+                // bump that throws away whatever roll was in flight. Going round instead fetches the
+                // level actually wanted, so the ladder is walked in one landing rather than one
+                // landing per rung. Measured on a full-width outward pinch: three applied re-levels
+                // (z11 mid-gesture, then z10, then z8) with the chunk re-texturing for 0.958 s after
+                // the fingers lifted became one (z8) landing 0.230 s after them.
+                guard desiredTileZoom(for: template, scale: groundScale) == wanted else { continue }
 
                 // The mapping is restated at the scale in force *now*, not the one the fetch was
                 // issued under. A fetch is hundreds of milliseconds and a pinch does not stop for

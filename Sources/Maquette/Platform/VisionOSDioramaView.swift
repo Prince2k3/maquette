@@ -306,6 +306,7 @@ final class VisionOSDioramaModel {
         if let entity = store.dioramaEntity {
             entity.scale = SIMD3<Float>(repeating: fitScale)
             entity.position.y = floorY + Self.bottomPadding
+            ensureGestureTarget(on: entity)
         }
         if let globe = store.globe {
             let radius = globe.radius
@@ -315,7 +316,38 @@ final class VisionOSDioramaModel {
             // The dock keeps the sphere's top on the diorama origin, which the entity scale
             // preserves — so the globe's top sits where the chunk's origin sat, on the floor line.
             globe.position.y = floorY + Self.bottomPadding
+            ensureGestureTarget(on: globe, sphereRadius: radius)
         }
+    }
+
+    /// Makes an entity a target for the volumetric gestures.
+    ///
+    /// Every visionOS gesture here is `.targetedToAnyEntity()`, and a targeted gesture only fires
+    /// on entities carrying `InputTargetComponent` **and** a `CollisionComponent` — without them
+    /// the drag and the pinch simply never deliver, which reads as the whole interaction set
+    /// (panning, ground zoom, and with it the globe handoff) being switched off. The orbit
+    /// platforms never notice because their gestures are view-space. So the diorama root gets a
+    /// coarse box over its visual bounds and the globe a sphere at its own radius; gesture
+    /// targeting needs nothing finer.
+    ///
+    /// The trade to know about: the chunk's box encloses the markers standing on it, so a tap can
+    /// resolve to the box before the pin behind it and visionOS marker selection is best-effort
+    /// where iOS's is exact. Selection walks up from whatever was hit, so a miss is a no-op, never
+    /// a wrong pick.
+    private func ensureGestureTarget(on entity: Entity, sphereRadius: Float? = nil) {
+        guard entity.components[InputTargetComponent.self] == nil else { return }
+        let shape: ShapeResource
+        if let sphereRadius, sphereRadius > 0 {
+            // The globe's collision lives in its own local space, where the mesh has its stated
+            // radius; the dock transform and entity scale carry it along.
+            shape = .generateSphere(radius: sphereRadius)
+        } else {
+            let bounds = entity.visualBounds(relativeTo: entity)
+            guard bounds.extents.x.isFinite, bounds.extents.x > 0 else { return }
+            shape = .generateBox(size: bounds.extents).offsetBy(translation: bounds.center)
+        }
+        entity.components.set(CollisionComponent(shapes: [shape]))
+        entity.components.set(InputTargetComponent())
     }
 
     /// Where the viewer is assumed to stand, for LOD purposes: centred on the volume's front face

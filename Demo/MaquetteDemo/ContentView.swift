@@ -288,6 +288,12 @@ enum DemoPresets {
 }
 
 struct ContentView: View {
+    /// Whether this instance is the volumetric window rather than the plain one.
+    ///
+    /// Only the plain window offers the button that opens the volume; offering it from inside the
+    /// volume would hand back a second copy of the window the user is already standing at.
+    var isVolume = false
+
     @State private var selection = DemoPresets.all.firstIndex {
         $0.id == ProcessInfo.processInfo.environment["MAQUETTE_PRESET"]
     } ?? 0
@@ -326,46 +332,22 @@ struct ContentView: View {
     }
 
     var body: some View {
+        #if os(visionOS)
+        // The diorama takes the whole window and the controls float beside it in an ornament,
+        // which is the platform's own answer to "chrome around a scene": no backdrop competing
+        // with the room behind the glass, no forced colour scheme, and nothing stacked on top of
+        // the RealityView squeezing the thing the demo exists to show.
+        diorama
+            .ornament(attachmentAnchor: .scene(.bottom), contentAlignment: .top) {
+                controlBar
+            }
+        #else
         ZStack {
             Color(white: 0.08).ignoresSafeArea()
 
             VStack(spacing: 0) {
                 header
-
-                DioramaView(
-                        region: preset.region,
-                        shape: preset.shape,
-                        physicalSize: preset.physicalSize,
-                        position: $position,
-                        selection: $selectedAnnotation
-                    ) {
-                        // The Canyon preset carries a marker so selection has something to select.
-                        if preset.id == "canyon" {
-                            DioramaMarker(
-                                "Yavapai Point",
-                                coordinate: CLLocationCoordinate2D(latitude: 36.0667, longitude: -112.1170),
-                                tint: .orange,
-                                id: "yavapai-point"
-                            )
-                        }
-                    }
-                    .dioramaStyle(style)
-                    .dioramaEffect(preset.effect)
-                    .dioramaARPlacement($arActive)
-                    // Pinching widens the ground the chunk covers, and once it is covering about
-                    // as much world as a flat cut can, the chunk dissolves into the globe; spin
-                    // that and pinch back in to cut a chunk somewhere else.
-                    .globeTransition()
-                    // The region and the style are live: switching presets relocates or rebuilds
-                    // the diorama in place, with no `.id` identity tricks.
-                    .onChange(of: preset.id) { _, _ in
-                        position = .camera(preset.camera)
-                    }
-                    .task {
-                        position = .camera(preset.camera)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
+                diorama
                 if preset.id == "buildings" {
                     buildingsToggle
                 }
@@ -373,6 +355,43 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(.dark)
+        #endif
+    }
+
+    private var diorama: some View {
+        DioramaView(
+            region: preset.region,
+            shape: preset.shape,
+            physicalSize: preset.physicalSize,
+            position: $position,
+            selection: $selectedAnnotation
+        ) {
+            // The Canyon preset carries a marker so selection has something to select.
+            if preset.id == "canyon" {
+                DioramaMarker(
+                    "Yavapai Point",
+                    coordinate: CLLocationCoordinate2D(latitude: 36.0667, longitude: -112.1170),
+                    tint: .orange,
+                    id: "yavapai-point"
+                )
+            }
+        }
+        .dioramaStyle(style)
+        .dioramaEffect(preset.effect)
+        .dioramaARPlacement($arActive)
+        // Pinching widens the ground the chunk covers, and once it is covering about as much
+        // world as a flat cut can, the chunk dissolves into the globe; spin that and pinch back
+        // in to cut a chunk somewhere else.
+        .globeTransition()
+        // The region and the style are live: switching presets relocates or rebuilds the diorama
+        // in place, with no `.id` identity tricks.
+        .onChange(of: preset.id) { _, _ in
+            position = .camera(preset.camera)
+        }
+        .task {
+            position = .camera(preset.camera)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var buildingsToggle: some View {
@@ -384,6 +403,70 @@ struct ContentView: View {
             .accessibilityIdentifier("toggle-buildings")
     }
 
+    #if os(visionOS)
+    /// The ornament that carries everything the flat layouts stack around the diorama.
+    ///
+    /// Deliberately buttons rather than a `Picker` menu: fifteen presets behind a menu hides the
+    /// point of the demo, and a row of capsules is both the platform's idiom and something a
+    /// scripted run can still reach by accessibility identifier.
+    private var controlBar: some View {
+        VStack(spacing: 14) {
+            VStack(spacing: 2) {
+                Text(preset.title)
+                    .font(.title3.weight(.semibold))
+                Text(preset.caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ScrollView(.horizontal) {
+                HStack(spacing: 10) {
+                    ForEach(Array(DemoPresets.all.enumerated()), id: \.element.id) { index, item in
+                        Button(item.title) { selection = index }
+                            .buttonStyle(.borderless)
+                            .buttonBorderShape(.capsule)
+                            .background(
+                                index == selection ? Color.accentColor.opacity(0.55) : .clear,
+                                in: .capsule
+                            )
+                            .accessibilityIdentifier("preset-\(item.id)")
+                    }
+                }
+                .padding(.horizontal, 4)
+            }
+            .scrollIndicators(.hidden)
+            .frame(width: 620)
+
+            if preset.id == "buildings" || !isVolume {
+                HStack(spacing: 20) {
+                    if preset.id == "buildings" {
+                        Toggle("Buildings", isOn: $buildingsVisible)
+                            .toggleStyle(.switch)
+                            .fixedSize()
+                            .accessibilityIdentifier("toggle-buildings")
+                    }
+                    if !isVolume {
+                        // The same demo in a true volume: the chunk with real depth, standing in
+                        // the room.
+                        Button {
+                            openWindow(id: "volume")
+                        } label: {
+                            Label("Open in a volume", systemImage: "cube")
+                        }
+                        .accessibilityIdentifier("open-volume")
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 18)
+        .padding(.horizontal, 26)
+        .glassBackgroundEffect()
+    }
+    #endif
+
+    // The flat layouts stack their chrome around the diorama; visionOS floats it in an ornament
+    // instead, so none of this is built there.
+    #if !os(visionOS)
     private var header: some View {
         VStack(spacing: 2) {
             Text(preset.title)
@@ -406,16 +489,6 @@ struct ContentView: View {
             }
             .padding(.trailing, 16)
             .accessibilityIdentifier("toggle-ar")
-            #elseif os(visionOS)
-            // The same demo in a true volume: the chunk with real depth, standing in the room.
-            Button {
-                openWindow(id: "volume")
-            } label: {
-                Image(systemName: "cube")
-                    .font(.title3)
-            }
-            .padding(.trailing, 16)
-            .accessibilityIdentifier("open-volume")
             #endif
         }
     }
@@ -453,4 +526,5 @@ struct ContentView: View {
         }
         .accessibilityIdentifier("preset-\(id)")
     }
+    #endif
 }

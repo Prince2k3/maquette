@@ -84,7 +84,7 @@ final class Tiles3DGPUClipper {
     private let queue: any MTLCommandQueue
     private let pipeline: any MTLComputePipelineState
     private let threadsPerGroup: Int
-    private let logger = Logger(subsystem: "com.maquette", category: "Tiles3DGPUClipper")
+    private let logger = Logger(maquette: "Tiles3DGPUClipper")
 
     /// Where one tile's placement-baked geometry sits in the arenas, until the tile is evicted.
     private final class Source {

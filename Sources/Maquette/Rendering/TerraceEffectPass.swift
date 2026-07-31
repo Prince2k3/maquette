@@ -27,7 +27,7 @@ import simd
 /// the chunk gets a ragged lip of strata all the way around its rim.
 @MainActor
 final class TerraceEffectPass: DioramaEffectPass {
-    private static let logger = Logger(subsystem: "com.maquette", category: "TerraceEffect")
+    private static let logger = Logger(maquette: "TerraceEffectPass")
 
     private let style: TerraceStyle
 

@@ -33,7 +33,7 @@ struct MacOSDioramaView: View {
     @State private var legStart: Date?
     @State private var legSteps = 0
     @State private var transition = GlobeTransition()
-    private let logger = Logger(subsystem: "com.maquette", category: "MacOSDioramaView")
+    private let logger = Logger(maquette: "MacOSDioramaView")
     @State private var chunkCenterY: Float = 0
     /// The orbit's own tilt range, captured before the transition starts widening it.
     @State private var chunkElevationLimits: ClosedRange<Float> = 0...0

@@ -1,5 +1,6 @@
 import Foundation
 import os
+import Synchronization
 
 /// Provides 3D Tiles from Cesium ion.
 ///
@@ -16,50 +17,16 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
     private let accessToken: String
     private let assetId: Int
     private let httpClient: any HTTPClient
-    private let logger = Logger(subsystem: "com.maquette", category: "CesiumIonTiles3DProvider")
-    private let endpointState = EndpointState()
+    private let logger = Logger(maquette: "CesiumIonTiles3DProvider")
+    private let endpointState = Mutex(EndpointState())
 
-    /// Thread-safe endpoint token storage.
-    private final class EndpointState: @unchecked Sendable {
-        private let lock = NSLock()
-        private var _tilesetBaseURL: URL?
-        private var _tilesetQuery: String?
-        private var _endpointToken: String?
-        private var _isExternal: Bool = false
-
-        var tilesetBaseURL: URL? {
-            lock.lock()
-            defer { lock.unlock() }
-            return _tilesetBaseURL
-        }
-
+    /// Endpoint token storage, guarded by the `Mutex` above.
+    private struct EndpointState: Sendable {
+        var tilesetBaseURL: URL?
         /// Query string from the tileset URL (e.g., "key=ABC&session=XYZ").
-        var tilesetQuery: String? {
-            lock.lock()
-            defer { lock.unlock() }
-            return _tilesetQuery
-        }
-
-        var endpointToken: String? {
-            lock.lock()
-            defer { lock.unlock() }
-            return _endpointToken
-        }
-
-        var isExternal: Bool {
-            lock.lock()
-            defer { lock.unlock() }
-            return _isExternal
-        }
-
-        func set(tilesetBaseURL: URL?, query: String?, token: String?, isExternal: Bool = false) {
-            lock.lock()
-            defer { lock.unlock() }
-            _tilesetBaseURL = tilesetBaseURL
-            _tilesetQuery = query
-            _endpointToken = token
-            _isExternal = isExternal
-        }
+        var tilesetQuery: String?
+        var endpointToken: String?
+        var isExternal: Bool = false
     }
 
     /// Cesium ion endpoint response.
@@ -159,7 +126,7 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
         if let token = endpoint.accessToken, !endpoint.isExternal {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        request.setValue("Maquette/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue(MaquetteHTTP.userAgent, forHTTPHeaderField: "User-Agent")
 
         let (tilesetData, tilesetResponse) = try await httpClient.data(for: request)
 
@@ -194,23 +161,26 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
                 storedQuery += "&session=\(sessionValue)"
             }
         }
-        endpointState.set(
-            tilesetBaseURL: tilesetBase,
-            query: storedQuery.isEmpty ? nil : storedQuery,
-            token: endpoint.accessToken,
-            isExternal: endpoint.isExternal
-        )
+        endpointState.withLock {
+            $0 = EndpointState(
+                tilesetBaseURL: tilesetBase,
+                tilesetQuery: storedQuery.isEmpty ? nil : storedQuery,
+                endpointToken: endpoint.accessToken,
+                isExternal: endpoint.isExternal
+            )
+        }
 
         return tileset
     }
 
     public func fetchTileContent(uri: String) async throws -> Data {
-        guard let baseURL = endpointState.tilesetBaseURL else {
+        let state = endpointState.withLock { $0 }
+        guard let baseURL = state.tilesetBaseURL else {
             throw DioramaError.sessionExpired
         }
 
-        let isExternal = endpointState.isExternal
-        if !isExternal && endpointState.endpointToken == nil {
+        let isExternal = state.isExternal
+        if !isExternal && state.endpointToken == nil {
             throw DioramaError.sessionExpired
         }
 
@@ -224,7 +194,7 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
         } else if let resolved = URL(string: uri, relativeTo: baseURL)?.absoluteURL {
             // Re-append the tileset's query parameters using URLComponents
             // for robust handling of existing vs missing query strings.
-            if let query = endpointState.tilesetQuery,
+            if let query = state.tilesetQuery,
                var components = URLComponents(url: resolved, resolvingAgainstBaseURL: true) {
                 let existingItems = components.queryItems ?? []
                 // Parse stored query into individual items
@@ -245,10 +215,10 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
         logger.debug("Fetching tile: \(url.absoluteString)")
 
         var request = URLRequest(url: url)
-        if let token = endpointState.endpointToken, !isExternal {
+        if let token = state.endpointToken, !isExternal {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        request.setValue("Maquette/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue(MaquetteHTTP.userAgent, forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await httpClient.data(for: request)
 
@@ -260,7 +230,7 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
         case 200...299:
             return data
         case 401, 403:
-            endpointState.set(tilesetBaseURL: nil, query: nil, token: nil)
+            endpointState.withLock { $0 = EndpointState() }
             throw DioramaError.sessionExpired
         case 429:
             let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init)

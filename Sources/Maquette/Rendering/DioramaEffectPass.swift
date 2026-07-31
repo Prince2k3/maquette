@@ -153,7 +153,7 @@ struct EffectBody {
 /// exactly on the cut edge, concave outlines included.
 @MainActor
 final class HologramEffectPass: DioramaEffectPass {
-    private static let logger = Logger(subsystem: "com.maquette", category: "HologramEffect")
+    private static let logger = Logger(maquette: "HologramEffectPass")
 
     private let style: HologramStyle
 
@@ -585,7 +585,7 @@ final class EffectLayer {
         }
     }
 
-    private static let logger = Logger(subsystem: "com.maquette", category: "DioramaEffect")
+    private static let logger = Logger(maquette: "DioramaEffectPass")
 }
 
 extension ContourExtractor.LevelSet {

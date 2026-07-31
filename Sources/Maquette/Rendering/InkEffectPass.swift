@@ -21,7 +21,7 @@ import simd
 /// question, and it is the part of the reference look this cannot reach.
 @MainActor
 final class InkEffectPass: DioramaEffectPass {
-    private static let logger = Logger(subsystem: "com.maquette", category: "InkEffect")
+    private static let logger = Logger(maquette: "InkEffectPass")
 
     private let style: InkStyle
 

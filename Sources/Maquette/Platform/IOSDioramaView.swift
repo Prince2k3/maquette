@@ -19,7 +19,7 @@ struct IOSDioramaView: View {
     @State private var viewSize: CGSize = CGSize(width: 400, height: 400)
     @State private var lastAnimationDate: Date?
     @State private var transition = GlobeTransition()
-    private let logger = Logger(subsystem: "com.maquette", category: "IOSDioramaView")
+    private let logger = Logger(maquette: "IOSDioramaView")
     /// The transition's own animation clock, kept apart from the route preview's: the two run
     /// independently and sharing one date would have each of them consuming the other's elapsed time.
     @State private var lastTransitionDate: Date?

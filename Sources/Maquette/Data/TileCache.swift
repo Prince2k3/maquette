@@ -7,7 +7,7 @@ public actor TileCache {
     private var accessOrder: [String] = []
     private let maxMemoryEntries: Int
     private let diskCacheURL: URL?
-    private let logger = Logger(subsystem: "com.maquette", category: "TileCache")
+    private let logger = Logger(maquette: "TileCache")
 
     private struct CacheEntry {
         let data: Data

@@ -57,7 +57,6 @@ struct TerrainRollerTests {
                 providerIdentifier: "\(identifier)-imagery",
                 size: 8
             ),
-            decodesMapTilerTerrain: false,
             cache: TileCache(maxMemoryEntries: 200)
         )
     }

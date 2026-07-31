@@ -22,7 +22,7 @@ public final class GlobeEntity: Entity {
     public private(set) var surface: ModelEntity?
 
     // Nonisolated because the fetch runs off the main actor and logs its own failures from there.
-    private nonisolated static let logger = Logger(subsystem: "com.maquette", category: "GlobeEntity")
+    private nonisolated static let logger = Logger(maquette: "GlobeEntity")
 
     /// Creates a globe from an already-composited world image.
     ///

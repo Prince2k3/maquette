@@ -98,7 +98,7 @@ public final class DioramaStore {
     }
 
     private let tileCache = TileCache()
-    private let logger = Logger(subsystem: "com.maquette", category: "DioramaStore")
+    private let logger = Logger(maquette: "DioramaStore")
 
     /// Creates a store with the given configuration.
     public init(configuration: DioramaConfiguration) {
@@ -477,8 +477,6 @@ public final class DioramaStore {
 
         let satelliteProvider: any TileProvider = imageryProvider
 
-        let useMapTilerTerrain: Bool = if case .mapTiler = configuration.elevationSource { true } else { false }
-
         var terrainGrids: [(x: Int, y: Int, grid: ElevationGrid)] = []
         var satelliteImages: [(x: Int, y: Int, data: Data)] = []
 
@@ -499,13 +497,7 @@ public final class DioramaStore {
             let tData = try await terrainData
             let sData = try await satelliteData
 
-            // Use ImageIO-based decoder for MapTiler (WebP), PNG decoder for Mapzen
-            let grid: ElevationGrid
-            if useMapTilerTerrain {
-                grid = try MapTilerTerrainProvider.decodeElevation(from: tData)
-            } else {
-                grid = try TerrainTileProvider.decodeElevation(from: tData)
-            }
+            let grid = try TerrariumDecoder.decodeElevation(from: tData)
             terrainGrids.append((x: tile.x, y: tile.y, grid: grid))
             satelliteImages.append((x: tile.x, y: tile.y, data: sData))
         }
@@ -668,7 +660,6 @@ public final class DioramaStore {
                 ),
                 terrainProvider: terrainProvider,
                 satelliteProvider: satelliteProvider,
-                decodesMapTilerTerrain: useMapTilerTerrain,
                 cache: tileCache
             )
             var tiles = TerrainTileSet()

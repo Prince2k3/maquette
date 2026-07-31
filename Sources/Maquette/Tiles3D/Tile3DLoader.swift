@@ -38,7 +38,7 @@ public struct Tile3DLoader: Sendable {
         let mesh: Tiles3DMeshBuffer?
     }
 
-    private let logger = Logger(subsystem: "com.maquette", category: "Tile3DLoader")
+    private let logger = Logger(maquette: "Tile3DLoader")
 
     /// Loads a tile from pre-fetched binary data (GLB/b3dm).
     /// - Parameters:

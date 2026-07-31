@@ -155,7 +155,7 @@ public class DioramaEntity: Entity {
 
     // MARK: - Content Application
 
-    private static let logger = Logger(subsystem: "com.maquette", category: "DioramaEntity")
+    private static let logger = Logger(maquette: "DioramaEntity")
 
     /// Materializes diorama content as 3D entities.
     ///

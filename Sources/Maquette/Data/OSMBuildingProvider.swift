@@ -44,7 +44,7 @@ import os
 /// - **Say who is calling.** The usage policy asks for an identifying `User-Agent`, and an
 ///   unidentified caller is the first one throttled.
 public struct OSMBuildingProvider: BuildingProvider {
-    private static let logger = Logger(subsystem: "com.maquette", category: "OSMBuildings")
+    private static let logger = Logger(maquette: "OSMBuildingProvider")
 
     /// Overpass instances to try, in order. Each is tried before any is tried a second time.
     public let endpoints: [URL]
@@ -145,7 +145,7 @@ public struct OSMBuildingProvider: BuildingProvider {
         request.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
         // The usage policy asks callers to identify themselves, and an anonymous one is throttled
         // first.
-        request.setValue("Maquette/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue(MaquetteHTTP.userAgent, forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await httpClient.data(for: request)
         guard let http = response as? HTTPURLResponse else { return .answered(data) }

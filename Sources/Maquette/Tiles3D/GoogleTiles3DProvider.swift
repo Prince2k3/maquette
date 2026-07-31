@@ -1,5 +1,6 @@
 import Foundation
 import os
+import Synchronization
 
 /// Provides Google Photorealistic 3D Tiles.
 ///
@@ -22,33 +23,13 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
 
     private let apiKey: String
     private let httpClient: any HTTPClient
-    private let logger = Logger(subsystem: "com.maquette", category: "GoogleTiles3DProvider")
-    private let sessionState = SessionState()
+    private let logger = Logger(maquette: "GoogleTiles3DProvider")
+    private let sessionState = Mutex(SessionState())
 
-    /// Thread-safe session token storage.
-    private final class SessionState: @unchecked Sendable {
-        private let lock = NSLock()
-        private var _token: String?
-        private var _baseURL: String?
-
-        var token: String? {
-            lock.lock()
-            defer { lock.unlock() }
-            return _token
-        }
-
-        var baseURL: String? {
-            lock.lock()
-            defer { lock.unlock() }
-            return _baseURL
-        }
-
-        func set(token: String?, baseURL: String?) {
-            lock.lock()
-            defer { lock.unlock() }
-            _token = token
-            _baseURL = baseURL
-        }
+    /// Session token storage, guarded by the `Mutex` above.
+    private struct SessionState: Sendable {
+        var token: String?
+        var baseURL: String?
     }
 
     /// Creates a Google 3D Tiles provider.
@@ -111,7 +92,7 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
         }
 
         var request = URLRequest(url: url)
-        request.setValue("Maquette/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue(MaquetteHTTP.userAgent, forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await httpClient.data(for: request)
 
@@ -166,7 +147,7 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
         }
 
         guard !token.isEmpty else { return }
-        sessionState.set(token: String(token), baseURL: baseURL)
+        sessionState.withLock { $0 = SessionState(token: String(token), baseURL: baseURL) }
         logger.debug("Google session token acquired")
     }
 
@@ -176,7 +157,8 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
         // ("/v1/3dtiles/datasets/…") while sub-tilesets are relative ("datasets/…json"), and
         // resolving the relative ones against the host drops the "/v1/3dtiles" prefix so they
         // fail. Both forms resolve correctly against the root document's own URL.
-        let base = sessionState.baseURL.flatMap(URL.init(string:)) ?? Self.rootDocument
+        let session = sessionState.withLock { $0 }
+        let base = session.baseURL.flatMap(URL.init(string:)) ?? Self.rootDocument
         guard var components = URLComponents(
             url: URL(string: uri, relativeTo: base)?.absoluteURL
                 ?? base.deletingLastPathComponent().appendingPathComponent(uri),
@@ -193,7 +175,7 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
         let embedded = components.queryItems?.first { $0.name == "session" }?.value
         var items = (components.queryItems ?? []).filter { $0.name != "key" && $0.name != "session" }
         items.append(URLQueryItem(name: "key", value: apiKey))
-        if let token = sessionState.token ?? embedded {
+        if let token = session.token ?? embedded {
             items.append(URLQueryItem(name: "session", value: token))
         }
         components.queryItems = items
@@ -205,7 +187,7 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
         }
 
         var request = URLRequest(url: url)
-        request.setValue("Maquette/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue(MaquetteHTTP.userAgent, forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await httpClient.data(for: request)
 
@@ -226,8 +208,8 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
             // malformed request. The cached root carries that session in its tile URIs, so it has
             // to go too, or the next load reuses the same dead session and every tile keeps
             // failing while the model renders empty.
-            if sessionState.token != nil {
-                sessionState.set(token: nil, baseURL: nil)
+            if session.token != nil {
+                sessionState.withLock { $0 = SessionState() }
                 await rootCache.invalidate(key: rootCacheKey)
                 throw DioramaError.sessionExpired
             }

@@ -38,7 +38,7 @@ import simd
 /// `render_min_height` is likewise ignored, so a footprint that should float — a walkway between
 /// two towers — sits on the ground instead.
 public struct MapTilerBuildingProvider: BuildingProvider {
-    private static let logger = Logger(subsystem: "com.maquette", category: "MapTilerBuildings")
+    private static let logger = Logger(maquette: "MapTilerBuildingProvider")
 
     /// The MapTiler API key.
     public let apiKey: String
@@ -133,7 +133,7 @@ public struct MapTilerBuildingProvider: BuildingProvider {
             throw DioramaError.invalidConfiguration(reason: "could not build a MapTiler tile URL")
         }
         var request = URLRequest(url: url)
-        request.setValue("Maquette/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue(MaquetteHTTP.userAgent, forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await httpClient.data(for: request)
         guard let http = response as? HTTPURLResponse else { return data }

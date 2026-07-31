@@ -9,25 +9,25 @@ public struct SatelliteTileProvider: TileProvider, Sendable {
     public let providerIdentifier: String
 
     private let urlTemplate: String
-    private let session: URLSession
-    private let logger = Logger(subsystem: "com.maquette", category: "SatelliteTileProvider")
+    private let httpClient: any HTTPClient
+    private let logger = Logger(maquette: "SatelliteTileProvider")
 
     /// Default satellite imagery URL template (ESRI World Imagery — free, no API key).
     public static let esriSatelliteTemplate = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
 
     /// Creates a satellite tile provider.
     /// - Parameters:
-    ///   - urlTemplate: URL template with `{z}`, `{x}`, `{y}` placeholders. Defaults to OSM.
+    ///   - urlTemplate: URL template with `{z}`, `{x}`, `{y}` placeholders. Defaults to ESRI.
     ///   - identifier: Cache identifier. Defaults to `"satellite"`.
-    ///   - session: URL session to use. Defaults to `.shared`.
+    ///   - httpClient: HTTP client for network requests. Defaults to `URLSession.shared`.
     public init(
         urlTemplate: String = SatelliteTileProvider.esriSatelliteTemplate,
         identifier: String = "satellite",
-        session: URLSession = .shared
+        httpClient: any HTTPClient = URLSession.shared
     ) {
         self.urlTemplate = urlTemplate
         self.providerIdentifier = identifier
-        self.session = session
+        self.httpClient = httpClient
     }
 
     public func fetchTile(x: Int, y: Int, zoom: Int) async throws -> Data {
@@ -42,10 +42,8 @@ public struct SatelliteTileProvider: TileProvider, Sendable {
 
         logger.debug("Fetching satellite tile: \(urlString)")
 
-        var request = URLRequest(url: url)
-        request.setValue("Maquette/1.0", forHTTPHeaderField: "User-Agent")
-
-        let (data, response) = try await session.data(for: request)
+        let request = MaquetteHTTP.request(for: url)
+        let (data, response) = try await httpClient.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {

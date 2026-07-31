@@ -10,7 +10,7 @@ import os
 @MainActor
 public class Tiles3DEntity: Entity {
     private let lodManager: Tiles3DLODManager
-    private let logger = Logger(subsystem: "com.maquette", category: "Tiles3DEntity")
+    private let logger = Logger(maquette: "Tiles3DEntity")
 
     /// Scale converting real-world meters to diorama physical meters.
     private let geographicScale: Float

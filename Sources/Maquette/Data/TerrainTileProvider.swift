@@ -52,12 +52,13 @@ public struct TerrainTileProvider: TileProvider, Sendable {
     public let providerIdentifier = "terrarium"
 
     private static let baseURL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium"
-    private let session: URLSession
-    private let logger = Logger(subsystem: "com.maquette", category: "TerrainTileProvider")
+    private let httpClient: any HTTPClient
+    private let logger = Logger(maquette: "TerrainTileProvider")
 
     /// Creates a terrain tile provider.
-    public init(session: URLSession = .shared) {
-        self.session = session
+    /// - Parameter httpClient: HTTP client for network requests. Defaults to `URLSession.shared`.
+    public init(httpClient: any HTTPClient = URLSession.shared) {
+        self.httpClient = httpClient
     }
 
     public func fetchTile(x: Int, y: Int, zoom: Int) async throws -> Data {
@@ -68,7 +69,8 @@ public struct TerrainTileProvider: TileProvider, Sendable {
 
         logger.debug("Fetching terrain tile: \(urlString)")
 
-        let (data, response) = try await session.data(from: url)
+        let request = MaquetteHTTP.request(for: url)
+        let (data, response) = try await httpClient.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
@@ -82,45 +84,6 @@ public struct TerrainTileProvider: TileProvider, Sendable {
     ///
     /// Terrarium encoding: `elevation = (red * 256 + green + blue / 256) - 32768`
     public static func decodeElevation(from pngData: Data) throws -> ElevationGrid {
-        guard let cgDataProvider = CGDataProvider(data: pngData as CFData),
-              let cgImage = CGImage(
-                  pngDataProviderSource: cgDataProvider,
-                  decode: nil,
-                  shouldInterpolate: false,
-                  intent: .defaultIntent
-              ) else {
-            throw DioramaError.elevationDecodingFailed
-        }
-
-        let width = cgImage.width
-        let height = cgImage.height
-        let bytesPerPixel = 4
-        let bytesPerRow = width * bytesPerPixel
-        var pixelData = [UInt8](repeating: 0, count: height * bytesPerRow)
-
-        guard let context = CGContext(
-            data: &pixelData,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: bytesPerRow,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
-            throw DioramaError.elevationDecodingFailed
-        }
-
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-
-        var elevations = [Float](repeating: 0, count: width * height)
-        for i in 0..<(width * height) {
-            let offset = i * bytesPerPixel
-            let r = Float(pixelData[offset])
-            let g = Float(pixelData[offset + 1])
-            let b = Float(pixelData[offset + 2])
-            elevations[i] = (r * 256.0 + g + b / 256.0) - 32768.0
-        }
-
-        return ElevationGrid(width: width, height: height, values: elevations)
+        try TerrariumDecoder.decodeElevation(from: pngData)
     }
 }

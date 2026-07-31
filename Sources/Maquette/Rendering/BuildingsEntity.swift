@@ -32,7 +32,7 @@ import simd
 /// which is the outline plus the pan margin. Pan past that ring and the leading edge runs out.
 @MainActor
 final class BuildingsEntity: Entity {
-    private static let logger = Logger(subsystem: "com.maquette", category: "Buildings")
+    private static let logger = Logger(maquette: "BuildingsEntity")
 
     private let model = ModelEntity()
     private let material: any RealityKit.Material

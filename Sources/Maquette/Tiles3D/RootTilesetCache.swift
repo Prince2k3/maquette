@@ -23,7 +23,7 @@ public actor RootTilesetCache {
 
     private var memory: [String: Entry] = [:]
     private let directory: URL?
-    private let logger = Logger(subsystem: "com.maquette", category: "RootTilesetCache")
+    private let logger = Logger(maquette: "RootTilesetCache")
 
     /// Creates a cache.
     ///

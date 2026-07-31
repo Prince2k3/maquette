@@ -20,7 +20,7 @@ public final class Tiles3DLODManager {
     ///
     /// Moves when the diorama pans; see `setClipPrism`.
     private var clipPrism: BoundaryPrism?
-    private let logger = Logger(subsystem: "com.maquette", category: "Tiles3DLODManager")
+    private let logger = Logger(maquette: "Tiles3DLODManager")
 
     private var rootTileset: TilesetJSON?
     private var loadedEntities: [String: ModelEntity] = [:]

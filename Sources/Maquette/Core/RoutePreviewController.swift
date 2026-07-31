@@ -64,7 +64,7 @@ public final class RoutePreviewController {
     /// Timestamp of the last frame update.
     var lastUpdateTime: Date?
 
-    private let logger = Logger(subsystem: "com.maquette", category: "RoutePreviewController")
+    private let logger = Logger(maquette: "RoutePreviewController")
 
     // MARK: - Init
 

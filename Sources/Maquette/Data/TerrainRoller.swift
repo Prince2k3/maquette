@@ -3,7 +3,7 @@ import Foundation
 import os
 import simd
 
-private let rollerLogger = Logger(subsystem: "com.maquette", category: "TerrainRoller")
+private let rollerLogger = Logger(maquette: "TerrainRoller")
 
 /// A rectangle of tiles, in absolute tile coordinates at a single zoom.
 ///
@@ -105,8 +105,6 @@ struct TerrainRoller: Sendable {
     let marginTiles: SIMD2<Int>
     let terrainProvider: any TileProvider
     let satelliteProvider: any TileProvider
-    /// MapTiler ships terrain as WebP and needs its own decoder.
-    let decodesMapTilerTerrain: Bool
     let cache: TileCache
 
     /// How many tiles are fetched at once. Enough to keep the connection busy without asking a
@@ -140,7 +138,6 @@ struct TerrainRoller: Sendable {
             marginTiles: marginTiles,
             terrainProvider: terrainProvider,
             satelliteProvider: satelliteProvider,
-            decodesMapTilerTerrain: decodesMapTilerTerrain,
             cache: cache
         )
     }
@@ -368,9 +365,7 @@ struct TerrainRoller: Sendable {
             )
             let elevation = try await elevationData
             let imagery = try await imageryData
-            let grid = decodesMapTilerTerrain
-                ? try MapTilerTerrainProvider.decodeElevation(from: elevation)
-                : try TerrainTileProvider.decodeElevation(from: elevation)
+            let grid = try TerrariumDecoder.decodeElevation(from: elevation)
             return (tile: tile, grid: grid, imagery: imagery)
         } catch {
             // A tile that fails simply stays absent: the height field clamps across the gap and the

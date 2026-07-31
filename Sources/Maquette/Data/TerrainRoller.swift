@@ -92,8 +92,11 @@ struct TerrainRoller: Sendable {
     let elevationScale: Float
     /// Raw elevation that maps to diorama Y = 0.
     ///
-    /// Frozen at the initial load. If it tracked the resident tiles the chunk would bob as higher
-    /// or lower ground rolled in, which the library's vertical convention forbids.
+    /// Never measured from the resident tiles: if it tracked them the chunk would bob as higher or
+    /// lower ground rolled in, which the library's vertical convention forbids. A *roll* therefore
+    /// carries it across untouched. A ground zoom restates it, because at another scale a different
+    /// elevation has to sit at Y = 0 for the strata band to keep its height — which is a property of
+    /// the map, not of which tiles happen to be in hand.
     let baselineElevation: Float
     /// Diorama-space rectangle the chunk samples, before the pan offset moves it.
     let chunkMin: SIMD2<Float>
@@ -112,15 +115,19 @@ struct TerrainRoller: Sendable {
 
     /// The same fetcher reading a different map.
     ///
-    /// The anchor is a `let` because a *roll* must never change it — that is the whole reason the
-    /// swap is invisible. Zooming the ground is the one thing that legitimately does: the chunk keeps
-    /// its outline and covers more world, so both the mapping and the ring of margin tiles are
-    /// restated and every subsequent roll is measured against the new pair. The providers, the cache
-    /// and the frozen baseline come across untouched, which is what keeps a zoom from re-measuring
-    /// the elevation datum and making the chunk bob.
+    /// Every one of these is a `let` because a *roll* must never change any of them — that is the
+    /// whole reason the swap is invisible. Zooming the ground is the one thing that legitimately
+    /// does: the chunk keeps its outline and covers more world, so the mapping, the ring of margin
+    /// tiles and the datum are restated together and every subsequent roll is measured against the
+    /// new set. The providers and the cache come across untouched.
+    ///
+    /// The baseline is passed rather than carried for the reason the elevation scale is: it is
+    /// derived from the ground scale, and a roller left holding the one it was built with would
+    /// place freshly-fetched ground against a datum the chunk had stopped reading at.
     func remapped(
         anchor: TerrainAnchor,
         elevationScale: Float,
+        baselineElevation: Float,
         marginTiles: SIMD2<Int>
     ) -> TerrainRoller {
         TerrainRoller(

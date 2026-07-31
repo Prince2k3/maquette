@@ -18,10 +18,16 @@ import simd
 ///
 /// ## Vertical convention
 ///
-/// `surfaceY(atX:z:)` returns diorama-space Y where **0 is the lowest terrain elevation** in the
-/// loaded region. Terrain rises into positive Y; the chunk's earth mass extends into negative Y.
-/// Every consumer of diorama-space Y — markers, polylines, the water plane, `ElevationSampler` —
-/// shares this convention.
+/// `surfaceY(atX:z:)` returns diorama-space Y where **0 is ``baselineElevation``** — the lowest
+/// terrain elevation in the region, unless a caller hands in another. Terrain rises into positive Y;
+/// the chunk's earth mass extends into negative Y. Every consumer of diorama-space Y — markers,
+/// polylines, the water plane, `ElevationSampler` — shares this convention, and shares it *because*
+/// they all read it from here rather than restating it.
+///
+/// The one caller that hands in another is the ground zoom, which anchors Y = 0 to the chunk's rim
+/// rather than to its floor so the strata band keeps its height as the map widens. Everything above
+/// still holds — it is one affine map either way — but "Y = 0 is the lowest ground" is true at the
+/// scale the chunk was generated at and not at every scale it is read at.
 public struct TerrainHeightField: Sendable {
     /// Decoded elevation grids, one per tile.
     public let grids: [ElevationGrid]
@@ -29,8 +35,13 @@ public struct TerrainHeightField: Sendable {
     public let tilePositions: [(x: Int, y: Int)]
     /// How diorama X/Z maps onto the world.
     public let anchor: TerrainAnchor
-    /// Lowest raw elevation (meters above sea level) across all grids. Maps to diorama Y = 0.
-    public let minElevation: Float
+    /// The raw elevation (meters above sea level) that maps to diorama Y = 0.
+    ///
+    /// The lowest elevation in the region unless a caller says otherwise, which is what makes
+    /// Y = 0 the chunk's floor at the scale it was generated at. A ground zoom hands in a different
+    /// one — see ``DioramaStore/setGroundScale(_:)`` — so this is *not* a minimum, and the name says
+    /// so: read as one it would licence exactly the assumption a zoomed chunk breaks.
+    public let baselineElevation: Float
     /// Highest raw elevation (meters above sea level) across all grids.
     public let maxElevation: Float
     /// Converts raw elevation meters into diorama-space meters.
@@ -77,7 +88,7 @@ public struct TerrainHeightField: Sendable {
         self.tilePositions = tilePositions
         self.anchor = anchor
         self.elevationScale = elevationScale
-        self.minElevation = baselineElevation ?? (grids.map(\.minElevation).min() ?? 0)
+        self.baselineElevation = baselineElevation ?? (grids.map(\.minElevation).min() ?? 0)
         self.maxElevation = grids.map(\.maxElevation).max() ?? 0
 
         let minTX = tilePositions.map(\.x).min() ?? 0
@@ -160,7 +171,7 @@ public struct TerrainHeightField: Sendable {
 
     /// The highest point of the terrain surface in diorama-space Y.
     public var maxSurfaceY: Float {
-        (maxElevation - minElevation) * elevationScale
+        (maxElevation - baselineElevation) * elevationScale
     }
 
     /// The terrain's total vertical relief in diorama-space meters.
@@ -238,7 +249,7 @@ public struct TerrainHeightField: Sendable {
 
         guard let gridIndex = gridIndexBySlot[tileZ * tilesWide + tileX] else {
             // A gap in the mosaic — fall back to the baseline so the surface stays continuous.
-            return minElevation
+            return baselineElevation
         }
 
         return grids[gridIndex].bilinearElevation(fracX: fracX, fracY: fracZ)
@@ -249,7 +260,7 @@ public struct TerrainHeightField: Sendable {
     /// Y = 0 corresponds to the lowest elevation in the loaded region.
     @inline(__always)
     public func surfaceY(atX x: Float, z: Float) -> Float {
-        (rawElevation(atX: x, z: z) - minElevation) * elevationScale
+        (rawElevation(atX: x, z: z) - baselineElevation) * elevationScale
     }
 
     /// Everything a surface vertex needs from the terrain at one point.
@@ -294,7 +305,7 @@ public struct TerrainHeightField: Sendable {
             )
         } else {
             // A gap in the mosaic falls back to the baseline, so the surface stays continuous.
-            patch = ElevationGrid.Patch(value: minElevation, gradient: .zero)
+            patch = ElevationGrid.Patch(value: baselineElevation, gradient: .zero)
         }
 
         // The gradient is per unit of fractional position across a tile; `tilesPerDioramaMeter`
@@ -302,7 +313,7 @@ public struct TerrainHeightField: Sendable {
         let slope = patch.gradient * tilesPerDioramaMeter * elevationScale
 
         return SurfaceSample(
-            y: (patch.value - minElevation) * elevationScale,
+            y: (patch.value - baselineElevation) * elevationScale,
             normal: simd_normalize(SIMD3(-slope.x, 1, -slope.y)),
             textureCoordinate: SIMD2(
                 tilesWideFloat > 0 ? center.x / tilesWideFloat : 0,

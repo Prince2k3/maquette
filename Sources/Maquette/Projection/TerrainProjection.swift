@@ -43,7 +43,7 @@ public struct TerrainProjection: DioramaProjection {
     }
 
     public func y(forElevation meters: Double) -> Float {
-        (Float(meters) - heightField.minElevation) * heightField.elevationScale
+        (Float(meters) - heightField.baselineElevation) * heightField.elevationScale
     }
 
     /// The surface elevation at a coordinate in diorama Y, or `nil` off the loaded region.

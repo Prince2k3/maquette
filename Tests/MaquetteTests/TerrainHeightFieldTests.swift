@@ -24,7 +24,7 @@ struct TerrainHeightFieldTests {
             elevationScale: 0.01
         )
 
-        #expect(field.minElevation == 100)
+        #expect(field.baselineElevation == 100)
         // The corner holding the minimum sits at Y = 0.
         #expect(abs(field.surfaceY(atX: -0.5, z: -0.5)) < 0.0001)
         // Everything else is above it.
@@ -86,7 +86,7 @@ struct TerrainHeightFieldTests {
 
         #expect(abs(field.rawElevation(atX: -0.25, z: 0) - 200) < 0.01, "West half reads the west tile")
         #expect(abs(field.rawElevation(atX: 0.25, z: 0) - 800) < 0.01, "East half reads the east tile")
-        #expect(field.minElevation == 200)
+        #expect(field.baselineElevation == 200)
         #expect(field.maxElevation == 800)
     }
 

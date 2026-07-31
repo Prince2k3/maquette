@@ -394,7 +394,7 @@ public final class DioramaStore {
         DioramaEffectContext(
             boundary: configuration.boundary,
             elevationScale: configuration.geographicScale * (samplerTemplate?.exaggeration ?? 1),
-            baselineElevation: samplerTemplate?.globalMinElev ?? 0,
+            baselineElevation: samplerTemplate?.baselineElevation ?? 0,
             imagery: mosaic
         )
     }
@@ -531,7 +531,7 @@ public final class DioramaStore {
             anchor: anchor,
             elevationScale: elevationScale
         )
-        let globalMinElev = heightField.minElevation
+        let globalMinElev = heightField.baselineElevation
 
         let boundary = configuration.boundary
         let chunkStyle = configuration.chunk
@@ -616,10 +616,14 @@ public final class DioramaStore {
             zoom: zoom,
             anchor: anchor,
             exaggeration: exaggeration,
-            globalMinElev: globalMinElev,
             elevationScale: elevationScale,
+            baselineElevation: globalMinElev,
             baseAnchor: anchor,
-            baseElevationScale: elevationScale
+            baseElevationScale: elevationScale,
+            // Measured through the height field the chunk was generated from, at pan offset zero,
+            // so the rim is the one the solid actually has rather than the rim of some other
+            // sampling of the same ground. Frozen from here on.
+            datum: GroundDatum.measured(boundary: boundary, heightField: heightField)
         )
         groundScale = 1
         terrainField = heightField
@@ -985,14 +989,19 @@ public final class DioramaStore {
         /// The mapping the resident grids are read through, at the ground zoom in force.
         var anchor: TerrainAnchor
         let exaggeration: Float
-        let globalMinElev: Float
         /// Raw elevation meters to diorama meters, at the ground zoom in force.
         var elevationScale: Float
-        /// The mapping and the scale the chunk loaded at, so a ground zoom is *derived* from the
-        /// scale rather than accumulated across steps. A pinch is hundreds of steps, and multiplying
-        /// a mapping by a ratio each time would let the ground drift away from the scale it names.
+        /// The raw elevation sitting at diorama Y = 0, at the ground zoom in force.
+        var baselineElevation: Float
+        /// The mapping, the scale and the datum the chunk loaded at, so a ground zoom is *derived*
+        /// from the scale rather than accumulated across steps. A pinch is hundreds of steps, and
+        /// multiplying a mapping by a ratio each time would let the ground drift away from the scale
+        /// it names.
         let baseAnchor: TerrainAnchor
         let baseElevationScale: Float
+        /// What Y = 0 means at any ground scale, measured once at generation. See ``GroundDatum``
+        /// for why a zoom has to move it and what that trades away.
+        let datum: GroundDatum
     }
 
     private var samplerTemplate: SamplerTemplate?
@@ -1009,7 +1018,7 @@ public final class DioramaStore {
             tilePositions: grids.map { (x: $0.x, y: $0.y) },
             anchor: template.anchor,
             elevationScale: elevationScale,
-            baselineElevation: template.globalMinElev
+            baselineElevation: template.baselineElevation
         )
         projection = TerrainProjection(heightField: heightField, panOffset: panOffset)
     }
@@ -1351,7 +1360,7 @@ public final class DioramaStore {
             tilePositions: roll.heightField.tilePositions,
             anchor: template.anchor,
             elevationScale: template.elevationScale,
-            baselineElevation: template.globalMinElev
+            baselineElevation: template.baselineElevation
         )
 
         mosaic = image
@@ -1460,11 +1469,20 @@ public final class DioramaStore {
     /// And one thing deliberately does *not* move: ``TerrainEntity/baseDepth``. The earth mass is
     /// what the strata wall is made of, so scaling it would answer a gesture about the *map* by
     /// resizing the object — the wall growing as the ground widens and shrinking on the way back in.
-    /// The chunk's total thickness therefore does change with the zoom, by the relief the terrain
-    /// gives up, and that is the honest reading of a map pulling back.
     ///
-    /// The elevation baseline is deliberately *not* re-measured, for the reason a roll does not
-    /// re-measure it: it is what diorama Y = 0 means, and moving it makes the chunk bob.
+    /// The *fourth* thing that moves is what keeps the wall a fixed height rather than merely a
+    /// fixed depth: the elevation baseline. What the eye reads off the silhouette is the strata band
+    /// — `baseDepth + rimY` — and with the base pinned, `rimY` compressing with everything else on
+    /// the map would take the band down with it. So the terrain is compressed about the rim rather
+    /// than about its own floor, by handing the height field a datum derived from the scale. The
+    /// rule and everything it trades away are in ``GroundDatum``; the
+    /// short version is that Y = 0 is the lowest ground at the scale the chunk was generated at and
+    /// the rim datum at every other.
+    ///
+    /// It is still not *measured* — same discipline as a roll, and for the same reason. A datum read
+    /// off the tiles in hand moves when they change, and a datum that moves makes the chunk bob;
+    /// this one is a pure function of the ground scale over values frozen at generation, so a pan
+    /// cannot touch it and neither can a roll.
     ///
     /// - Parameter scale: The target scale, clamped to ``groundScaleLimits``.
     public func setGroundScale(_ scale: Float) {
@@ -1481,14 +1499,15 @@ public final class DioramaStore {
         let offset = panOffset * (groundScale / target)
         guard let mapping = applyMapping(scale: target, zoom: template.zoom) else { return }
 
-        // The grids in hand, read through the new mapping. Same tiles, same stitching, same frozen
-        // baseline — only the map they are placed against has changed.
+        // The grids in hand, read through the new mapping. Same tiles, same stitching — only the map
+        // they are placed against has changed, and the datum is part of that map rather than a
+        // measurement of them.
         let zoomed = TerrainHeightField(
             grids: field.grids,
             tilePositions: field.tilePositions,
             anchor: mapping.anchor,
             elevationScale: mapping.elevationScale,
-            baselineElevation: template.globalMinElev
+            baselineElevation: mapping.baselineElevation
         )
 
         groundScale = target
@@ -1509,7 +1528,7 @@ public final class DioramaStore {
         if let water = entity?.waterPlane {
             water.position.y = WaterPlaneEntity.surfaceY(
                 boundary: configuration.boundary,
-                baselineElevation: template.globalMinElev,
+                baselineElevation: mapping.baselineElevation,
                 elevationScale: mapping.elevationScale
             )
         }
@@ -1529,11 +1548,18 @@ public final class DioramaStore {
         recutBuildingsIfNeeded()
 
         let finished = ContinuousClock.now
+        // The band is `earth mass + rim`, and the rim is the half a zoom used to take away — so it is
+        // logged beside the depth rather than left to be inferred from a screenshot. `pinned` is what
+        // the datum rule holds it at; `rim` is where it actually lands, and the two part company only
+        // by however much the ground under the outline has changed as the map widened.
+        let rim = GroundDatum.measured(boundary: configuration.boundary, heightField: zoomed).rim
         logger.debug("""
             Ground zoom: scale \(target, format: .fixed(precision: 3)), \
             radius \(self.groundRadiusMeters, format: .fixed(precision: 0)) m, \
             tiles at z\(template.zoom), \
             earth mass \(entity?.terrain?.baseDepth ?? 0, format: .fixed(precision: 4)) m, \
+            rim \((rim - mapping.baselineElevation) * mapping.elevationScale, format: .fixed(precision: 4)) m \
+            (pinned \(template.datum.rimHeight(generatedElevationScale: template.baseElevationScale), format: .fixed(precision: 4)) m), \
             \(String(format: "%.1f", (finished - started).milliseconds)) ms
             """)
 
@@ -1572,15 +1598,20 @@ public final class DioramaStore {
     /// the caller's to bring across, because a zoom re-reads the grids it already has while a
     /// re-level brings its own.
     @discardableResult
-    private func applyMapping(scale: Float, zoom: Int) -> (anchor: TerrainAnchor, elevationScale: Float)? {
+    private func applyMapping(
+        scale: Float,
+        zoom: Int
+    ) -> (anchor: TerrainAnchor, elevationScale: Float, baselineElevation: Float)? {
         guard let template = samplerTemplate, let state = rolling else { return nil }
 
         let anchor = template.baseAnchor.atZoom(zoom).scaled(by: Double(scale))
         let elevationScale = template.baseElevationScale / scale
+        let baseline = template.datum.baseline(atGroundScale: scale)
 
         samplerTemplate?.zoom = zoom
         samplerTemplate?.anchor = anchor
         samplerTemplate?.elevationScale = elevationScale
+        samplerTemplate?.baselineElevation = baseline
 
         // A tile spans a different amount of chunk at every scale and level, so the ring the roller
         // keeps beyond the outline is re-counted in the tiles it is now made of.
@@ -1590,6 +1621,7 @@ public final class DioramaStore {
             roller: state.roller.remapped(
                 anchor: anchor,
                 elevationScale: elevationScale,
+                baselineElevation: baseline,
                 marginTiles: SIMD2(
                     Self.marginTiles(meters: margin.x, perTile: perTile.x),
                     Self.marginTiles(meters: margin.y, perTile: perTile.y)
@@ -1598,7 +1630,7 @@ public final class DioramaStore {
             tiles: state.tiles,
             window: state.window
         )
-        return (anchor, elevationScale)
+        return (anchor, elevationScale, baseline)
     }
 
     /// Zooms the ground by a multiplier, which is what a pinch produces.
@@ -1659,6 +1691,7 @@ public final class DioramaStore {
                 let roller = state.roller.remapped(
                     anchor: requested,
                     elevationScale: template.elevationScale,
+                    baselineElevation: template.baselineElevation,
                     marginTiles: SIMD2(
                         Self.marginTiles(meters: margin.x, perTile: perTile.x),
                         Self.marginTiles(meters: margin.y, perTile: perTile.y)

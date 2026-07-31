@@ -74,6 +74,65 @@ struct TileMathTests {
         #expect(tiles.count == xs.count * ys.count)
     }
 
+    // MARK: - The Antimeridian
+
+    @Test("A region straddling the date line counts east past it")
+    func regionCrossingTheDateLineKeepsCounting() {
+        // Longitudes come back folded into -180..<180, so the eastern edge of this region reports a
+        // *smaller* longitude than its western edge — and a column range built from the two runs
+        // backwards. This is the one the globe found: relocating onto the North Pacific at 179.96°
+        // trapped on `Range requires lowerBound <= upperBound` before a single tile was fetched.
+        let center = Coordinate(latitude: 36.0544, longitude: 179.9583)
+        let zoom = 4
+        let tiles = TileMath.tilesInRegion(center: center, radiusMeters: 1_280_000, zoom: zoom)
+
+        #expect(!tiles.isEmpty)
+
+        // Still a rectangle — the window is what fixes the mosaic's origin and the anchor's scale.
+        let xs = Set(tiles.map(\.x))
+        let ys = Set(tiles.map(\.y))
+        #expect(tiles.count == xs.count * ys.count)
+
+        // And it spans the date line rather than folding at it: the columns run contiguously through
+        // the world's last one. Folded instead, this window would read as spanning the whole world.
+        let count = TileMath.tileCount(atZoom: zoom)
+        let sorted = xs.sorted()
+        #expect(zip(sorted, sorted.dropFirst()).allSatisfy { $1 == $0 + 1 })
+        #expect(sorted.contains(count - 1))
+        #expect(sorted.last! >= count)
+    }
+
+    @Test("Unwrapped columns fold back to real tiles at the request")
+    func everyColumnNamesATileAProviderHas() {
+        let center = Coordinate(latitude: 36.0544, longitude: 179.9583)
+        let zoom = 4
+        let count = TileMath.tileCount(atZoom: zoom)
+
+        for tile in TileMath.tilesInRegion(center: center, radiusMeters: 1_280_000, zoom: zoom) {
+            let column = TileMath.wrappedColumn(tile.x, zoom: zoom)
+            #expect(column >= 0 && column < count)
+        }
+
+        // The fold is a cylinder, not a clamp — a column a whole world either side names the same
+        // ground, which is what lets a window keep counting in either direction.
+        #expect(TileMath.wrappedColumn(count, zoom: zoom) == 0)
+        #expect(TileMath.wrappedColumn(-1, zoom: zoom) == count - 1)
+        #expect(TileMath.wrappedColumn(-count - 3, zoom: zoom) == count - 3)
+    }
+
+    @Test("A radius wider than the world is answered rather than trapped")
+    func aRegionWiderThanTheWorldDoesNotLoop() {
+        // Nothing in the library asks for this — a radius this large necessarily carries the northern
+        // edge over the pole and back down the far side, which is not a region anyone means. But the
+        // answer to a nonsensical radius is a rectangle, not a crash, and the columns still stop at
+        // one turn: asking for a column twice fetches the same ground twice and never closes the loop.
+        let center = Coordinate(latitude: 0, longitude: 0)
+        let zoom = 2
+        let tiles = TileMath.tilesInRegion(center: center, radiusMeters: 30_000_000, zoom: zoom)
+        #expect(!tiles.isEmpty)
+        #expect(Set(tiles.map(\.x)).count <= TileMath.tileCount(atZoom: zoom))
+    }
+
     // MARK: - Meters Per Pixel
 
     @Test("Meters per pixel decreases with higher zoom")

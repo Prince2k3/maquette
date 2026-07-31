@@ -462,12 +462,16 @@ public final class DioramaStore {
         var satelliteImages: [(x: Int, y: Int, data: Data)] = []
 
         for tile in tiles {
+            // The window keeps counting east past the antimeridian so it stays a rectangle; only the
+            // request folds back into the range a provider will accept. The grid keeps the unwrapped
+            // column, which is what the anchor and the height field are laid out against.
+            let requestX = TileMath.wrappedColumn(tile.x, zoom: zoom)
             async let terrainData = tileCache.cachedOrFetch(
-                x: tile.x, y: tile.y, zoom: zoom,
+                x: requestX, y: tile.y, zoom: zoom,
                 provider: terrainProvider
             )
             async let satelliteData = tileCache.cachedOrFetch(
-                x: tile.x, y: tile.y, zoom: zoom,
+                x: requestX, y: tile.y, zoom: zoom,
                 provider: satelliteProvider
             )
 

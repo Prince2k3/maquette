@@ -307,8 +307,7 @@ struct TerrainRoller: Sendable {
     // MARK: - Fetching
 
     private var tileCount: Int {
-        guard zoom >= 0, zoom < 31 else { return 0 }
-        return 1 << zoom
+        TileMath.tileCount(atZoom: zoom)
     }
 
     /// Folds a window coordinate into a coordinate a provider will accept.
@@ -319,7 +318,7 @@ struct TerrainRoller: Sendable {
         let count = tileCount
         guard count > 0 else { return tile }
         guard tile.y >= 0, tile.y < count else { return nil }
-        return TileCoordinate(x: ((tile.x % count) + count) % count, y: tile.y)
+        return TileCoordinate(x: TileMath.wrappedColumn(tile.x, zoom: zoom), y: tile.y)
     }
 
     private func fetch(

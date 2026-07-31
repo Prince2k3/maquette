@@ -82,7 +82,37 @@ public enum TileMath {
         )
     }
 
+    /// How many tiles span the world on each axis at a given zoom.
+    public static func tileCount(atZoom zoom: Int) -> Int {
+        guard zoom >= 0, zoom < 31 else { return 0 }
+        return 1 << zoom
+    }
+
+    /// Folds a column into the range a provider will accept.
+    ///
+    /// **Columns wrap and rows do not**, because the world is a cylinder: counting east past the
+    /// antimeridian keeps naming real ground, while counting north past the pole names none. This is
+    /// the fold every request has to go through, and the counterpart to the convention
+    /// ``tilesInRegion(center:radiusMeters:zoom:)`` and ``TerrainRoller`` both keep — a *window* is
+    /// left unwrapped so it stays a rectangle, and only the request reaching a provider is folded.
+    public static func wrappedColumn(_ x: Int, zoom: Int) -> Int {
+        let count = tileCount(atZoom: zoom)
+        guard count > 0 else { return x }
+        return ((x % count) + count) % count
+    }
+
     /// Returns all tile coordinates that intersect the circular region defined by center and radius.
+    ///
+    /// **Columns are returned unwrapped**, so a region straddling the antimeridian counts east past
+    /// it — `x` may reach or exceed ``tileCount(atZoom:)`` and callers fold it with
+    /// ``wrappedColumn(_:zoom:)`` when they ask a provider for the tile. The window has to stay a
+    /// rectangle: it is what fixes the mosaic's origin and the ``TerrainAnchor``'s scale, and a
+    /// window whose columns wrapped would read as spanning the whole world rather than a few tiles
+    /// either side of the date line. Same convention ``TerrainRoller`` keeps, for the same reason.
+    ///
+    /// Getting this wrong is not a distortion but a crash: longitudes come back folded into
+    /// `-180..<180`, so the eastern edge of a region centred at 179.96° lands *west* of its own
+    /// western edge and the column range runs backwards.
     public static func tilesInRegion(
         center: Coordinate,
         radiusMeters: Double,
@@ -100,9 +130,24 @@ public enum TileMath {
         let tl = tileXY(for: topLeft, zoom: zoom)
         let br = tileXY(for: bottomRight, zoom: zoom)
 
+        let count = tileCount(atZoom: zoom)
+        // The east edge lands west of the west edge exactly when the region crosses the date line,
+        // so keep counting rather than folding. A region wider than the world stops at one turn:
+        // asking for a column twice fetches the same ground twice and never closes the loop.
+        var lastColumn = br.x < tl.x ? br.x + count : br.x
+        if count > 0 {
+            lastColumn = min(lastColumn, tl.x + count - 1)
+        }
+
+        // Rows are taken in index order rather than corner order. A radius large enough to carry the
+        // northern edge over the pole brings it back down the far side *below* the southern one, and
+        // however little sense that region makes, the answer to it is a rectangle rather than a trap.
+        let firstRow = min(tl.y, br.y)
+        let lastRow = max(tl.y, br.y)
+
         var tiles: [TileCoordinate] = []
-        for ty in tl.y...br.y {
-            for tx in tl.x...br.x {
+        for ty in firstRow...lastRow {
+            for tx in tl.x...lastColumn {
                 tiles.append(TileCoordinate(x: tx, y: ty))
             }
         }

@@ -335,10 +335,24 @@ struct IOSDioramaView: View {
     /// Doublings of ground coverage per unit of zoom delta.
     ///
     /// Zoom is multiplicative — a step has to *scale* the ground rather than add to it, or the same
-    /// pinch crawls when the chunk is a city and leaps when it is a continent. Calibrated so one
-    /// full-screen pinch is about four doublings, which puts the whole run from a valley to the
-    /// globe at two or three of them.
-    private static let groundZoomOctaves: Float = 1.0 / 45.0
+    /// pinch crawls when the chunk is a city and leaps when it is a continent.
+    ///
+    /// **Calibrate it against the whole ladder, and measure the ladder rather than deriving it.** A
+    /// pinch's own quantity is ``MultitouchDragTracker``'s *spread*, which is the mean distance from
+    /// the touches' midpoint — half the separation between two fingers, not the separation. So a
+    /// full-width pinch on a 402 pt screen is about 170 pt of spread and not 340, and a rate that
+    /// reads right per point is out by two over the gesture. It was: at `1/45` this gave
+    /// `170 · 0.3 / 45` ≈ **one doubling per full-width pinch**, against the eight doublings
+    /// ``DioramaStore/groundScaleLimits`` spans from a chunk loaded at z12 down to
+    /// ``DioramaStore/worldTileZoom``. Measured on device that was **nine full-width pinches** to
+    /// reach the globe at all — a handoff most people would never find, and nobody who found it
+    /// would use twice.
+    ///
+    /// At 0.08 the same pinch is about **four doublings**, which puts the run from a valley to the
+    /// globe at two or three of them, and the return at the same: ``DioramaStore/relocate(to:)``
+    /// hands the rebuilt chunk back at the scale it departed from, so the way home is the way out
+    /// reversed.
+    private static let groundZoomOctaves: Float = 0.08
 
     /// Half the orbit camera's field of view, matching the `PerspectiveCamera` set up in
     /// ``realityView()``.

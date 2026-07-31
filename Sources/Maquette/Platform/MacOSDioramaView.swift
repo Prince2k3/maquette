@@ -420,8 +420,11 @@ struct MacOSDioramaView: View {
 
     // MARK: - Zooming
 
-    /// Doublings of ground coverage per unit of zoom delta. See `IOSDioramaView`.
-    private static let groundZoomOctaves: Float = 1.0 / 45.0
+    /// Doublings of ground coverage per unit of zoom delta. See `IOSDioramaView`, which is where the
+    /// rate is calibrated and where it was measured — the ladder is the same eight doublings here,
+    /// and a scroll that had to be repeated nine times to reach the globe is no better with a
+    /// trackpad than with two fingers.
+    private static let groundZoomOctaves: Float = 0.08
 
     /// Sends a zoom delta to whichever of the three things is currently the one being zoomed.
     ///

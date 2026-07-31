@@ -4,6 +4,7 @@ options:
   bundleIdPrefix: com.maquette
   deploymentTarget:
     iOS: "18.0"
+    visionOS: "2.0"
   createIntermediateGroups: true
 
 packages:
@@ -13,7 +14,7 @@ packages:
 targets:
   MaquetteDemo:
     type: application
-    platform: iOS
+    supportedDestinations: [iOS, visionOS]
     sources:
       - path: MaquetteDemo
         # The template is documentation, not code — the real file is gitignored.
@@ -30,8 +31,12 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Maquette
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_NSCameraUsageDescription: Places the diorama on a real surface through the camera.
+        # Merged with the generated plist, visionOS builds only: names the volumetric window as
+        # the preferred default scene role. GENERATE_INFOPLIST_FILE cannot emit this key itself.
+        "INFOPLIST_FILE[sdk=xros*]": MaquetteDemo/InfoPlist-visionOS.plist
+        "INFOPLIST_FILE[sdk=xrsimulator*]": MaquetteDemo/InfoPlist-visionOS.plist
         SWIFT_VERSION: "6.0"
-        TARGETED_DEVICE_FAMILY: "1,2"
+        TARGETED_DEVICE_FAMILY: "1,2,7"
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""
 

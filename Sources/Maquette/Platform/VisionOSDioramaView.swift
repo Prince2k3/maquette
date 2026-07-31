@@ -285,10 +285,18 @@ final class VisionOSDioramaModel {
     // MARK: - Volume framing
 
     /// Re-measures the fit whenever the volume's bounds arrive or change.
+    ///
+    /// The depth participates only when the window has one worth speaking of. A *plain* visionOS
+    /// window also hosts this view — its RealityView renders with a few centimetres of depth at
+    /// most — and fitting to `min(width, depth)` there scales the diorama to the sliver and it
+    /// vanishes. A shallow window fits to its face instead, and the diorama reads as a relief.
     func updateVolume(bounds: BoundingBox) {
         let width = bounds.max.x - bounds.min.x
+        let height = bounds.max.y - bounds.min.y
         let depth = bounds.max.z - bounds.min.z
-        volumeSpan = min(width, depth)
+        let face = min(width, height)
+        volumeSpan = depth > 0.15 ? min(width, depth) : face
+        guard volumeSpan.isFinite, volumeSpan > 0 else { return }
         floorY = bounds.min.y
         let diameter = store.configuration.physicalSize
         fitScale = diameter > 0 ? volumeSpan / diameter : 1

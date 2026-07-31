@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The app's only scene on visionOS is volumetric. Without naming that as the preferred
+	     default role, the system requests a plain window scene at launch, SwiftUI finds no
+	     matching scene, and the app asserts in findSceneListItem before a window exists.
+	     GENERATE_INFOPLIST_FILE cannot emit this key, so it merges in from this file, which the
+	     build applies only for the visionOS SDKs. -->
+	<key>UIApplicationPreferredDefaultSceneSessionRole</key>
+	<string>UIWindowSceneSessionRoleVolumetricApplication</string>
+</dict>
+</plist>

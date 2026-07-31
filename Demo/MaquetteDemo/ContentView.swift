@@ -303,6 +303,10 @@ struct ContentView: View {
     /// Whether the diorama is placed on a real surface through the camera (iOS only).
     @State private var arActive = false
 
+    #if os(visionOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
+
     private var preset: DemoPreset { DemoPresets.all[selection] }
 
     /// The preset's style with the live buildings toggle folded in.
@@ -402,6 +406,16 @@ struct ContentView: View {
             }
             .padding(.trailing, 16)
             .accessibilityIdentifier("toggle-ar")
+            #elseif os(visionOS)
+            // The same demo in a true volume: the chunk with real depth, standing in the room.
+            Button {
+                openWindow(id: "volume")
+            } label: {
+                Image(systemName: "cube")
+                    .font(.title3)
+            }
+            .padding(.trailing, 16)
+            .accessibilityIdentifier("open-volume")
             #endif
         }
     }

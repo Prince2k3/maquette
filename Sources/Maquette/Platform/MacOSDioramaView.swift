@@ -532,16 +532,39 @@ struct MacOSDioramaView: View {
     /// then: measured, half a degree short of overhead, which is 42 km of ground and enough to
     /// relocate a chunk nobody asked to move.
     private func beginRelocation() {
-        guard let dock = store.globeDock else { return }
+        guard let dock = store.globeDock else {
+            logger.debug("Came back from the globe with nothing docked; keeping the chunk")
+            return
+        }
         let landing = dock.coordinate
         let current = Coordinate(store.configuration.center)
-        guard Turf.distance(from: current, to: landing) > store.configuration.radiusMeters / 4 else {
-            return  // Straight back to where they started; the chunk in hand is already the right one.
+        // Straight back to where they started; the chunk in hand is already the right one. Logged
+        // because it is indistinguishable on screen from a relocation that never fired at all.
+        let travelled = Turf.distance(from: current, to: landing)
+        guard travelled > store.configuration.radiusMeters / 4 else {
+            logger.debug("Came back onto the same ground (\(travelled, format: .fixed(precision: 0)) m); keeping the chunk")
+            return
         }
+        // The globe carries the scene for the whole rebuild: `relocate` nils the chunk entity from
+        // its first line to its last, so a descent run straight through the fetch finishes fading
+        // the globe at progress 0.5 with nothing behind it, holds an empty scene for as long as the
+        // ground takes, and pops the new chunk in at full opacity having dissolved from nothing.
+        transition.beginHold()
+        applyTransitionFraming()
+        applyTransitionVisibility()
         Task {
             await store.relocate(to: landing)
             store.applyContent(content)
             frameLoadedChunk()
+            if case .failed = store.loadingState {
+                // Nothing to hand back to. Staying on the globe keeps the failure legible — and the
+                // overlay stops being suppressed, so the error surfaces.
+                transition.abandonHold()
+            } else {
+                transition.endHold()
+            }
+            applyTransitionFraming()
+            applyTransitionVisibility()
         }
     }
 }

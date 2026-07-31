@@ -544,8 +544,11 @@ public final class DioramaStore {
 
         // Add water plane if terrain has sea-level areas
         if globalMinElev <= 0 && exaggeration > 0 {
-            let waterY = (0.0 - globalMinElev) * elevationScale
-            if let waterEntity = WaterPlaneEntity.generate(boundary: boundary, waterY: waterY) {
+            if let waterEntity = WaterPlaneEntity.generate(
+                boundary: boundary,
+                baselineElevation: globalMinElev,
+                elevationScale: elevationScale
+            ) {
                 rootEntity.setWaterPlane(waterEntity)
             }
         }
@@ -1451,9 +1454,15 @@ public final class DioramaStore {
             groundScale: target
         )
         // Sea level is an elevation like any other, so it rides the elevation scale down. Moving the
-        // plane rather than rebuilding it is enough: it is cut to the outline, which has not moved.
+        // plane rather than rebuilding it is enough: it is cut to the outline, which has not moved —
+        // and the height goes through the same rule the load path used, so the lift that keeps the
+        // water off a flat seabed does not get left behind by a zoom.
         if let water = entity?.waterPlane {
-            water.position.y = (0.0 - template.globalMinElev) * mapping.elevationScale
+            water.position.y = WaterPlaneEntity.surfaceY(
+                boundary: configuration.boundary,
+                baselineElevation: template.globalMinElev,
+                elevationScale: mapping.elevationScale
+            )
         }
         // The display base rests against the chunk's underside, which the earth mass has just moved.
         if let base = entity?.base, let terrain = entity?.terrain {

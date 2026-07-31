@@ -37,6 +37,22 @@ extension View {
         }
     }
 
+    /// Applies the gesture alongside any others only when the condition is true.
+    ///
+    /// Two gestures attached with ``SwiftUI/View/gesture(_:including:)`` compete: the outermost
+    /// claims the sequence and the inner one never recognizes. That is fatal on visionOS, where a
+    /// drag and a magnify are attached to the same entity and each is driven by a different number
+    /// of hands — attached exclusively, whichever is outermost swallows the other's events and one
+    /// of pan or zoom silently stops working.
+    @ViewBuilder
+    func simultaneousGestureIf<G: Gesture>(_ condition: Bool, _ gesture: G) -> some View {
+        if condition {
+            self.simultaneousGesture(gesture)
+        } else {
+            self
+        }
+    }
+
     /// Applies the gesture at high priority only when the condition is true.
     @ViewBuilder
     func highPriorityGestureIf<G: Gesture>(_ condition: Bool, _ gesture: G) -> some View {

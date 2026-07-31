@@ -87,7 +87,7 @@ struct VisionOSDioramaView: View {
                             model.handleTap(on: value.entity)
                         }
                 )
-                .gestureIf(enabledGestures.contains(.pan) || enabledGestures.contains(.rotate),
+                .simultaneousGestureIf(enabledGestures.contains(.pan) || enabledGestures.contains(.rotate),
                     DragGesture()
                         .targetedToAnyEntity()
                         .onChanged { value in
@@ -104,7 +104,7 @@ struct VisionOSDioramaView: View {
                             dragStartOrientation = nil
                         }
                 )
-                .gestureIf(enabledGestures.contains(.zoom),
+                .simultaneousGestureIf(enabledGestures.contains(.zoom),
                     MagnifyGesture()
                         .targetedToAnyEntity()
                         .onChanged { value in
@@ -138,39 +138,16 @@ struct VisionOSDioramaView: View {
     private func realityView(geometry: GeometryProxy3D) -> some View {
         RealityView { content in
             content.add(DioramaSceneRig.makeSunLight())
+            // The stages are added once and never replaced; what the store hands back goes
+            // *under* them. See `VisionOSDioramaModel.syncScene()`.
+            content.add(model.chunkStage)
+            content.add(model.globeStage)
         } update: { realityViewContent in
             let volumeBounds = realityViewContent.convert(
                 geometry.frame(in: .local), from: .local, to: .scene
             )
             model.updateVolume(bounds: volumeBounds)
-
-            // Matched on identity, not on the name: the store builds a *fresh* entity on every
-            // load, and a relocation off the globe is a load. Asking only whether something called
-            // "Maquette" is in the scene leaves the old chunk on screen forever while the new one
-            // renders nowhere.
-            if let entity = model.store.dioramaEntity {
-                let drawn = realityViewContent.entities.first { $0.name == "Maquette" }
-                if drawn !== entity {
-                    if let drawn { realityViewContent.remove(drawn) }
-                    realityViewContent.add(entity)
-                    model.updateEntityPlacement()
-                }
-            } else if let drawn = realityViewContent.entities.first(where: { $0.name == "Maquette" }) {
-                // A relocation nils the store's entity for the whole rebuild. Left drawn, the chunk
-                // being replaced goes on rendering the old ground at whatever opacity the crossfade
-                // last set.
-                realityViewContent.remove(drawn)
-            }
-
-            if let globe = model.store.globe {
-                let drawn = realityViewContent.entities.first { $0.name == "Globe" }
-                if drawn !== globe {
-                    if let drawn { realityViewContent.remove(drawn) }
-                    realityViewContent.add(globe)
-                    model.updateEntityPlacement()
-                }
-            }
-
+            model.syncScene()
             model.applyTransitionVisibility()
 
             // Drive 3D Tiles LOD from a documented approximation rather than a hardcoded guess.
@@ -204,15 +181,35 @@ final class VisionOSDioramaModel {
     /// The selection binding handed to `DioramaView`, written on marker taps.
     var selectionBinding: Binding<DioramaAnnotation.ID?>?
 
+    /// The chunk's holder in the volume, carrying the fit from diorama metres to volume metres.
+    ///
+    /// The store's entities are transformed in *diorama* space — the dock's placement of the globe
+    /// is the strict case — so the volumetric fit lives on a parent instead of being written over
+    /// them. See ``updateEntityPlacement()``.
+    let chunkStage = Entity()
+    /// The globe's holder in the volume. Separate from the chunk's because the two carry different
+    /// fits: the chunk's is diorama metres, the globe's is its own radius scaled to that footprint.
+    let globeStage = Entity()
+
     /// The scale mapping diorama meters to volume meters, measured from the window's bounds.
     private(set) var fitScale: Float = 1
-    /// The volume's floor, where the chunk's underside rests.
-    private(set) var floorY: Float = 0
-    /// The volume's smaller horizontal extent, in scene meters.
-    private(set) var volumeSpan: Float = 0.8
+    /// The middle of the volume, in scene meters.
+    private(set) var volumeCenter: SIMD3<Float> = .zero
+    /// The volume's own extents along each axis, in scene meters.
+    private(set) var volumeExtents = SIMD3<Float>(repeating: 0.8)
 
-    /// Clearance between the volume's floor and the chunk's underside.
-    private static let bottomPadding: Float = 0.014
+    /// The chunk's bounding box in diorama metres, frozen when the entity is parented.
+    ///
+    /// Frozen rather than re-measured, for the reason the elevation baseline and the wall texture's
+    /// vertical reference are: a pan changes the relief under the outline, and a framing that
+    /// tracked it would slide the whole chunk around the window as the ground moved.
+    private var chunkBounds: BoundingBox?
+
+    /// The share of the window the diorama is allowed to fill, leaving a little glass around it.
+    private static let volumeInset: Float = 0.92
+
+    /// The smallest of the volume's axes — the reach a gesture is measured against.
+    var volumeSpan: Float { volumeExtents.min() }
 
     init(configuration: DioramaConfiguration, content: DioramaContentGroup?) {
         self.store = DioramaStore(configuration: configuration)
@@ -286,45 +283,201 @@ final class VisionOSDioramaModel {
 
     /// Re-measures the fit whenever the volume's bounds arrive or change.
     ///
-    /// The depth participates only when the window has one worth speaking of. A *plain* visionOS
-    /// window also hosts this view — its RealityView renders with a few centimetres of depth at
-    /// most — and fitting to `min(width, depth)` there scales the diorama to the sliver and it
-    /// vanishes. A shallow window fits to its face instead, and the diorama reads as a relief.
+    /// **There is deliberately no volume-versus-window branch.** A plain window was assumed to be a
+    /// flat face here, and measured it is not: this view's own bounds in a plain `WindowGroup` come
+    /// back **0.941 × 0.529 × 0.397 m**, which is 40 cm of depth — deeper than any threshold that
+    /// could tell it apart from a volume, and enough for a chunk fitted to `min(width, height)` to
+    /// stand half out of the glass. One rule that respects every axis holds in both scenes.
+    /// **Only the width and height of that box say where its middle is.** The converted rect comes
+    /// back recentred on the scene origin across x and y — both centres measure 0 — but its z is
+    /// still counted from the near plane, so its z *centre* lands a full depth in front of the
+    /// window rather than on it. Centring the diorama there hangs the whole solid 21–58 cm out
+    /// towards the viewer, where perspective magnifies it about 1.7× and it spills past the glass it
+    /// measured as fitting: the chunk drew 415 px across a 640 px window plate where its own scale
+    /// predicted 239. Measured in a plain `WindowGroup`, world bounds `z 0.2144…0.5797` against a
+    /// volume depth of 0.3971. So the depth is taken from the box and the plane is taken from the
+    /// scene origin, which is the window's own centre — the same convention x and y already report.
     func updateVolume(bounds: BoundingBox) {
-        let width = bounds.max.x - bounds.min.x
-        let height = bounds.max.y - bounds.min.y
-        let depth = bounds.max.z - bounds.min.z
-        let face = min(width, height)
-        volumeSpan = depth > 0.15 ? min(width, depth) : face
-        guard volumeSpan.isFinite, volumeSpan > 0 else { return }
-        floorY = bounds.min.y
-        let diameter = store.configuration.physicalSize
-        fitScale = diameter > 0 ? volumeSpan / diameter : 1
+        let extents = bounds.max - bounds.min
+        guard extents.min().isFinite, extents.min() > 0 else { return }
+        volumeExtents = extents
+        let center = (bounds.min + bounds.max) / 2
+        volumeCenter = SIMD3<Float>(center.x, center.y, 0)
+        refreshFit()
+    }
+
+    /// Rescales the diorama so its whole solid, pitched as it rests, fits the room it is given.
+    ///
+    /// **The solid is fitted, not the footprint.** ``DioramaConfiguration/physicalSize`` describes
+    /// the outline the chunk was cut to and says nothing about the earth mass hanging under it or
+    /// the peaks standing on it, so a footprint that fits says little about whether the object does
+    /// — and once the stage is pitched, the chunk's own depth leans into the vertical axis as well.
+    /// Fitting the rotated bounding box against all three of the volume's axes is the only rule that
+    /// cannot be overrun, and it costs nothing: the box is frozen at parent time and the pitch is a
+    /// quaternion.
+    ///
+    /// The fit is measured at the **resting** pitch even while the handoff is easing that pitch
+    /// towards the pole, so a departure cannot resize the chunk on its way out. Rotating further
+    /// only trades the chunk's height for its depth, both of which the resting fit already covered.
+    ///
+    /// **The width and height are fitted as the viewer sees them, not as they measure.** A window's
+    /// bounds are a box in scene metres and the scene is drawn in perspective, so the half of a
+    /// pitched chunk that leans toward the viewer subtends more of the glass than its own extent —
+    /// and a fit that only measured the box lets that half overrun the window, where it is silently
+    /// clipped against the frame. The correction is a closed form rather than a fudge: at the near
+    /// face the object is `D / (D - nearZ · s)` times its measured size, so requiring
+    /// `s · e · D / (D − n · s) ≤ limit` solves to the expression below, which reduces to the plain
+    /// ratio for a chunk lying flat. The depth axis is deliberately excluded — it must fit the
+    /// volume in metres, and its apparent size is not what runs out.
+    private func refreshFit() {
+        let box = pitchedChunkBounds(pitch: Self.restingPitch)
+        let extents = box.extents
+        // The viewer's distance to the middle of the window; see `approximateViewerPosition`.
+        let viewingDistance = volumeExtents.z * 0.5 + Self.assumedViewingDistance
+        let near = max(box.max.z, 0)
+        var scale = Float.greatestFiniteMagnitude
+        for axis in 0..<3 where extents[axis] > 0 {
+            let limit = volumeExtents[axis] * Self.volumeInset
+            let axisScale = axis == 2
+                ? limit / extents[axis]
+                : limit * viewingDistance / (extents[axis] * viewingDistance + limit * near)
+            scale = min(scale, axisScale)
+        }
+        guard scale.isFinite, scale > 0 else { return }
+        fitScale = scale
         updateEntityPlacement()
+    }
+
+    /// How far the viewer is assumed to stand from the window's front face, per the HIG's typical
+    /// viewing distance. An approximation on purpose: a volumetric window offers no head pose —
+    /// that needs an immersive space and a `WorldTrackingProvider`.
+    private static let assumedViewingDistance: Float = 0.8
+
+    /// The chunk's bounding box after the stage's pitch, in diorama metres.
+    ///
+    /// Computed from the eight corners rather than by trigonometry on the extents, so it stays right
+    /// for a box that is not centred on the origin — which the chunk's never is, since diorama
+    /// Y = 0 is the lowest terrain and the earth mass hangs below it.
+    private func pitchedChunkBounds(pitch: Float) -> BoundingBox {
+        let footprint = max(store.configuration.physicalSize, 0.01)
+        let local = chunkBounds ?? BoundingBox(
+            min: SIMD3<Float>(-footprint / 2, -footprint / 4, -footprint / 2),
+            max: SIMD3<Float>(footprint / 2, footprint / 4, footprint / 2)
+        )
+        let rotation = Self.pitchRotation(pitch)
+        var low = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var high = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        for corner in 0..<8 {
+            let point = rotation.act(SIMD3<Float>(
+                corner & 1 == 0 ? local.min.x : local.max.x,
+                corner & 2 == 0 ? local.min.y : local.max.y,
+                corner & 4 == 0 ? local.min.z : local.max.z
+            ))
+            low = simd_min(low, point)
+            high = simd_max(high, point)
+        }
+        return BoundingBox(min: low, max: high)
+    }
+
+    /// The pitch, as a rotation that tips the diorama's top face towards the viewer.
+    private static func pitchRotation(_ pitch: Float) -> simd_quatf {
+        simd_quatf(angle: pitch, axis: SIMD3<Float>(1, 0, 0))
+    }
+
+    /// The angle the diorama rests at, shared with the orbit platforms' camera. See
+    /// ``DioramaSceneRig/restingElevation``.
+    private static let restingPitch = DioramaSceneRig.restingElevation
+
+    /// The pitch in force right now: the resting angle, eased towards the pole by a handoff.
+    ///
+    /// This is the volumetric statement of what the orbit platforms do with their camera — the
+    /// transition eases the viewing elevation to exactly π/2 so that "the point facing the viewer",
+    /// "the tangent point" and "where the chunk is" become the same place, which is the only camera
+    /// the dock's geometry is correct from (``GlobeDock/center`` puts the docked coordinate at the
+    /// sphere's topmost point). A window's viewer cannot be moved overhead, so the world is turned
+    /// under them instead, and ``GlobeTransition/cameraElevation()`` supplies exactly the same eased
+    /// angle either way. Left un-pitched, the globe would arrive with the coordinate the user
+    /// steered to — and the one a return relocates onto — sitting on top of the sphere, out of
+    /// sight, while they aimed at its equator.
+    var stagePitch: Float {
+        transition.cameraElevation() ?? Self.restingPitch
     }
 
     /// Applies the volume fit to the chunk and the globe.
     ///
-    /// The globe's own growth comes from ``DioramaStore/setGlobeScale(_:)``, which scales the
-    /// geometry about the dock so its top stays on the diorama origin. The *entity* scale here is
-    /// the volumetric answer to "how big is the world on the table": at rest the globe's diameter
-    /// matches the footprint the chunk had, so pinching out dissolves the diorama into a tabletop
-    /// globe of the same size rather than a sphere that filled the room.
+    /// **The fit goes on the stages, never on what the store hands back.** ``DioramaStore`` owns the
+    /// globe's transform outright — ``DioramaStore/setGlobeScale(_:)`` and the dock both assign
+    /// `globe.transform` wholesale from ``GlobeDock/matrix(scale:)`` — so a view that also writes
+    /// `globe.scale` and `globe.position` onto the same entity overwrites both of them every frame.
+    /// That is what "the globe transition doesn't work" was: the growth 0 → 1 the transition drives
+    /// through `setGlobeScale` was replaced by a constant fit, and the dock's `radius · scale`
+    /// lowering — the thing that keeps the sphere's *topmost point* on the diorama origin rather
+    /// than its centre — was replaced by the floor line, so the world arrived a full radius out of
+    /// place with the chunk buried inside it. A stage in between leaves diorama space to the store.
+    ///
+    /// The stage scale is the volumetric answer to "how big is the world on the table": the globe is
+    /// framed to the same share of the window the chunk was, so pinching out dissolves the diorama
+    /// into a tabletop globe of comparable size rather than a sphere that filled the room.
     func updateEntityPlacement() {
+        let rotation = Self.pitchRotation(stagePitch)
+
+        // The *solid* is centred, not its origin. Diorama Y = 0 is the lowest terrain elevation and
+        // the earth mass hangs below it to `-baseDepth`, so resting the origin on the window's middle
+        // hangs most of that mass out through the bottom of the glass, over the ornament carrying the
+        // controls. Centring the pitched box puts as much room under the walls as over the peaks.
+        chunkStage.scale = SIMD3<Float>(repeating: fitScale)
+        chunkStage.orientation = rotation
+        chunkStage.position = volumeCenter - pitchedChunkBounds(pitch: stagePitch).center * fitScale
+
         if let entity = store.dioramaEntity {
-            entity.scale = SIMD3<Float>(repeating: fitScale)
-            entity.position.y = floorY + Self.bottomPadding
             ensureGestureTarget(on: entity)
         }
         if let globe = store.globe {
             let radius = globe.radius
-            let diameter = store.configuration.physicalSize
-            let globeFit = radius > 0 ? (diameter * fitScale) / (2 * radius) : fitScale
-            globe.scale = SIMD3<Float>(repeating: globeFit)
-            // The dock keeps the sphere's top on the diorama origin, which the entity scale
-            // preserves — so the globe's top sits where the chunk's origin sat, on the floor line.
-            globe.position.y = floorY + Self.bottomPadding
+            let stageScale = radius > 0
+                ? (volumeSpan * Self.volumeInset) / (2 * radius)
+                : fitScale
+            globeStage.scale = SIMD3<Float>(repeating: stageScale)
+            globeStage.orientation = rotation
+            // The dock hangs the sphere a radius *below* the docked point so that point lands on the
+            // diorama origin, and the whole of that hangs off the pitch: cancelling it through the
+            // same rotation puts the sphere's centre in the middle of the window at every angle and
+            // every size. At `globeScale` 0 the cancellation is zero too, so the world grows out of
+            // the chunk's own place rather than sliding into it — the volumetric reading of the
+            // growth ``GlobeTransition/globeScale`` drives.
+            let lift = radius * store.globeScale * stageScale
+            globeStage.position = volumeCenter + rotation.act(SIMD3<Float>(0, lift, 0))
             ensureGestureTarget(on: globe, sphereRadius: radius)
+        }
+    }
+
+    /// Puts whatever the store currently holds under the stages.
+    ///
+    /// Parented rather than matched by name: the store builds a *fresh* entity on every load, and a
+    /// relocation off the globe is a load. Asking only whether something called "Maquette" is in the
+    /// scene leaves the old chunk on screen forever while the new one renders nowhere — and with the
+    /// crossfade's `OpacityComponent` still on it, that reads as a dim frozen diorama rather than a
+    /// stale one. A nil entity has to be *removed* for the same reason: `relocate` nils it for the
+    /// whole rebuild, and left drawn it goes on rendering the ground that was departed from.
+    func syncScene() {
+        if let entity = store.dioramaEntity {
+            if entity.parent !== chunkStage {
+                chunkStage.children.removeAll()
+                chunkStage.addChild(entity)
+                let bounds = entity.visualBounds(relativeTo: entity)
+                if bounds.extents.min().isFinite, bounds.extents.min() > 0 {
+                    chunkBounds = bounds
+                }
+                refreshFit()
+            }
+        } else if !chunkStage.children.isEmpty {
+            chunkStage.children.removeAll()
+        }
+
+        if let globe = store.globe, globe.parent !== globeStage {
+            globeStage.children.removeAll()
+            globeStage.addChild(globe)
+            updateEntityPlacement()
         }
     }
 
@@ -361,7 +514,7 @@ final class VisionOSDioramaModel {
     /// Where the viewer is assumed to stand, for LOD purposes: centred on the volume's front face
     /// at the HIG's typical viewing distance (~0.8 m), at the volume's mid height.
     var approximateViewerPosition: SIMD3<Float> {
-        SIMD3<Float>(0, floorY + volumeSpan * 0.5, volumeSpan * 0.5 + 0.8)
+        volumeCenter + SIMD3<Float>(0, 0, volumeExtents.z * 0.5 + 0.8)
     }
 
     // MARK: - Gestures
@@ -386,9 +539,18 @@ final class VisionOSDioramaModel {
         let delta = sceneTranslation - previous
         lastDragTranslation = sceneTranslation
 
+        // **Through the stage's own orientation, never straight off the scene axes.** The diorama is
+        // pitched to face the viewer, so the ground plane it is dragged across is no longer the
+        // scene's — and a delta read as `(x, z)` takes only the sliver of a drag that happens to lie
+        // flat. In a window seen head-on that sliver is nothing at all: `delta.z` is ≈ 0 for every
+        // gesture the user can make against the glass, so the whole north/south axis of both the pan
+        // and the globe steer is silently dead. The inverse rotation is exactly the old expression at
+        // a pitch of zero, so nothing that was working changes.
+        let ground = Self.pitchRotation(stagePitch).inverse.act(delta)
+
         if transition.isShowingGlobe {
             if enabledGestures.contains(.rotate) {
-                steerGlobe(sceneDelta: delta)
+                steerGlobe(groundDelta: ground)
             }
             return
         }
@@ -398,7 +560,7 @@ final class VisionOSDioramaModel {
             // dragging toward +X carries the terrain +X-ward, so the sampled region moves the
             // other way, which is the sign `pan(by:)` expects of its offset delta.
             guard fitScale > 0 else { return }
-            store.pan(by: SIMD2(-delta.x, -delta.z) / fitScale)
+            store.pan(by: SIMD2(-ground.x, -ground.z) / fitScale)
         } else if enabledGestures.contains(.rotate), let entity = store.dioramaEntity {
             // Anchored to the gesture's start rather than compounded per frame, so a drag cannot
             // accelerate under its own accumulated rotation.
@@ -414,15 +576,19 @@ final class VisionOSDioramaModel {
         lastDragTranslation = nil
     }
 
-    /// Spins the world under the viewer by a drag measured in scene meters.
+    /// Spins the world under the viewer by a drag already rotated into the stage's own frame.
     ///
     /// The globe is seen whole in the volume, so a drag across its rendered diameter should carry
     /// the ground about half a turn: scene meters divide by the rendered radius to give arc, and
-    /// arc rides the earth's radius to ground meters. North stays -Z — the dock's convention — so
-    /// away-from-viewer is northward.
-    private func steerGlobe(sceneDelta: SIMD3<Float>) {
+    /// arc rides the earth's radius to ground meters. North stays -Z — the dock's convention — and
+    /// because the handoff has pitched the stage to the pole by the time anyone can steer, that -Z
+    /// is *screen up*: a north-up map, the same one the orbit platforms steer against.
+    private func steerGlobe(groundDelta sceneDelta: SIMD3<Float>) {
         guard let globe = store.globe else { return }
-        let renderedRadius = globe.radius * globe.scale.x
+        // Measured against the world, not the entity's own scale: the rendered size is the stage's
+        // fit *and* the dock's growth scale, and reading only the latter would make a drag track the
+        // finger by the fit's factor.
+        let renderedRadius = globe.radius * globe.scale(relativeTo: nil).x
         guard renderedRadius > 0 else { return }
         let metersPerSceneMeter = Turf.earthRadiusMeters / Double(renderedRadius)
         // The ground follows the hand, so the docked coordinate goes the other way.
@@ -473,13 +639,15 @@ final class VisionOSDioramaModel {
     }
 
     private func absorb(_ delta: Float) {
-        // The conductor's state machine wants the orbit camera's entry framing; a volume has no
-        // camera, so nominal values stand in. They only seed the departure arithmetic — the
-        // volumetric framing below never reads them back.
+        // The entry *distance* is nominal: a volume has no camera to dolly, so nothing reads it back.
+        // The entry **elevation** is not — ``GlobeTransition/cameraElevation()`` eases it to π/2
+        // across the leg, and ``stagePitch`` turns that into the angle the diorama itself is turned
+        // through. Seeding it with the resting pitch is what makes the departure roll the world
+        // overhead over the same second the globe grows, instead of arriving already there.
         let absorption = transition.absorb(
             zoomDelta: delta,
             cameraDistance: 1.0,
-            cameraElevation: .pi / 2,
+            cameraElevation: Self.restingPitch,
             chunkHasRoom: chunkHasZoomRoom
         )
         guard absorption.consumed else { return }

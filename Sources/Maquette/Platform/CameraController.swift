@@ -14,7 +14,7 @@ final class CameraController {
     public var azimuth: Float = 0
 
     /// Vertical orbit angle in radians (clamped to prevent flipping).
-    public var elevation: Float = .pi / 4
+    public var elevation: Float = DioramaSceneRig.restingElevation
 
     /// Distance from the target point in meters.
     public var distance: Float = 1.0

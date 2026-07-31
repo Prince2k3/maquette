@@ -22,6 +22,16 @@ enum DioramaSceneRig {
     /// against, so a 400-point view shows it at its configured physical size.
     static let referenceViewSpan: CGFloat = 400
 
+    /// The elevation the diorama is first seen from, in radians.
+    ///
+    /// **On the orbit platforms this places the camera; on visionOS it pitches the diorama**, because
+    /// there is no camera in a window to place. The two are the same framing stated from opposite
+    /// ends, and the visionOS half is not cosmetic: a window hangs vertically in front of the viewer,
+    /// so a chunk left flat is seen exactly edge-on — the strata wall filling the glass with none of
+    /// the terrain that wall is holding up visible at all. Pitching the stage by the angle the other
+    /// platforms put their camera at opens every platform on the same three-quarter view.
+    static let restingElevation: Float = .pi / 4
+
     /// Below this opacity an entity is disabled outright rather than rendered invisibly.
     static let minimumVisibleOpacity: Float = 0.001
 

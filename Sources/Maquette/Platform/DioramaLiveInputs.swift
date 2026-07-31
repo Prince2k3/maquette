@@ -32,7 +32,7 @@ enum DioramaLiveInputs {
 
         let sameSubstrate = key.region.radius == current.radiusMeters
             && key.shape == current.shape
-            && key.physicalSize == current.physicalDiameter
+            && key.physicalSize == current.physicalSize
             && currentStyle == targetStyle
         let sameCenter = Coordinate(current.center) == key.region.center
 

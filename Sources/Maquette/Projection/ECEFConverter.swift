@@ -8,7 +8,7 @@ import simd
 /// ``EllipsoidProjection`` to put a geographic coordinate in the same frame that geometry arrived
 /// in. Both go through the WGS84 ellipsoid, which is what 3D Tiles are positioned against — a
 /// spherical approximation here would place a pin next to the building it names rather than on it.
-public struct ECEFConverter: Sendable {
+struct ECEFConverter: Sendable {
     // WGS84 constants
     private static let semiMajorAxis: Double = 6_378_137.0
     private static let eccentricitySquared: Double = 0.00669437999014

@@ -6,7 +6,7 @@ import simd
 ///
 /// The parts are separate meshes rather than one combined mesh so each can carry its own material:
 /// satellite imagery on top, geological strata on the walls, a flat color underneath.
-public struct TerrainSolidParts {
+struct TerrainSolidParts {
     /// The terrain surface, clipped to the boundary.
     public let top: MeshResource
     /// The cut walls running from the terrain surface down to the base depth, or `nil` if
@@ -48,7 +48,7 @@ struct ResamplingParameters {
 /// boundary become quads; cells the boundary crosses are clipped to polygons that follow the
 /// outline exactly. Every clipped edge that lands on the boundary is extruded downward into a wall
 /// quad, so the walls meet the surface with no gaps regardless of the chunk's silhouette.
-public enum TerrainSolidGenerator {
+enum TerrainSolidGenerator {
     /// Generates the mesh parts for a terrain chunk.
     ///
     /// - Parameters:

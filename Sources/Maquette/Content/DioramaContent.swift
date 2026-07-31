@@ -305,9 +305,9 @@ public struct DioramaContentBuilder {
 /// this decides whether that place is on the model. Keeping the two apart matters because a line
 /// crossing the outline needs positions for the vertices that fall outside it, while a pin that
 /// lands outside is simply not drawn.
-public struct DioramaProxy: Sendable {
+struct DioramaProxy: Sendable {
     let configuration: DioramaConfiguration
-    let physicalDiameter: Float
+    let physicalSize: Float
 
     /// The mapping the diorama's own geometry was built with.
     public let projection: any DioramaProjection
@@ -323,11 +323,11 @@ public struct DioramaProxy: Sendable {
     ///     a placeholder; only the height is unknown, and it resolves to the datum.
     public init(configuration: DioramaConfiguration, projection: (any DioramaProjection)? = nil) {
         self.configuration = configuration
-        self.physicalDiameter = configuration.physicalDiameter
+        self.physicalSize = configuration.physicalSize
         self.projection = projection ?? EllipsoidProjection(
             center: configuration.center,
             radiusMeters: configuration.radiusMeters,
-            physicalDiameter: configuration.physicalDiameter
+            physicalSize: configuration.physicalSize
         )
     }
 

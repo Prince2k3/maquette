@@ -9,7 +9,7 @@ import os
 /// Higher resolution than the default Mapzen provider in many regions.
 ///
 /// Requires a MapTiler API key, available for free at https://www.maptiler.com/cloud/
-public struct MapTilerTerrainProvider: TileProvider, Sendable {
+struct MapTilerTerrainProvider: TileProvider, Sendable {
     public let providerIdentifier = "maptiler-terrain"
 
     private let apiKey: String

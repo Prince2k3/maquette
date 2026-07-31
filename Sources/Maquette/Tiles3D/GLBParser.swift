@@ -5,7 +5,7 @@ import ImageIO
 import simd
 
 /// Parses a GLB (glTF Binary) file into RealityKit mesh and material data.
-public struct GLBParser: Sendable {
+struct GLBParser: Sendable {
 
     /// Parse result containing mesh geometry and texture data.
     public struct ParsedTile: @unchecked Sendable {

@@ -37,7 +37,7 @@ import simd
 ///
 /// `render_min_height` is likewise ignored, so a footprint that should float — a walkway between
 /// two towers — sits on the ground instead.
-public struct MapTilerBuildingProvider: BuildingProvider {
+struct MapTilerBuildingProvider: BuildingProvider {
     private static let logger = Logger(maquette: "MapTilerBuildingProvider")
 
     /// The MapTiler API key.

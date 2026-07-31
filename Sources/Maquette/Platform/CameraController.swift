@@ -9,7 +9,7 @@ import simd
 /// Driven by gesture handlers in the platform views.
 @Observable
 @MainActor
-public final class CameraController {
+final class CameraController {
     /// Horizontal orbit angle in radians.
     public var azimuth: Float = 0
 

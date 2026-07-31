@@ -9,7 +9,7 @@ import os
 /// and unloading distant tiles to manage memory.
 @Observable
 @MainActor
-public final class Tiles3DLODManager {
+final class Tiles3DLODManager {
     private let provider: any Tiles3DProvider
     private let ecefConverter: ECEFConverter
     private let center: CLLocationCoordinate2D
@@ -201,7 +201,14 @@ public final class Tiles3DLODManager {
 
     /// Loads the root tileset and prepares for tile management.
     func start() async throws {
-        let tileset = try await provider.fetchTileset()
+        // The provider hands back bytes; the wire format is the library's to parse.
+        let tilesetData = try await provider.fetchTileset()
+        let tileset: TilesetJSON
+        do {
+            tileset = try JSONDecoder().decode(TilesetJSON.self, from: tilesetData)
+        } catch {
+            throw DioramaError.tilesetParsingFailed(reason: error.localizedDescription)
+        }
         self.rootTileset = tileset
         self.tileLoader = Tile3DLoader(
             provider: provider,

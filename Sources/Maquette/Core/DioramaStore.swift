@@ -60,7 +60,7 @@ public struct DioramaStreamingProgress: Sendable, Equatable {
 /// Domain store responsible for orchestrating tile fetching, mesh generation, and entity assembly.
 @Observable
 @MainActor
-public final class DioramaStore {
+final class DioramaStore {
     /// Current loading state.
     public private(set) var loadingState: DioramaLoadingState = .idle
 
@@ -1057,7 +1057,7 @@ public final class DioramaStore {
             provider: provider,
             center: configuration.center,
             radiusMeters: configuration.radiusMeters,
-            physicalDiameter: configuration.physicalDiameter,
+            physicalSize: configuration.physicalSize,
             boundary: configuration.boundary,
             style: style,
             panRange: configuration.panRange
@@ -1068,7 +1068,7 @@ public final class DioramaStore {
         projection = EllipsoidProjection(
             center: configuration.center,
             radiusMeters: configuration.radiusMeters,
-            physicalDiameter: configuration.physicalDiameter,
+            physicalSize: configuration.physicalSize,
             datumElevation: tiles3DEntity.groundDatumElevation ?? 0
         )
     }
@@ -1832,7 +1832,7 @@ public final class DioramaStore {
         rootEntity.applyContent(
             content,
             using: proxy,
-            physicalDiameter: configuration.physicalDiameter
+            physicalSize: configuration.physicalSize
         )
         routePreviewEntity = rootEntity.routePreview
     }

@@ -1,7 +1,7 @@
 import Foundation
 
 /// A building footprint: a closed ring of coordinates and a height.
-public struct BuildingFootprint: Sendable, Equatable, Hashable {
+struct BuildingFootprint: Sendable, Equatable, Hashable {
     /// The outline, in geographic coordinates, wound in whatever order the source stored it.
     ///
     /// Open, not closed — the first point is not repeated at the end, because extrusion and
@@ -26,7 +26,7 @@ public struct BuildingFootprint: Sendable, Equatable, Hashable {
 /// tiles: fast, cacheable, meant to be called by applications, and needing an API key. The protocol
 /// exists so `DioramaStore` can be handed either without knowing which, and so a test can be handed
 /// neither.
-public protocol BuildingProvider: Sendable {
+protocol BuildingProvider: Sendable {
     /// Fetches every building footprint inside the bounding box.
     ///
     /// - Parameters:

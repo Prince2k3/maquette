@@ -11,7 +11,7 @@ import AppKit
 /// Entity that displays a terrain chunk: the imagery-textured surface on top, the cut walls
 /// showing the earth beneath it, and the closing face underneath.
 @MainActor
-public class TerrainEntity: Entity {
+class TerrainEntity: Entity {
     /// The terrain surface model.
     public private(set) var surface: ModelEntity?
     /// The cut wall model, if the chunk has walls.
@@ -204,8 +204,8 @@ public class TerrainEntity: Entity {
     /// - Parameters:
     ///   - mesh: The terrain mesh resource.
     ///   - satelliteImageData: Raw PNG/JPEG satellite image data for texturing. If `nil`, a default material is used.
-    ///   - physicalDiameter: Physical diameter of the diorama in meters.
-    public init(mesh: MeshResource, satelliteImageData: Data?, physicalDiameter: Float) {
+    ///   - physicalSize: Physical diameter of the diorama in meters.
+    public init(mesh: MeshResource, satelliteImageData: Data?, physicalSize: Float) {
         super.init()
         self.name = "Terrain"
 

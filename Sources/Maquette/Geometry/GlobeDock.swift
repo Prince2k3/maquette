@@ -18,7 +18,7 @@ import simd
 /// ground implies a globe of radius `6371008.8 × 0.8 / 12000 ≈ 424 m`, which is a sphere the size of
 /// a district. The globe is therefore shown at whatever radius reads well, and the transition is a
 /// dissolve rather than a continuous zoom — the scales genuinely do not meet.
-public struct GlobeDock: Sendable, Equatable {
+struct GlobeDock: Sendable, Equatable {
     /// The coordinate placed at the diorama origin.
     public let coordinate: Coordinate
 

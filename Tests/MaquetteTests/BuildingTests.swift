@@ -537,7 +537,7 @@ struct BuildingVisibilityTests {
         DioramaConfiguration(
             center: CLLocationCoordinate2D(latitude: 37.7929, longitude: -122.3971),
             radiusMeters: 800,
-            physicalDiameter: 0.8,
+            physicalSize: 0.8,
             panRange: 0.8,
             buildings: buildings
         )

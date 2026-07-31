@@ -7,14 +7,14 @@ import simd
 ///
 /// OGC 3D Tiles arrive in ECEF, and `Tiles3DEntity` brings them onto the table with exactly two
 /// operations: rotate into the local ENU frame about the diorama's centre, and scale by
-/// `physicalDiameter / (radiusMeters * 2)`. This does the same two, so a coordinate lands in the
+/// `physicalSize / (radiusMeters * 2)`. This does the same two, so a coordinate lands in the
 /// frame its geometry arrived in rather than near it.
 ///
 /// The difference from a spherical approximation is not academic. WGS84's flattening moves a point
 /// by a fraction of a percent of its distance from the centre, which on a city block is under a
 /// metre — but the model is *photogrammetry*, so a metre is the difference between a pin on a
 /// building and a pin in the street beside it, and the error grows with the radius.
-public struct EllipsoidProjection: DioramaProjection {
+struct EllipsoidProjection: DioramaProjection {
     /// The ellipsoid frame, centred on the diorama.
     public let converter: ECEFConverter
     /// Diorama metres per real metre — the entity scale `Tiles3DEntity` applies.
@@ -44,12 +44,12 @@ public struct EllipsoidProjection: DioramaProjection {
     public init(
         center: CLLocationCoordinate2D,
         radiusMeters: Double,
-        physicalDiameter: Float,
+        physicalSize: Float,
         datumElevation: Double = 0,
         panOffset: SIMD2<Float> = .zero
     ) {
         self.converter = ECEFConverter(origin: center)
-        self.geographicScale = radiusMeters > 0 ? physicalDiameter / Float(radiusMeters * 2) : 1
+        self.geographicScale = radiusMeters > 0 ? physicalSize / Float(radiusMeters * 2) : 1
         self.datumElevation = datumElevation
         self.panOffset = panOffset
     }

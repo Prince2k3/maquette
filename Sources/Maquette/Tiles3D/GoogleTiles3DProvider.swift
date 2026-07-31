@@ -68,7 +68,7 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
     /// Cache key. Includes the credentials, since a session belongs to the key that created it.
     private var rootCacheKey: String { "google-3dtiles-\(apiKey)" }
 
-    public func fetchTileset() async throws -> TilesetJSON {
+    public func fetchTileset() async throws -> Data {
         let urlString = "https://tile.googleapis.com/v1/3dtiles/root.json?key=\(apiKey)"
 
         // Google bills the root tileset request and nothing else — not session tokens, not the
@@ -79,11 +79,12 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
             maximumAge: rootCacheLifetime
         ) {
             captureSession(from: cached, baseURL: urlString)
-            if let tileset = try? JSONDecoder().decode(TilesetJSON.self, from: cached) {
+            // Decoded as validation only: an unreadable cache entry falls through to a fresh fetch
+            // rather than being handed to the parser as though it were a live response.
+            if (try? JSONDecoder().decode(TilesetJSON.self, from: cached)) != nil {
                 logger.info("Reused cached root tileset — no billable request")
-                return tileset
+                return cached
             }
-            // Unreadable cache entry; fall through and fetch a fresh one.
             await rootCache.invalidate(key: rootCacheKey)
         }
 
@@ -114,9 +115,10 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
 
         captureSession(from: data, baseURL: urlString)
 
-        let tileset: TilesetJSON
+        // Validated before it is cached or returned, so a malformed response reads as a parsing
+        // failure here rather than as a broken tileset later.
         do {
-            tileset = try JSONDecoder().decode(TilesetJSON.self, from: data)
+            _ = try JSONDecoder().decode(TilesetJSON.self, from: data)
         } catch {
             throw DioramaError.tilesetParsingFailed(reason: error.localizedDescription)
         }
@@ -124,7 +126,7 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
         await rootCache.store(key: rootCacheKey, data: data)
         logger.info("Fetched a new root tileset — one billable request")
 
-        return tileset
+        return data
     }
 
     /// Extracts the session token that Google issues alongside a root tileset.

@@ -2,7 +2,7 @@ import Foundation
 import os
 
 /// Actor-based tile cache providing both in-memory LRU and disk caching.
-public actor TileCache {
+actor TileCache {
     private var memoryCache: [String: CacheEntry] = [:]
     private var accessOrder: [String] = []
     private let maxMemoryEntries: Int

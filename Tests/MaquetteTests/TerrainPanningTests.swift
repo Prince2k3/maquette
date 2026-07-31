@@ -134,12 +134,12 @@ struct TerrainPanningTests {
         let fixed = DioramaConfiguration(
             center: CLLocationCoordinate2D(latitude: 36, longitude: -112),
             radiusMeters: 5000,
-            physicalDiameter: 0.8
+            physicalSize: 0.8
         )
         let pannable = DioramaConfiguration(
             center: CLLocationCoordinate2D(latitude: 36, longitude: -112),
             radiusMeters: 5000,
-            physicalDiameter: 0.8,
+            physicalSize: 0.8,
             panRange: 0.5
         )
 
@@ -155,14 +155,14 @@ struct TerrainPanningTests {
         let fixed = DioramaConfiguration(
             center: CLLocationCoordinate2D(latitude: 36, longitude: -112),
             radiusMeters: 5000,
-            physicalDiameter: 0.8
+            physicalSize: 0.8
         )
         #expect(fixed.maximumPanOffset.x == 0, "Without a pan range there is nowhere to pan")
 
         let pannable = DioramaConfiguration(
             center: CLLocationCoordinate2D(latitude: 36, longitude: -112),
             radiusMeters: 5000,
-            physicalDiameter: 0.8,
+            physicalSize: 0.8,
             panRange: 0.5
         )
         // Region is 1.2 wide, chunk is 0.8, so 0.2 of margin on each side.

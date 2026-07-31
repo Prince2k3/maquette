@@ -77,7 +77,7 @@ public struct GlobeTransitionStyle: Sendable, Equatable {
 ///
 /// Deliberately platform-agnostic and free of `CameraController`, which does not exist on visionOS.
 /// It reports the framing the camera should adopt and the caller applies it.
-public struct GlobeTransition: Sendable, Equatable {
+struct GlobeTransition: Sendable, Equatable {
     public var style: GlobeTransitionStyle
 
     /// 0 at the chunk, 1 at the globe.
@@ -473,7 +473,7 @@ public struct GlobeTransition: Sendable, Equatable {
 // MARK: - Modifier
 
 /// View modifier enabling the globe handoff on a diorama.
-public struct GlobeTransitionModifier: ViewModifier {
+struct GlobeTransitionModifier: ViewModifier {
     let style: GlobeTransitionStyle?
 
     public func body(content: Content) -> some View {

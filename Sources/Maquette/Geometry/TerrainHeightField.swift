@@ -28,7 +28,7 @@ import simd
 /// rather than to its floor so the strata band keeps its height as the map widens. Everything above
 /// still holds — it is one affine map either way — but "Y = 0 is the lowest ground" is true at the
 /// scale the chunk was generated at and not at every scale it is read at.
-public struct TerrainHeightField: Sendable {
+struct TerrainHeightField: Sendable {
     /// Decoded elevation grids, one per tile.
     public let grids: [ElevationGrid]
     /// Tile x/y positions corresponding to each grid.

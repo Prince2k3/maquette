@@ -297,9 +297,6 @@ struct ContentView: View {
     /// The orbit camera, seeded from the preset and thereafter the user's.
     @State private var position: DioramaCameraPosition = .automatic
 
-    /// The globe is not a preset — it is a different screen, reached by the same picker.
-    @State private var showsGlobe = ProcessInfo.processInfo.environment["MAQUETTE_PRESET"] == "globe"
-
     private var preset: DemoPreset { DemoPresets.all[selection] }
 
     /// The preset's style with the live buildings toggle folded in.
@@ -325,11 +322,7 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 header
 
-                if showsGlobe {
-                    GlobeDemoView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    DioramaView(
+                DioramaView(
                         region: preset.region,
                         shape: preset.shape,
                         physicalSize: preset.physicalSize,
@@ -361,9 +354,8 @@ struct ContentView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    if preset.id == "buildings" {
-                        buildingsToggle
-                    }
+                if preset.id == "buildings" {
+                    buildingsToggle
                 }
                 presetPicker
             }
@@ -382,9 +374,9 @@ struct ContentView: View {
 
     private var header: some View {
         VStack(spacing: 2) {
-            Text(showsGlobe ? "Globe" : preset.title)
+            Text(preset.title)
                 .font(.title2.weight(.semibold))
-            Text(showsGlobe ? "The whole world, textured from the same raster tiles" : preset.caption)
+            Text(preset.caption)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -396,12 +388,10 @@ struct ContentView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(Array(DemoPresets.all.enumerated()), id: \.element.id) { index, item in
-                    chip(item.title, id: item.id, isSelected: !showsGlobe && index == selection) {
-                        showsGlobe = false
+                    chip(item.title, id: item.id, isSelected: index == selection) {
                         selection = index
                     }
                 }
-                chip("Globe", id: "globe", isSelected: showsGlobe) { showsGlobe = true }
             }
             .padding(.horizontal, 16)
         }

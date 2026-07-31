@@ -269,9 +269,9 @@ struct GeoJSONShapeTests {
         let boundary = configuration.boundary
         #expect(boundary.vertices.count == 4)
         // Padding is what keeps the cut edge off the edge of the fetched region.
-        #expect(boundary.extent.x < configuration.physicalDiameter)
+        #expect(boundary.extent.x < configuration.physicalSize)
         #expect(
-            abs(boundary.extent.x - configuration.physicalDiameter / 1.05) < 0.005,
+            abs(boundary.extent.x - configuration.physicalSize / 1.05) < 0.005,
             "The longer side fills the diameter less the 5% padding"
         )
         #expect(fanNormalPointsUp(boundary))
@@ -286,7 +286,7 @@ struct GeoJSONShapeTests {
             center: Self.center.clLocationCoordinate,
             radiusMeters: 5000,
             shape: .geoJSON(ring: ring()),
-            physicalDiameter: 0.8
+            physicalSize: 0.8
         )
 
         // The extent says how much diorama the fetched radius spans; the outline's own footprint is

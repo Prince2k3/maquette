@@ -14,7 +14,7 @@ import os
 /// lit by the real sun, and lighting it again dims whichever half of the world faces away from the
 /// scene's key light.
 @MainActor
-public final class GlobeEntity: Entity {
+final class GlobeEntity: Entity {
     /// The sphere's radius in diorama meters.
     public private(set) var radius: Float
 

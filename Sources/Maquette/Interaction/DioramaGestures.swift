@@ -1,52 +1,27 @@
 import Foundation
 import SwiftUI
 
-/// Describes the types of interactive gestures supported by the diorama.
+/// The gesture vocabulary the platform views route against.
+///
+/// The public face of this is ``DioramaInteractionModes`` on `DioramaView`'s initializer, which is
+/// where MapKit puts the equivalent; this internal set is what the routing code consumes.
 ///
 /// ## How they map to input
 ///
 /// On iOS the split follows what a map does: **one finger** slides the terrain beneath the chunk's
 /// outline, and **two fingers** orbit the camera and pinch to zoom. On macOS a pointer has no
-/// second finger, so **drag** slides the terrain and **option-drag** orbits, with scroll to zoom.
+/// second finger, so **drag** slides the terrain and **option-drag** orbits, with pinch or scroll
+/// to zoom. On visionOS a drag slides and a pinch zooms.
 ///
-/// Terrain sliding requires a chunk that can pan, which means a configuration with a non-zero
-/// `panRange`. Without one, a single drag orbits instead, so a fixed diorama behaves as it always
-/// has.
-public enum DioramaGestureType: Sendable, Hashable {
+/// Terrain sliding requires a chunk that can pan, which means a style with a non-zero `panRange`.
+/// Without one, a single drag orbits instead, so a fixed diorama behaves as it always has.
+enum DioramaGestureType: Sendable, Hashable {
     /// Orbit the camera around the diorama.
     case rotate
     /// Zoom in/out on the diorama.
     case zoom
     /// Slide the terrain beneath the chunk's outline.
     case pan
-}
-
-/// View modifier that configures which gestures are enabled on a diorama view.
-public struct DioramaGesturesModifier: ViewModifier {
-    let enabledGestures: Set<DioramaGestureType>
-
-    public func body(content: Content) -> some View {
-        content
-            .environment(\.enabledDioramaGestures, enabledGestures)
-    }
-}
-
-extension View {
-    /// Configures which interactive gestures are enabled on this diorama.
-    ///
-    /// ```swift
-    /// DioramaView(configuration: config)
-    ///     .dioramaGestures([.rotate, .zoom, .pan])
-    /// ```
-    public func dioramaGestures(_ gestures: Set<DioramaGestureType>) -> some View {
-        modifier(DioramaGesturesModifier(enabledGestures: gestures))
-    }
-}
-
-// MARK: - Environment Key
-
-extension EnvironmentValues {
-    @Entry var enabledDioramaGestures: Set<DioramaGestureType> = [.rotate, .zoom, .pan]
 }
 
 // MARK: - Conditional Gesture Helper

@@ -43,7 +43,7 @@ import os
 ///   have given up 70 s earlier with nothing.
 /// - **Say who is calling.** The usage policy asks for an identifying `User-Agent`, and an
 ///   unidentified caller is the first one throttled.
-public struct OSMBuildingProvider: BuildingProvider {
+struct OSMBuildingProvider: BuildingProvider {
     private static let logger = Logger(maquette: "OSMBuildingProvider")
 
     /// Overpass instances to try, in order. Each is tried before any is tried a second time.

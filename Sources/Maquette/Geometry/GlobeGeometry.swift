@@ -30,7 +30,7 @@ import simd
 /// +Y is the north pole, and a coordinate's position is `(cos·sin lon, sin lat, cos·cos lon)` — so
 /// the prime meridian faces +Z and 90°E faces +X. That is the same convention ``CameraController``
 /// already orbits in, which makes its azimuth a longitude and its elevation a latitude directly.
-public enum GlobeGeometry {
+enum GlobeGeometry {
     /// The latitude Web Mercator stops at, in degrees. Everything beyond is cap.
     public static let mercatorLimitDegrees: Double = 85.05112877980659
 

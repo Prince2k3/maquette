@@ -5,7 +5,7 @@ import os
 ///
 /// By default uses OpenStreetMap raster tiles. Developers can supply a custom URL template
 /// with `{z}`, `{x}`, `{y}` placeholders.
-public struct SatelliteTileProvider: TileProvider, Sendable {
+struct SatelliteTileProvider: TileProvider, Sendable {
     public let providerIdentifier: String
 
     private let urlTemplate: String

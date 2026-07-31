@@ -473,7 +473,7 @@ public struct DioramaEffect: Sendable, Equatable {
 // MARK: - Modifier
 
 /// View modifier that applies a visual effect to a diorama.
-public struct DioramaEffectModifier: ViewModifier {
+struct DioramaEffectModifier: ViewModifier {
     let effect: DioramaEffect
 
     public func body(content: Content) -> some View {

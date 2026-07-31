@@ -13,7 +13,7 @@ import simd
 /// which tiles were resident. Adding a tile moved the terrain. Naming the map explicitly separates
 /// *where the ground is* from *what is currently in memory*, which is what a rolling fetch needs —
 /// tiles can arrive and be evicted without the terrain shifting underneath the chunk.
-public struct TerrainAnchor: Sendable, Equatable {
+struct TerrainAnchor: Sendable, Equatable {
     /// Zoom level the tile coordinates are expressed at.
     public let zoom: Int
     /// Fractional tile coordinate that sits at diorama X/Z = 0.

@@ -33,7 +33,8 @@ struct GoogleTiles3DProviderTests {
         ])
         let provider = GoogleTiles3DProvider(apiKey: "test-key", httpClient: mock, rootCache: isolatedCache())
 
-        let tileset = try await provider.fetchTileset()
+        let data = try await provider.fetchTileset()
+        let tileset = try JSONDecoder().decode(TilesetJSON.self, from: data)
         #expect(tileset.asset.version == "1.1")
         #expect(tileset.geometricError == 100.0)
     }

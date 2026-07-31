@@ -289,7 +289,7 @@ final class VisionOSDioramaModel {
         let depth = bounds.max.z - bounds.min.z
         volumeSpan = min(width, depth)
         floorY = bounds.min.y
-        let diameter = store.configuration.physicalDiameter
+        let diameter = store.configuration.physicalSize
         fitScale = diameter > 0 ? volumeSpan / diameter : 1
         updateEntityPlacement()
     }
@@ -308,7 +308,7 @@ final class VisionOSDioramaModel {
         }
         if let globe = store.globe {
             let radius = globe.radius
-            let diameter = store.configuration.physicalDiameter
+            let diameter = store.configuration.physicalSize
             let globeFit = radius > 0 ? (diameter * fitScale) / (2 * radius) : fitScale
             globe.scale = SIMD3<Float>(repeating: globeFit)
             // The dock keeps the sphere's top on the diorama origin, which the entity scale

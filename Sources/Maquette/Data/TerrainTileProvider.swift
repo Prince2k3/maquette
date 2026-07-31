@@ -3,7 +3,7 @@ import Foundation
 import os
 
 /// A 2D grid of elevation values in meters.
-public struct ElevationGrid: Sendable {
+struct ElevationGrid: Sendable {
     /// Width of the grid (number of columns).
     public let width: Int
     /// Height of the grid (number of rows).
@@ -48,7 +48,7 @@ public struct ElevationGrid: Sendable {
 }
 
 /// Fetches and decodes Mapzen Terrarium-encoded elevation tiles from AWS.
-public struct TerrainTileProvider: TileProvider, Sendable {
+struct TerrainTileProvider: TileProvider, Sendable {
     public let providerIdentifier = "terrarium"
 
     private static let baseURL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium"

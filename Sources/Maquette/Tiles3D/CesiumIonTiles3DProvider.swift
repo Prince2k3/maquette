@@ -67,7 +67,7 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
         self.httpClient = httpClient
     }
 
-    public func fetchTileset() async throws -> TilesetJSON {
+    public func fetchTileset() async throws -> Data {
         // Step 1: Get endpoint
         let endpointURLString = "https://api.cesium.com/v1/assets/\(assetId)/endpoint?access_token=\(accessToken)"
         guard let endpointURL = URL(string: endpointURLString) else {
@@ -138,6 +138,8 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
             )
         }
 
+        // Parsed here only to mine the session token out of the content URIs; the library parses
+        // the document again for traversal, which is cheap next to the fetch either side of it.
         let tileset: TilesetJSON
         do {
             tileset = try JSONDecoder().decode(TilesetJSON.self, from: tilesetData)
@@ -170,7 +172,7 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
             )
         }
 
-        return tileset
+        return tilesetData
     }
 
     public func fetchTileContent(uri: String) async throws -> Data {

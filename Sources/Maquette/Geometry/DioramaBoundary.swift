@@ -13,7 +13,7 @@ import simd
 /// Vertices are normalized on construction so that fan-triangulating any sub-polygon in vertex
 /// order produces upward-facing (+Y) normals. Callers can rely on this when building the top
 /// surface, and on `outwardNormal(forEdgeFrom:to:)` when building walls.
-public struct DioramaBoundary: Sendable {
+struct DioramaBoundary: Sendable {
     /// Boundary vertices as (x, z) pairs, forming a closed loop. The closing edge from the last
     /// vertex back to the first is implicit.
     public let vertices: [SIMD2<Float>]

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Tile coordinate pair.
-public struct TileCoordinate: Sendable, Hashable {
+struct TileCoordinate: Sendable, Hashable {
     public let x: Int
     public let y: Int
 
@@ -12,7 +12,7 @@ public struct TileCoordinate: Sendable, Hashable {
 }
 
 /// Geographic bounding box in degrees.
-public struct TileBounds: Sendable {
+struct TileBounds: Sendable {
     public let minLatitude: Double
     public let minLongitude: Double
     public let maxLatitude: Double
@@ -20,7 +20,7 @@ public struct TileBounds: Sendable {
 }
 
 /// Standard Web Mercator (EPSG:3857) slippy-map tile math.
-public enum TileMath {
+enum TileMath {
     /// Converts a geographic coordinate to tile x/y at the given zoom level.
     public static func tileXY(for coordinate: Coordinate, zoom: Int) -> TileCoordinate {
         let n = pow(2.0, Double(zoom))

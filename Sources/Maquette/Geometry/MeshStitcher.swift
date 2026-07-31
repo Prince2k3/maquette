@@ -3,7 +3,7 @@ import RealityKit
 import simd
 
 /// Stitches adjacent terrain tile meshes at their edges to eliminate visible seams.
-public enum MeshStitcher {
+enum MeshStitcher {
     /// Aligns edge vertices between adjacent terrain meshes so their positions match exactly.
     ///
     /// This operates on raw vertex arrays before mesh generation. Adjacent tiles share

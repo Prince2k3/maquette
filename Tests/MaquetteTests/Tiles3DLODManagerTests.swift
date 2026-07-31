@@ -18,7 +18,9 @@ private actor RecordingProvider: Tiles3DProvider {
 
     nonisolated var attribution: String { "Test" }
 
-    func fetchTileset() async throws -> TilesetJSON { tileset }
+    func fetchTileset() async throws -> Data {
+        try JSONEncoder().encode(tileset)
+    }
 
     func fetchTileContent(uri: String) async throws -> Data {
         requested.insert(uri)

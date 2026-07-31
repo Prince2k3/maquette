@@ -25,7 +25,7 @@ public enum ImagerySource: Sendable, Equatable {
 /// terrain chunk is generated once from a heightfield and extruded into a solid; a photorealistic
 /// model is arbitrary geometry streamed continuously and cut to the outline. Options that apply to
 /// one are meaningless for the other, which is why each carries its own style.
-public enum DioramaPresentation: Sendable {
+enum DioramaPresentation: Sendable {
     /// A terrain chunk built from elevation and imagery tiles.
     ///
     /// Uses the configuration's `elevation`, `elevationExaggeration`, `imagerySource`,
@@ -127,7 +127,7 @@ public extension DioramaShape {
 }
 
 /// Configuration for a diorama instance, defining its geographic region, visual style, and presentation parameters.
-public struct DioramaConfiguration: Sendable {
+struct DioramaConfiguration: Sendable {
     /// Geographic center of the diorama.
     public var center: CLLocationCoordinate2D
     /// Radius in meters around the center to include.
@@ -137,7 +137,7 @@ public struct DioramaConfiguration: Sendable {
     /// Shape of the diorama boundary.
     public var shape: DioramaShape
     /// Physical diameter in meters. On visionOS this maps to real-world size; on iOS/macOS it is a viewport reference.
-    public var physicalDiameter: Float
+    public var physicalSize: Float
     /// Explicit zoom level for tile fetching. `nil` means auto-calculate from radius.
     public var zoomLevel: Int?
     /// Multiplier applied to elevation values. Default `1.0` (true-to-scale).
@@ -197,7 +197,7 @@ public struct DioramaConfiguration: Sendable {
         radiusMeters: Double,
         elevation: ElevationStyle = .realistic,
         shape: DioramaShape = .circular,
-        physicalDiameter: Float = 0.8,
+        physicalSize: Float = 0.8,
         zoomLevel: Int? = nil,
         elevationExaggeration: Float = 1.0,
         chunk: TerrainChunkStyle = .standard,
@@ -211,7 +211,7 @@ public struct DioramaConfiguration: Sendable {
         self.radiusMeters = radiusMeters
         self.elevation = elevation
         self.shape = shape
-        self.physicalDiameter = physicalDiameter
+        self.physicalSize = physicalSize
         self.zoomLevel = zoomLevel
         self.elevationExaggeration = elevationExaggeration
         self.chunk = chunk
@@ -230,7 +230,7 @@ public struct DioramaConfiguration: Sendable {
             radiusMeters: region.radius,
             elevation: style.elevation,
             shape: shape,
-            physicalDiameter: physicalSize,
+            physicalSize: physicalSize,
             zoomLevel: style.zoomLevel,
             elevationExaggeration: style.elevationExaggeration,
             chunk: style.chunk,
@@ -243,20 +243,20 @@ public struct DioramaConfiguration: Sendable {
     }
 }
 
-public extension DioramaConfiguration {
+extension DioramaConfiguration {
     /// The horizontal extent the diorama occupies in diorama meters: X width and Z depth.
     ///
-    /// Shapes that carry explicit dimensions use them; the rest fill `physicalDiameter`.
+    /// Shapes that carry explicit dimensions use them; the rest fill `physicalSize`.
     var horizontalExtent: SIMD2<Float> {
         switch shape {
         case .circular, .polygonal:
-            return SIMD2(physicalDiameter, physicalDiameter)
+            return SIMD2(physicalSize, physicalSize)
         case .rectangular(let width, let depth),
              .roundedRectangular(let width, let depth, _):
             return SIMD2(width, depth)
         case .custom(let points):
             guard var lo = points.first else {
-                return SIMD2(physicalDiameter, physicalDiameter)
+                return SIMD2(physicalSize, physicalSize)
             }
             var hi = lo
             for point in points.dropFirst() {
@@ -268,7 +268,7 @@ public extension DioramaConfiguration {
             // The scale reference, not the outline's own size: a geographic outline is resolved at
             // true scale, so what this has to say is how much diorama the fetched radius spans.
             // Its actual footprint comes back as `boundary.extent`, and is smaller.
-            return SIMD2(physicalDiameter, physicalDiameter)
+            return SIMD2(physicalSize, physicalSize)
         }
     }
 
@@ -287,7 +287,7 @@ public extension DioramaConfiguration {
     /// Unaffected by `panRange`: a larger pan region is fetched at a proportionally larger
     /// geographic radius, so the scale stays the same and the chunk keeps its true proportions.
     var geographicScale: Float {
-        physicalDiameter / Float(radiusMeters * 2.0)
+        physicalSize / Float(radiusMeters * 2.0)
     }
 
     /// Geographic radius of terrain to fetch, widened to give panning somewhere to pan from.
@@ -297,7 +297,7 @@ public extension DioramaConfiguration {
 
     /// Physical size of the fetched terrain region, which is the chunk's extent plus pan margin.
     var terrainRegionExtent: SIMD2<Float> {
-        SIMD2(repeating: physicalDiameter * (1 + panRange))
+        SIMD2(repeating: physicalSize * (1 + panRange))
     }
 
     /// Furthest the terrain can slide in each direction before the chunk would overhang the

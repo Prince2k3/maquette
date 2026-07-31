@@ -16,7 +16,7 @@ import SwiftUI
 /// └── marker (ModelEntity — sphere at current position)
 /// ```
 @MainActor
-public class RoutePreviewEntity: Entity {
+class RoutePreviewEntity: Entity {
 
     /// The full dimmed route entity.
     private(set) var dimmedRoute: ModelEntity?
@@ -47,12 +47,12 @@ public class RoutePreviewEntity: Entity {
     /// - Parameters:
     ///   - routePoints: 3D positions along the route in diorama space.
     ///   - style: Visual style configuration.
-    ///   - physicalDiameter: Diorama physical diameter for proportional sizing.
+    ///   - physicalSize: Diorama physical diameter for proportional sizing.
     ///   - yOffset: Vertical offset above terrain surface.
     public init(
         routePoints: [SIMD3<Float>],
         style: RoutePreviewStyle,
-        physicalDiameter: Float,
+        physicalSize: Float,
         yOffset: Float
     ) throws {
         self.routePoints = routePoints
@@ -99,7 +99,7 @@ public class RoutePreviewEntity: Entity {
         addChild(highlighted)
 
         // Create the marker sphere
-        let markerRadius = style.markerRadius ?? physicalDiameter * 0.008
+        let markerRadius = style.markerRadius ?? physicalSize * 0.008
         let markerMesh = MeshResource.generateSphere(radius: markerRadius)
         let markerMaterial = DioramaMaterials.unlitMaterial(color: style.markerColor)
         let markerEntity = ModelEntity(mesh: markerMesh, materials: [markerMaterial])

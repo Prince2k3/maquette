@@ -1,7 +1,7 @@
 import Foundation
 
 /// Parsed representation of an OGC 3D Tiles tileset.json.
-public struct TilesetJSON: Codable, Sendable {
+struct TilesetJSON: Codable, Sendable {
     /// Asset metadata (version, etc.).
     public let asset: TilesetAsset
     /// The root geometric error of the tileset.
@@ -19,7 +19,7 @@ public struct TilesetJSON: Codable, Sendable {
 }
 
 /// A single tile in the 3D Tiles hierarchy.
-public struct TileJSON: Codable, Sendable {
+struct TileJSON: Codable, Sendable {
     /// The bounding volume of this tile.
     public let boundingVolume: BoundingVolumeJSON
     /// Geometric error for this tile, used in LOD decisions.
@@ -37,7 +37,7 @@ public struct TileJSON: Codable, Sendable {
 /// Tile content reference (URI to GLB or other tile data).
 ///
 /// Supports both `uri` (3D Tiles 1.1) and `url` (3D Tiles 1.0) keys.
-public struct TileContentJSON: Codable, Sendable {
+struct TileContentJSON: Codable, Sendable {
     /// URI to the tile's content (relative or absolute).
     public let uri: String
 
@@ -68,7 +68,7 @@ public struct TileContentJSON: Codable, Sendable {
 }
 
 /// Bounding volume representation from tileset.json.
-public struct BoundingVolumeJSON: Codable, Sendable {
+struct BoundingVolumeJSON: Codable, Sendable {
     /// Region bounding volume: [west, south, east, north, minHeight, maxHeight] in radians.
     public let region: [Double]?
     /// Oriented bounding box: 12 floats — center(3) + x-half-axis(3) + y-half-axis(3) + z-half-axis(3).
@@ -78,7 +78,7 @@ public struct BoundingVolumeJSON: Codable, Sendable {
 }
 
 /// Refinement strategy for tile tree traversal.
-public enum RefinementStrategy: String, Codable, Sendable {
+enum RefinementStrategy: String, Codable, Sendable {
     /// Render children in addition to the parent.
     case add = "ADD"
     /// Render children instead of the parent.

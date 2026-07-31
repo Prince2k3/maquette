@@ -5,7 +5,7 @@ import Foundation
 /// Conforming types provide tile image data for a given slippy-map coordinate.
 /// The library ships with ``TerrainTileProvider`` and ``SatelliteTileProvider``;
 /// developers can supply custom implementations via this protocol.
-public protocol TileProvider: Sendable {
+protocol TileProvider: Sendable {
     /// A stable identifier for this provider, used as part of the cache key.
     var providerIdentifier: String { get }
 

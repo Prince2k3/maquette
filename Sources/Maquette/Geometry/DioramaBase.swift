@@ -8,7 +8,7 @@ import simd
 /// The chunk itself is a closed solid, so a base is decoration rather than structure — it exists to
 /// present the chunk, not to hide an open underside. It follows the chunk's own outline so the
 /// silhouette stays coherent for any shape.
-public enum DioramaBase {
+enum DioramaBase {
     /// Generates the base entity for a chunk.
     ///
     /// - Parameters:

@@ -10,7 +10,7 @@ import simd
 /// near it. Handing a boundary a different frame from the one the terrain came from is the same
 /// class of silent error the library's single projection exists to prevent: a city limit a hundred
 /// metres off the city still looks like a city limit.
-public struct GeographicFrame: Sendable, Equatable {
+struct GeographicFrame: Sendable, Equatable {
     /// The coordinate that sits at diorama X/Z = 0.
     public let center: Coordinate
     /// Real-world metres spanned by half the chunk's horizontal extent.

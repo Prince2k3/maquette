@@ -10,13 +10,13 @@ struct EllipsoidProjectionTests {
 
     private func makeProjection(
         radiusMeters: Double = 700,
-        physicalDiameter: Float = 0.8,
+        physicalSize: Float = 0.8,
         datumElevation: Double = 0
     ) -> EllipsoidProjection {
         EllipsoidProjection(
             center: Self.center,
             radiusMeters: radiusMeters,
-            physicalDiameter: physicalDiameter,
+            physicalSize: physicalSize,
             datumElevation: datumElevation
         )
     }
@@ -46,7 +46,7 @@ struct EllipsoidProjectionTests {
     @Test("Distance scales by the entity scale the tiles are drawn at")
     func scaleMatchesTheGeometry() {
         // The scale `Tiles3DEntity` applies: half the physical diameter per radius of real ground.
-        let projection = makeProjection(radiusMeters: 700, physicalDiameter: 0.8)
+        let projection = makeProjection(radiusMeters: 700, physicalSize: 0.8)
         #expect(abs(projection.geographicScale - 0.8 / 1400) < 1e-9)
 
         // A tenth of a degree of latitude is about 11.1 km; checking the ratio rather than the
@@ -62,7 +62,7 @@ struct EllipsoidProjectionTests {
 
     @Test("A metre north is a metre, through the ellipsoid rather than a sphere")
     func metreScale() {
-        let projection = makeProjection(radiusMeters: 1, physicalDiameter: 2)
+        let projection = makeProjection(radiusMeters: 1, physicalSize: 2)
         // A 1 m radius against a 2 m diameter is a scale of exactly 1, so the point is real metres.
         #expect(abs(projection.geographicScale - 1) < 1e-6)
 
@@ -77,7 +77,7 @@ struct EllipsoidProjectionTests {
 
     @Test("Altitude is measured from the datum the model was dropped to")
     func datumIsTheOrigin() {
-        let projection = makeProjection(radiusMeters: 700, physicalDiameter: 0.8, datumElevation: 12)
+        let projection = makeProjection(radiusMeters: 700, physicalSize: 0.8, datumElevation: 12)
         #expect(abs(projection.y(forElevation: 12)) < 1e-9)
         #expect(abs(projection.y(forElevation: 112) - 100 * projection.geographicScale) < 1e-6)
     }

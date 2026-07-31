@@ -20,7 +20,7 @@ import SwiftUI
 /// Diorama-space Y = 0 is the lowest terrain elevation in the region. The terrain surface rises
 /// into positive Y and the chunk's earth mass extends into negative Y down to its base depth.
 @MainActor
-public class DioramaEntity: Entity {
+class DioramaEntity: Entity {
     /// The terrain sub-entity (used with raster tile pipeline).
     public private(set) var terrain: TerrainEntity?
 
@@ -166,16 +166,16 @@ public class DioramaEntity: Entity {
     /// - Parameters:
     ///   - content: The content group to materialize.
     ///   - proxy: Coordinate converter for geographic → 3D position mapping.
-    ///   - physicalDiameter: The diorama's physical diameter for sizing and offset calculations.
+    ///   - physicalSize: The diorama's physical diameter for sizing and offset calculations.
     public func applyContent(
         _ content: DioramaContentGroup,
         using proxy: DioramaProxy,
-        physicalDiameter: Float
+        physicalSize: Float
     ) {
         clearOverlays()
 
         // Small Y offset to prevent z-fighting with the terrain surface
-        let polylineYOffset = physicalDiameter * 0.002
+        let polylineYOffset = physicalSize * 0.002
 
         for item in content.items {
             switch item {
@@ -185,7 +185,7 @@ public class DioramaEntity: Entity {
                     style: annotation.style,
                     identifier: annotation.id,
                     using: proxy,
-                    physicalDiameter: physicalDiameter,
+                    physicalSize: physicalSize,
                     yOffset: polylineYOffset
                 )
 
@@ -199,7 +199,7 @@ public class DioramaEntity: Entity {
                     let entity = try RoutePreviewEntity(
                         routePoints: points,
                         style: preview.style,
-                        physicalDiameter: physicalDiameter,
+                        physicalSize: physicalSize,
                         yOffset: polylineYOffset
                     )
                     setRoutePreview(entity)
@@ -220,7 +220,7 @@ public class DioramaEntity: Entity {
         style: AnnotationStyle,
         identifier: String,
         using proxy: DioramaProxy,
-        physicalDiameter: Float,
+        physicalSize: Float,
         yOffset: Float
     ) {
         switch geometry {
@@ -235,7 +235,7 @@ public class DioramaEntity: Entity {
                 style: style,
                 identifier: identifier,
                 using: proxy,
-                physicalDiameter: physicalDiameter
+                physicalSize: physicalSize
             )
 
         case .multiPoint(let multiPoint):
@@ -245,7 +245,7 @@ public class DioramaEntity: Entity {
                     style: style,
                     identifier: "\(identifier)#\(index)",
                     using: proxy,
-                    physicalDiameter: physicalDiameter
+                    physicalSize: physicalSize
                 )
             }
 
@@ -285,7 +285,7 @@ public class DioramaEntity: Entity {
                     style: style,
                     identifier: "\(identifier)#\(index)",
                     using: proxy,
-                    physicalDiameter: physicalDiameter,
+                    physicalSize: physicalSize,
                     yOffset: yOffset
                 )
             }
@@ -297,12 +297,12 @@ public class DioramaEntity: Entity {
         style: AnnotationStyle,
         identifier: String,
         using proxy: DioramaProxy,
-        physicalDiameter: Float
+        physicalSize: Float
     ) {
         guard let position = proxy.position(for: coordinate, altitude: style.altitude) else {
             return
         }
-        let marker = MarkerEntity(tint: style.tint, physicalDiameter: physicalDiameter)
+        let marker = MarkerEntity(tint: style.tint, physicalSize: physicalSize)
         addMarker(marker, identifier: identifier, position: position)
     }
 

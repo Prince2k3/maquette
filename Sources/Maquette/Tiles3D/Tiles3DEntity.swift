@@ -8,7 +8,7 @@ import os
 /// Manages a tree of child entities, each representing a loaded tile's mesh.
 /// Supports Google Photorealistic 3D Tiles and Cesium ion sources.
 @MainActor
-public class Tiles3DEntity: Entity {
+class Tiles3DEntity: Entity {
     private let lodManager: Tiles3DLODManager
     private let logger = Logger(maquette: "Tiles3DEntity")
 
@@ -100,7 +100,7 @@ public class Tiles3DEntity: Entity {
     ///   - provider: The 3D Tiles data source.
     ///   - center: Geographic center of the diorama.
     ///   - radiusMeters: Radius of the diorama in meters.
-    ///   - physicalDiameter: The diorama's physical diameter in meters.
+    ///   - physicalSize: The diorama's physical diameter in meters.
     ///   - boundary: The outline to cut the model to, in diorama meters.
     ///   - style: How the model is bounded and what it rests on.
     ///   - panRange: How far the model may be slid beneath its outline, as a fraction of the
@@ -109,13 +109,13 @@ public class Tiles3DEntity: Entity {
         provider: any Tiles3DProvider,
         center: CLLocationCoordinate2D,
         radiusMeters: Double,
-        physicalDiameter: Float,
+        physicalSize: Float,
         boundary: DioramaBoundary,
         style: Tiles3DStyle = .standard,
         panRange: Float = 0
     ) async throws {
         let ecefConverter = ECEFConverter(origin: center)
-        let geographicScale = physicalDiameter / Float(radiusMeters * 2.0)
+        let geographicScale = physicalSize / Float(radiusMeters * 2.0)
 
         // Tile geometry is in real-world meters while the outline is in diorama meters, and the
         // conversion rides on this entity's scale, so the prism is built in the geometry's space.

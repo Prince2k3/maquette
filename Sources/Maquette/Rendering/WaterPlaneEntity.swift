@@ -9,7 +9,7 @@ import AppKit
 #endif
 
 /// Generates a flat water plane entity for filling sea-level areas in the diorama.
-public enum WaterPlaneEntity {
+enum WaterPlaneEntity {
     /// Whether a region has sea-level ground worth filling — which takes land as well as water.
     ///
     /// **The plane fills the sea between land; it is not a way of drawing the sea.** A coast needs

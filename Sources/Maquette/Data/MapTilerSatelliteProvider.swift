@@ -10,7 +10,7 @@ import os
 /// let provider = MapTilerSatelliteProvider(apiKey: "your-key")
 /// let tileData = try await provider.fetchTile(x: 536, y: 358, zoom: 10)
 /// ```
-public struct MapTilerSatelliteProvider: TileProvider, Sendable {
+struct MapTilerSatelliteProvider: TileProvider, Sendable {
     public let providerIdentifier = "maptiler-satellite"
 
     private let apiKey: String

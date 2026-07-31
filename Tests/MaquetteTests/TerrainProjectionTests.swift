@@ -9,7 +9,7 @@ struct TerrainProjectionTests {
     private static let center = CLLocationCoordinate2D(latitude: 36.1069, longitude: -112.1129)
     private static let zoom = 11
     private static let radiusMeters: Double = 5000
-    private static let physicalDiameter: Float = 0.8
+    private static let physicalSize: Float = 0.8
 
     /// A synthetic elevation grid where elevation rises with both row and column.
     private func makeSyntheticGrid(width: Int = 256, height: Int = 256) -> ElevationGrid {
@@ -35,8 +35,8 @@ struct TerrainProjectionTests {
         let heightField = TerrainHeightField(
             grids: [grid],
             tilePositions: [(x: tile.x, y: tile.y)],
-            extent: SIMD2(Self.physicalDiameter, Self.physicalDiameter),
-            elevationScale: Self.physicalDiameter / Float(Self.radiusMeters * 2) * exaggeration,
+            extent: SIMD2(Self.physicalSize, Self.physicalSize),
+            elevationScale: Self.physicalSize / Float(Self.radiusMeters * 2) * exaggeration,
             baselineElevation: baseline,
             zoom: Self.zoom
         )
@@ -78,7 +78,7 @@ struct TerrainProjectionTests {
 
         let elevation = try #require(projection.elevation(at: Self.center))
         // (100 - 0) * (0.8 / 10000) * 1.0
-        let expected = 100.0 * (Self.physicalDiameter / Float(Self.radiusMeters * 2))
+        let expected = 100.0 * (Self.physicalSize / Float(Self.radiusMeters * 2))
         #expect(abs(elevation - expected) < 0.001)
     }
 
@@ -94,7 +94,7 @@ struct TerrainProjectionTests {
 
         let elevation = try #require(projection.elevation(at: Self.center))
         #expect(elevation >= 0)
-        #expect(elevation <= 300.0 * (Self.physicalDiameter / Float(Self.radiusMeters * 2)))
+        #expect(elevation <= 300.0 * (Self.physicalSize / Float(Self.radiusMeters * 2)))
     }
 
     @Test("Zero exaggeration flattens the surface")
@@ -127,8 +127,8 @@ struct TerrainProjectionTests {
         let point = projection.point(for: Coordinate(Self.center))
         // The mosaic-derived mapping centres the tile window, and the tile the centre falls in is
         // not centred on it, so this is only approximate — but it is within half a tile.
-        #expect(abs(point.x) < Self.physicalDiameter / 2)
-        #expect(abs(point.y) < Self.physicalDiameter / 2)
+        #expect(abs(point.x) < Self.physicalSize / 2)
+        #expect(abs(point.y) < Self.physicalSize / 2)
     }
 
     @Test("East is +X and north is -Z")
@@ -190,7 +190,7 @@ struct TerrainProjectionTests {
         )
         // Baseline at 1000 m, so the ground is at diorama Y = 0 and the arithmetic is readable.
         let projection = makeProjection(grid: flat, baseline: 1000)
-        let scale = Self.physicalDiameter / Float(Self.radiusMeters * 2)
+        let scale = Self.physicalSize / Float(Self.radiusMeters * 2)
         let coordinate = Coordinate(Self.center, altitude: 500)
 
         let clamped = try #require(projection.position(for: coordinate, altitude: .clampToGround))

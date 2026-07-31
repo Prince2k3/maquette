@@ -7,18 +7,18 @@ import SwiftUI
 /// Composed of a sphere head and a thin cylinder stem, sized proportionally
 /// to the diorama's physical diameter.
 @MainActor
-public class MarkerEntity: Entity {
+class MarkerEntity: Entity {
 
     /// Creates a marker entity with the given appearance.
     ///
     /// - Parameters:
     ///   - tint: The color of the marker.
-    ///   - physicalDiameter: The diorama's physical diameter, used to scale the marker proportionally.
-    public init(tint: Color, physicalDiameter: Float) {
+    ///   - physicalSize: The diorama's physical diameter, used to scale the marker proportionally.
+    public init(tint: Color, physicalSize: Float) {
         super.init()
         self.name = "Marker"
 
-        let markerScale = physicalDiameter * 0.015
+        let markerScale = physicalSize * 0.015
 
         // Stem: thin cylinder
         let stemRadius = markerScale * 0.06

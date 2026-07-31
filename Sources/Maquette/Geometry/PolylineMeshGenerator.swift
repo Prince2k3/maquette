@@ -3,7 +3,7 @@ import RealityKit
 import simd
 
 /// Generates flat ribbon meshes from 3D point sequences for rendering polylines on the diorama surface.
-public enum PolylineMeshGenerator {
+enum PolylineMeshGenerator {
     /// Generates a flat ribbon mesh from a sequence of 3D points.
     ///
     /// The ribbon lies in the XZ plane with a Y offset above the terrain to stay visible.

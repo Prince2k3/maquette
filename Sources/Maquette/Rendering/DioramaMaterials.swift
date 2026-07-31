@@ -11,7 +11,7 @@ import AppKit
 #endif
 
 /// Helpers for creating RealityKit materials used in diorama rendering.
-public enum DioramaMaterials {
+enum DioramaMaterials {
     /// Creates a material textured with satellite imagery data.
     ///
     /// - Parameter imageData: Raw PNG or JPEG image data.

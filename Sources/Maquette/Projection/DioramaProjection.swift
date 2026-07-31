@@ -26,7 +26,7 @@ import simd
 /// Diorama space is RealityKit's: **+X east, +Z south, +Y up**, in diorama metres. Y = 0 is the
 /// lowest terrain elevation in the region, the convention `TerrainHeightField` defines and
 /// everything else in the library shares.
-public protocol DioramaProjection: Sendable {
+protocol DioramaProjection: Sendable {
     /// Where a coordinate falls on the diorama's horizontal plane, in diorama metres.
     ///
     /// Always defined, including well outside the chunk — a point beyond the outline still has a

@@ -11,7 +11,7 @@ import simd
 /// ground it names — at any zoom, after any pan, on any outline. An independent approximation, even
 /// a good one, drifts against the terrain it is placed on precisely where the terrain is most
 /// interesting.
-public struct TerrainProjection: DioramaProjection {
+struct TerrainProjection: DioramaProjection {
     /// The surface, which carries the anchor, the elevation baseline and the vertical scale.
     public let heightField: TerrainHeightField
 

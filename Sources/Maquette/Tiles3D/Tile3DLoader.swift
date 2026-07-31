@@ -4,7 +4,7 @@ import RealityKit
 import os
 
 /// Fetches and decodes individual 3D Tiles content (GLB) into RealityKit entities.
-public struct Tile3DLoader: Sendable {
+struct Tile3DLoader: Sendable {
     let provider: any Tiles3DProvider
     let ecefConverter: ECEFConverter
     /// Outline to cut tile geometry to as it loads, or `nil` to keep tiles whole.

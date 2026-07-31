@@ -3,7 +3,7 @@ import Foundation
 import simd
 
 /// Bounding volume types used in 3D Tiles for visibility and LOD decisions.
-public enum BoundingVolume: Sendable {
+enum BoundingVolume: Sendable {
     /// Region bounding volume with geographic extents in radians and height in meters.
     case region(west: Double, south: Double, east: Double, north: Double, minHeight: Double, maxHeight: Double)
     /// Oriented bounding box with center and half-axes.

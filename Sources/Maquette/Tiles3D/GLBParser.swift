@@ -20,6 +20,10 @@ struct GLBParser: Sendable {
         /// CESIUM_RTC center or b3dm RTC_CENTER (ECEF position, Double precision).
         /// When present, mesh vertices are small offsets from this center.
         public let rtcCenter: SIMD3<Double>?
+        /// The glTF `asset.copyright` string, carried through rather than discarded: Google's
+        /// terms require the sources credited in every tile *in view* to be displayed on screen,
+        /// so dropping this at parse made the obligation impossible to meet downstream.
+        public let copyright: String?
     }
 
     // MARK: - GLB Constants
@@ -67,7 +71,8 @@ struct GLBParser: Sendable {
                     textureImages: parsed.textureImages,
                     transform: parsed.transform,
                     transformDouble: parsed.transformDouble,
-                    rtcCenter: rtc
+                    rtcCenter: rtc,
+                    copyright: parsed.copyright
                 )
             }
             return parsed
@@ -237,7 +242,8 @@ struct GLBParser: Sendable {
             textureImages: textureImages,
             transform: transform,
             transformDouble: transformDouble,
-            rtcCenter: rtcCenter
+            rtcCenter: rtcCenter,
+            copyright: gltf.asset.copyright
         )
     }
 
@@ -480,6 +486,7 @@ struct GLTFExtensions: Codable {
 }
 
 struct GLTFAsset: Codable {
+    let copyright: String?
     let version: String
     let generator: String?
 }

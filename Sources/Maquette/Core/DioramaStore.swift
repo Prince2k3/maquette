@@ -64,6 +64,12 @@ final class DioramaStore {
     /// Current loading state.
     public private(set) var loadingState: DioramaLoadingState = .idle
 
+    /// The credit line the photorealistic tiles on screen require, or `nil` for other imagery.
+    ///
+    /// The views draw this whenever it is present; showing the sources credited by the tiles in
+    /// view is a condition of the tile services' terms.
+    public private(set) var tilesAttribution: String?
+
     /// The root diorama entity, available once loading completes.
     public private(set) var dioramaEntity: Entity?
 
@@ -138,6 +144,7 @@ final class DioramaStore {
 
     /// Resets the store to its initial state, discarding the loaded entity.
     public func reset() {
+        tilesAttribution = nil
         rollTask?.cancel()
         rollTask = nil
         buildingsTask?.cancel()
@@ -1063,6 +1070,11 @@ final class DioramaStore {
             panRange: configuration.panRange
         )
         rootEntity.setTiles3D(tiles3DEntity)
+        // Attribution surfaces through the store so the views can draw it: displaying the sources
+        // credited by the tiles in view is a condition of the tile services' terms, not decoration.
+        tiles3DEntity.onAttributionChange = { [weak self] text in
+            self?.tilesAttribution = text
+        }
         // The same two operations the entity itself applies — rotate into the local ENU frame about
         // the centre, then scale — so a coordinate lands in the frame the geometry arrived in.
         projection = EllipsoidProjection(

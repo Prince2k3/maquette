@@ -6,7 +6,7 @@ import Testing
 struct GLBParserTests {
 
     /// Builds a minimal valid GLB with one triangle (no texture).
-    private func buildMinimalGLB() -> Data {
+    private func buildMinimalGLB(copyright: String? = nil) -> Data {
         // Positions: 3 vertices forming a triangle
         let positions: [Float] = [
             0, 0, 0,
@@ -36,7 +36,7 @@ struct GLBParserTests {
         // Build JSON chunk
         let gltfJSON = """
         {
-            "asset": { "version": "2.0" },
+            "asset": { "version": "2.0"\(copyright.map { ", \"copyright\": \"\($0)\"" } ?? "") },
             "scenes": [{ "nodes": [0] }],
             "nodes": [{ "mesh": 0 }],
             "meshes": [{
@@ -204,6 +204,18 @@ struct GLBParserTests {
 
         #expect(parsed.meshDescriptors.count == 1)
         #expect(parsed.textureImages.isEmpty)
+    }
+
+    @Test("The asset's copyright survives parsing")
+    func copyrightPassesThrough() throws {
+        // `asset.copyright` is where a tile credits its data sources, and the attribution the tile
+        // services require on screen is built from it — so discarding it at parse (which this
+        // parser did for a long time) makes the obligation impossible to meet downstream.
+        let credited = try GLBParser.parse(buildMinimalGLB(copyright: "Google;Airbus"))
+        #expect(credited.copyright == "Google;Airbus")
+
+        let uncredited = try GLBParser.parse(buildMinimalGLB())
+        #expect(uncredited.copyright == nil)
     }
 
     /// A tile that arrives short must be rejected, not crash the app.

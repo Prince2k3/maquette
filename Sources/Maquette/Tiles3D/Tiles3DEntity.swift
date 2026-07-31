@@ -143,8 +143,29 @@ class Tiles3DEntity: Entity {
         self.tileContainer.name = Self.containerName
         addChild(tileContainer)
 
+        // The provider's own name is the attribution floor; the per-tile copyright the LOD manager
+        // aggregates joins it as tiles arrive. Both have to reach the screen — that is a licensing
+        // obligation of the tile services, not a nicety.
+        self.attributionText = provider.attribution
+        lodManager.onAttributionChange = { [weak self] aggregated in
+            guard let self else { return }
+            let base = provider.attribution
+            self.attributionText = aggregated.map { "\(base) · \($0)" } ?? base
+            self.onAttributionChange?(self.attributionText)
+        }
+
         try await lodManager.start()
         logger.info("3D Tiles entity initialized (scale=\(self.geographicScale), clipped=\(prism != nil)): \(provider.attribution)")
+    }
+
+    /// The credit line the tiles on screen require: the provider, then every source credited in a
+    /// visible tile, ordered by how many tiles credit it. Displayed by the diorama views.
+    public private(set) var attributionText: String?
+
+    /// Called whenever ``attributionText`` changes — and immediately on assignment, so a late
+    /// observer starts from the current credit rather than from nothing.
+    public var onAttributionChange: ((String?) -> Void)? {
+        didSet { onAttributionChange?(attributionText) }
     }
 
     /// How much of the model has arrived.

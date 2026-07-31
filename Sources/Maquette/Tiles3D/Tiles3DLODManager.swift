@@ -73,6 +73,14 @@ final class Tiles3DLODManager {
     /// Bumped every time the outline moves, so a tile that was being cut while it moved can tell.
     private var clipGeneration = 0
     private var framesSinceVisible: [String: Int] = [:]
+    /// Each loaded tile's `asset.copyright`, kept while the tile is, for on-screen attribution.
+    private var tileCopyrights: [String: String] = [:]
+    /// The occurrence-ordered attribution over the tiles currently *visible*, or `nil` when no
+    /// credited tile is on screen. Google's display rule: every source credited in a tile in view,
+    /// sorted by how many tiles credit it.
+    private(set) var attributionText: String?
+    /// Called whenever ``attributionText`` changes, so the view layer can re-render the credit.
+    var onAttributionChange: (@MainActor (String?) -> Void)?
     private var subTilesets: [String: TilesetJSON] = [:]
     private var hasLoggedFirstTraversal = false
     /// Content fetched successfully that holds nothing drawable — an unsupported format, or
@@ -712,6 +720,9 @@ final class Tiles3DLODManager {
         parentEntity.addChild(entity)
         loadedEntities[request.uri] = entity
         framesSinceVisible[request.uri] = 0
+        if let copyright = loaded.copyright {
+            tileCopyrights[request.uri] = copyright
+        }
         if let source = loaded.source {
             sourceGeometry[request.uri] = source
             // Adopted rather than recreated, so the first re-cut writes into the buffer the tile is
@@ -915,6 +926,41 @@ final class Tiles3DLODManager {
                 entity.isEnabled = shouldShow
             }
         }
+        updateAttribution()
+    }
+
+    /// Recomputes the credit over the tiles on screen.
+    ///
+    /// Attribution follows what is *in view*, not what is loaded — Google's rule — so it is
+    /// re-measured whenever visibility changes and whenever a tile leaves. One copyright string
+    /// routinely credits several sources joined with `;`, so the string splits before counting,
+    /// and sources are ordered by how many visible tiles credit them, most first.
+    func updateAttribution() {
+        let visible = selectedURIs
+            .filter { !clippedAway.contains($0) }
+            .compactMap { tileCopyrights[$0] }
+        let text = Self.aggregateAttribution(over: visible)
+        guard text != attributionText else { return }
+        attributionText = text
+        onAttributionChange?(text)
+    }
+
+    /// Folds the visible tiles' copyright strings into one credit line.
+    ///
+    /// One string routinely credits several sources joined with `;`, so each splits before
+    /// counting; sources order by how many tiles credit them, most first, ties alphabetical so
+    /// the line is stable frame to frame.
+    nonisolated static func aggregateAttribution(over copyrights: [String]) -> String? {
+        var counts: [String: Int] = [:]
+        for copyright in copyrights {
+            for source in copyright.split(separator: ";") {
+                let trimmed = source.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty else { continue }
+                counts[trimmed, default: 0] += 1
+            }
+        }
+        let ordered = counts.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+        return ordered.isEmpty ? nil : ordered.map(\.key).joined(separator: " · ")
     }
 
     /// Ages out tiles that have not been seen recently, but only once over budget.
@@ -956,6 +1002,7 @@ final class Tiles3DLODManager {
             }
             loadedEntities.removeValue(forKey: uri)?.removeFromParent()
             framesSinceVisible.removeValue(forKey: uri)
+            tileCopyrights.removeValue(forKey: uri)
             sourceGeometry.removeValue(forKey: uri)
             tileMeshes.removeValue(forKey: uri)
             gpuClipper?.discard(uri)

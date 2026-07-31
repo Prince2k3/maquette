@@ -36,6 +36,8 @@ struct Tile3DLoader: Sendable {
         /// The buffer the entity draws from, so a later re-cut can rewrite it in place. Absent when
         /// the outline left nothing to draw.
         let mesh: Tiles3DMeshBuffer?
+        /// The tile's own `asset.copyright`, for the on-screen attribution the provider requires.
+        let copyright: String?
     }
 
     private let logger = Logger(maquette: "Tile3DLoader")
@@ -162,7 +164,7 @@ struct Tile3DLoader: Sendable {
                 guard let source else { return nil }
                 let placeholder = ModelEntity()
                 placeholder.isEnabled = false
-                return LoadedTile(entity: placeholder, source: source, mesh: nil)
+                return LoadedTile(entity: placeholder, source: source, mesh: nil, copyright: parsed.copyright)
             }
             entityTransform = matrix_identity_float4x4
         } else {
@@ -194,6 +196,6 @@ struct Tile3DLoader: Sendable {
             entity.components.set(Tiles3DCutEdgeComponent(edges: geometry.cutEdges))
         }
 
-        return LoadedTile(entity: entity, source: source, mesh: buffer)
+        return LoadedTile(entity: entity, source: source, mesh: buffer, copyright: parsed.copyright)
     }
 }

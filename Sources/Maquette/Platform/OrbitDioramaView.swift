@@ -69,6 +69,7 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
         ) {
             model.reload()
         }
+        .dioramaAttribution(model.store.tilesAttribution)
         .task(id: globeStyle) {
             guard let globeStyle else { return }
             await model.adoptGlobeStyle(globeStyle)

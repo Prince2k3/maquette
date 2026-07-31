@@ -12,6 +12,15 @@ import Synchronization
 /// individual tiles are not billed. A diorama therefore costs one event per root request, however
 /// much geometry it goes on to stream, and `rootCacheLifetime` is what keeps repeated loads free.
 ///
+/// ## Attribution
+///
+/// Google's terms require two things on screen wherever its tiles are: the data-source credits,
+/// and the Google logo. The library handles the first — each tile's `asset.copyright` is
+/// aggregated over the tiles in view and drawn as an overlay the caller cannot suppress. The logo
+/// is the integrating app's obligation: a Swift package that ships no resources cannot carry the
+/// asset, so place it per the Map Tiles API attribution guidelines
+/// (https://developers.google.com/maps/documentation/tile/policies).
+///
 /// Usage:
 /// ```swift
 /// let provider = GoogleTiles3DProvider(apiKey: "your-google-key")

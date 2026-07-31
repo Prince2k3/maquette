@@ -2,8 +2,9 @@ import Foundation
 
 /// Credentials for the demo. Copy to `Secrets.swift` and fill in — that file is gitignored.
 ///
-/// Keys are kept out of source control deliberately: two credentials are already exposed in this
-/// repository's history and adding a third would compound it.
+/// Keys are kept out of source control deliberately: a credential written into a committed file
+/// is published for as long as the commit that added it exists, and deleting it later does not
+/// unpublish it.
 enum Secrets {
     /// Google Maps Platform API key with the Map Tiles API enabled.
     ///

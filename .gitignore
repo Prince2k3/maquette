@@ -61,3 +61,12 @@ Demo/DerivedData/
 Demo/build/
 # Demo credentials — copy Secrets.example.swift to Secrets.swift
 Demo/MaquetteDemo/Secrets.swift
+
+# macOS Finder metadata
+.DS_Store
+
+# SwiftPM Xcode scaffolding
+.swiftpm/
+
+# Internal development notes — not part of the public repository
+CLAUDE.md

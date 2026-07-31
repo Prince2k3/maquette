@@ -24,6 +24,15 @@ let package = Package(
             name: "MaquetteTests",
             dependencies: ["Maquette"],
             path: "Tests/MaquetteTests"
+        ),
+        // Compiles against the library the way a consumer does — a plain `import Maquette`, no
+        // @testable — so an access-control change that breaks the public API breaks this target
+        // rather than shipping silently. Every other test file is @testable and proves nothing
+        // about visibility.
+        .testTarget(
+            name: "MaquetteAPITests",
+            dependencies: ["Maquette"],
+            path: "Tests/MaquetteAPITests"
         )
     ]
 )

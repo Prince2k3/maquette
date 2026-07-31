@@ -135,6 +135,8 @@ class DioramaEntity: Entity {
         }
         polylineEntities.removeAll()
 
+        appliedPins.removeAll()
+        appliedRibbons.removeAll()
         clearRoutePreview()
     }
 
@@ -157,11 +159,30 @@ class DioramaEntity: Entity {
 
     private static let logger = Logger(maquette: "DioramaEntity")
 
+    /// What each overlay entity was last built from, keyed by its (suffixed) identifier — the
+    /// evidence the reconciliation below diffs against.
+    private var appliedPins: [String: (annotation: DioramaAnnotation, coordinate: Coordinate)] = [:]
+    private var appliedRibbons: [String: (annotation: DioramaAnnotation, coordinates: [Coordinate])] = [:]
+
+    /// One leaf drawing operation, flattened out of a feature's (possibly multi-) geometry.
+    private enum OverlayPlan {
+        case pin(key: String, coordinate: Coordinate, annotation: DioramaAnnotation)
+        case ribbon(key: String, coordinates: [Coordinate], annotation: DioramaAnnotation)
+    }
+
     /// Materializes diorama content as 3D entities.
     ///
     /// What gets drawn is decided by each annotation's *geometry*, not by which case of a content
     /// enum it arrived in: a point becomes a `MarkerEntity` at the right terrain height, a line
     /// becomes a ribbon following the surface, and a multi-geometry becomes one entity per part.
+    ///
+    /// **Applied as a keyed diff, not a rebuild.** This runs on every pan step — the overlays ride
+    /// the terrain, so their positions are re-projected as the ground slides — and it used to begin
+    /// with `clearOverlays()`, tearing down and recreating every entity and material each time. Now
+    /// an entity whose annotation is unchanged is *moved* (a marker keeps its entity, materials,
+    /// and selection state; a ribbon keeps its entity and material and takes a fresh mesh for the
+    /// new terrain heights), entities whose identities vanished are removed, and only genuinely new
+    /// or restyled annotations build anything.
     ///
     /// - Parameters:
     ///   - content: The content group to materialize.
@@ -172,56 +193,40 @@ class DioramaEntity: Entity {
         using proxy: DioramaProxy,
         physicalSize: Float
     ) {
-        clearOverlays()
-
         // Small Y offset to prevent z-fighting with the terrain surface
         let polylineYOffset = physicalSize * 0.002
 
+        var plans: [OverlayPlan] = []
+        var routePreviewItem: DioramaRoutePreview?
         for item in content.items {
             switch item {
             case .annotation(let annotation):
-                draw(
+                plan(
                     annotation.feature.geometry,
-                    style: annotation.style,
+                    annotation: annotation,
                     identifier: annotation.id,
-                    using: proxy,
-                    physicalSize: physicalSize,
-                    yOffset: polylineYOffset
+                    into: &plans
                 )
-
             case .routePreview(let preview):
-                let points: [SIMD3<Float>] = preview.coordinates.compactMap {
-                    proxy.position(for: $0)
-                }
-                guard points.count >= 2 else { continue }
-
-                do {
-                    let entity = try RoutePreviewEntity(
-                        routePoints: points,
-                        style: preview.style,
-                        physicalSize: physicalSize,
-                        yOffset: polylineYOffset
-                    )
-                    setRoutePreview(entity)
-                } catch {
-                    Self.logger.error("Failed to create route preview entity: \(error)")
-                }
+                routePreviewItem = preview
             }
         }
+
+        reconcilePins(plans, using: proxy, physicalSize: physicalSize)
+        reconcileRibbons(plans, using: proxy, yOffset: polylineYOffset)
+        applyRoutePreview(routePreviewItem, using: proxy, physicalSize: physicalSize, yOffset: polylineYOffset)
     }
 
-    /// Draws one geometry, recursing into the multi- and collection forms.
+    /// Flattens one geometry into leaf plans, recursing into the multi- and collection forms.
     ///
     /// Parts of a multi-geometry are suffixed rather than sharing the feature's identifier, so a
     /// `MultiPoint` of ten places is ten entities that can each be replaced rather than nine that
     /// silently overwrite each other in `markerEntities`.
-    private func draw(
+    private func plan(
         _ geometry: Geometry?,
-        style: AnnotationStyle,
+        annotation: DioramaAnnotation,
         identifier: String,
-        using proxy: DioramaProxy,
-        physicalSize: Float,
-        yOffset: Float
+        into plans: inout [OverlayPlan]
     ) {
         switch geometry {
         case nil:
@@ -230,43 +235,19 @@ class DioramaEntity: Entity {
             break
 
         case .point(let point):
-            addPin(
-                at: point.coordinate,
-                style: style,
-                identifier: identifier,
-                using: proxy,
-                physicalSize: physicalSize
-            )
+            plans.append(.pin(key: identifier, coordinate: point.coordinate, annotation: annotation))
 
         case .multiPoint(let multiPoint):
             for (index, coordinate) in multiPoint.coordinates.enumerated() {
-                addPin(
-                    at: coordinate,
-                    style: style,
-                    identifier: "\(identifier)#\(index)",
-                    using: proxy,
-                    physicalSize: physicalSize
-                )
+                plans.append(.pin(key: "\(identifier)#\(index)", coordinate: coordinate, annotation: annotation))
             }
 
         case .lineString(let line):
-            addRibbon(
-                along: line.coordinates,
-                style: style,
-                identifier: identifier,
-                using: proxy,
-                yOffset: yOffset
-            )
+            plans.append(.ribbon(key: identifier, coordinates: line.coordinates, annotation: annotation))
 
         case .multiLineString(let multiLine):
             for (index, line) in multiLine.lineStrings.enumerated() {
-                addRibbon(
-                    along: line.coordinates,
-                    style: style,
-                    identifier: "\(identifier)#\(index)",
-                    using: proxy,
-                    yOffset: yOffset
-                )
+                plans.append(.ribbon(key: "\(identifier)#\(index)", coordinates: line.coordinates, annotation: annotation))
             }
 
         case .polygon, .multiPolygon:
@@ -280,55 +261,119 @@ class DioramaEntity: Entity {
 
         case .geometryCollection(let geometries):
             for (index, child) in geometries.enumerated() {
-                draw(
-                    child,
-                    style: style,
-                    identifier: "\(identifier)#\(index)",
-                    using: proxy,
-                    physicalSize: physicalSize,
-                    yOffset: yOffset
-                )
+                plan(child, annotation: annotation, identifier: "\(identifier)#\(index)", into: &plans)
             }
         }
     }
 
-    private func addPin(
-        at coordinate: Coordinate,
-        style: AnnotationStyle,
-        identifier: String,
-        using proxy: DioramaProxy,
-        physicalSize: Float
-    ) {
-        guard let position = proxy.position(for: coordinate, altitude: style.altitude) else {
-            return
+    private func reconcilePins(_ plans: [OverlayPlan], using proxy: DioramaProxy, physicalSize: Float) {
+        var nextApplied: [String: (annotation: DioramaAnnotation, coordinate: Coordinate)] = [:]
+
+        for plan in plans {
+            guard case .pin(let key, let coordinate, let annotation) = plan else { continue }
+            nextApplied[key] = (annotation, coordinate)
+
+            // A pin the diorama has no ground for right now is culled — it may pan back in later,
+            // at which point it is recreated from the same plan.
+            guard let position = proxy.position(for: coordinate, altitude: annotation.style.altitude) else {
+                markerEntities[key]?.removeFromParent()
+                markerEntities[key] = nil
+                continue
+            }
+
+            if let existing = markerEntities[key],
+               appliedPins[key]?.annotation == annotation,
+               appliedPins[key]?.coordinate == coordinate {
+                // Same pin, new ground: move it. Keeps the entity, its materials, and its
+                // selection state across every pan step.
+                existing.position = position
+            } else {
+                let marker = MarkerEntity(tint: annotation.style.tint, physicalSize: physicalSize)
+                addMarker(marker, identifier: key, position: position)
+            }
         }
-        let marker = MarkerEntity(tint: style.tint, physicalSize: physicalSize)
-        addMarker(marker, identifier: identifier, position: position)
+
+        // Identities that vanished from the content take their entities with them.
+        for (key, marker) in markerEntities where nextApplied[key] == nil {
+            marker.removeFromParent()
+            markerEntities[key] = nil
+        }
+        appliedPins = nextApplied
     }
 
-    private func addRibbon(
-        along coordinates: [Coordinate],
-        style: AnnotationStyle,
-        identifier: String,
+    private func reconcileRibbons(_ plans: [OverlayPlan], using proxy: DioramaProxy, yOffset: Float) {
+        var nextApplied: [String: (annotation: DioramaAnnotation, coordinates: [Coordinate])] = [:]
+
+        for plan in plans {
+            guard case .ribbon(let key, let coordinates, let annotation) = plan else { continue }
+            nextApplied[key] = (annotation, coordinates)
+
+            // Vertices the diorama has no ground for are dropped, which welds the ribbon across the
+            // gap rather than breaking it in two. That is right for a line that clips the outline's
+            // corner; a line that leaves the chunk and returns wants splitting instead, and needs
+            // the clip that polygons are waiting on.
+            let points: [SIMD3<Float>] = coordinates.compactMap {
+                proxy.position(for: $0, altitude: annotation.style.altitude)
+            }
+            guard points.count >= 2 else {
+                polylineEntities[key]?.removeFromParent()
+                polylineEntities[key] = nil
+                continue
+            }
+
+            guard let mesh = try? PolylineMeshGenerator.generateMesh(
+                from: points,
+                width: annotation.style.lineWidth,
+                yOffset: yOffset
+            ) else { continue }
+
+            if let existing = polylineEntities[key],
+               appliedRibbons[key]?.annotation == annotation,
+               appliedRibbons[key]?.coordinates == coordinates,
+               let materials = existing.model?.materials {
+                // Same line, new ground: the mesh has to follow the terrain heights, but the
+                // entity and its material carry over.
+                existing.model = ModelComponent(mesh: mesh, materials: materials)
+            } else {
+                let material = DioramaMaterials.unlitMaterial(color: annotation.style.tint)
+                addPolyline(ModelEntity(mesh: mesh, materials: [material]), identifier: key)
+            }
+        }
+
+        for (key, polyline) in polylineEntities where nextApplied[key] == nil {
+            polyline.removeFromParent()
+            polylineEntities[key] = nil
+        }
+        appliedRibbons = nextApplied
+    }
+
+    private func applyRoutePreview(
+        _ preview: DioramaRoutePreview?,
         using proxy: DioramaProxy,
+        physicalSize: Float,
         yOffset: Float
     ) {
-        // Vertices the diorama has no ground for are dropped, which welds the ribbon across the
-        // gap rather than breaking it in two. That is the behaviour the polyline had, and it is
-        // right for a line that clips the outline's corner; a line that leaves the chunk and
-        // returns wants splitting instead, and needs the clip that polygons are waiting on.
-        let points: [SIMD3<Float>] = coordinates.compactMap {
-            proxy.position(for: $0, altitude: style.altitude)
+        guard let preview else {
+            clearRoutePreview()
+            return
         }
-        guard points.count >= 2 else { return }
-
-        guard let mesh = try? PolylineMeshGenerator.generateMesh(
-            from: points,
-            width: style.lineWidth,
-            yOffset: yOffset
-        ) else { return }
-
-        let material = DioramaMaterials.unlitMaterial(color: style.tint)
-        addPolyline(ModelEntity(mesh: mesh, materials: [material]), identifier: identifier)
+        let points: [SIMD3<Float>] = preview.coordinates.compactMap {
+            proxy.position(for: $0)
+        }
+        guard points.count >= 2 else {
+            clearRoutePreview()
+            return
+        }
+        do {
+            let entity = try RoutePreviewEntity(
+                routePoints: points,
+                style: preview.style,
+                physicalSize: physicalSize,
+                yOffset: yOffset
+            )
+            setRoutePreview(entity)
+        } catch {
+            Self.logger.error("Failed to create route preview entity: \(error)")
+        }
     }
 }

@@ -297,6 +297,9 @@ struct ContentView: View {
     /// The orbit camera, seeded from the preset and thereafter the user's.
     @State private var position: DioramaCameraPosition = .automatic
 
+    /// The tapped marker, written by the view's selection binding.
+    @State private var selectedAnnotation: DioramaAnnotation.ID?
+
     private var preset: DemoPreset { DemoPresets.all[selection] }
 
     /// The preset's style with the live buildings toggle folded in.
@@ -326,7 +329,8 @@ struct ContentView: View {
                         region: preset.region,
                         shape: preset.shape,
                         physicalSize: preset.physicalSize,
-                        position: $position
+                        position: $position,
+                        selection: $selectedAnnotation
                     ) {
                         // The Canyon preset carries a marker so selection has something to select.
                         if preset.id == "canyon" {

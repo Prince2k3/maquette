@@ -19,8 +19,8 @@ struct DioramaContentBuilderTests {
     @Test("Builder collects annotations")
     func collectsContent() throws {
         let group = buildContent {
-            DioramaAnnotation.marker(at: Self.a, title: "A")
-            DioramaAnnotation.line(through: [Self.a, Self.b], id: "route")
+            DioramaMarker("A", coordinate: Self.a, id: "A")
+            DioramaPolyline(coordinates: [Self.a, Self.b], id: "route")
         }
 
         #expect(group.items.count == 2)
@@ -55,10 +55,14 @@ struct DioramaContentBuilderTests {
         let numbered = Feature.point(Coordinate(Self.a), id: .number(42))
         #expect(DioramaAnnotation(numbered).id == "42.0")
 
-        // No identity in the data is not an error — it just cannot be addressed later.
+        // No identity in the data gets a *stable* digest, so declaring the same content twice
+        // produces the same identity — which is what lets a re-applied group diff as unchanged
+        // instead of tearing every entity down. The old rule was a fresh UUID per init.
         let anonymous = Feature.point(Coordinate(Self.a))
         #expect(!DioramaAnnotation(anonymous).id.isEmpty)
-        #expect(DioramaAnnotation(anonymous).id != DioramaAnnotation(anonymous).id)
+        #expect(DioramaAnnotation(anonymous).id == DioramaAnnotation(anonymous).id)
+        let other = Feature.point(Coordinate(Self.b))
+        #expect(DioramaAnnotation(anonymous).id != DioramaAnnotation(other).id)
     }
 
     @Test("A decoded feature collection is content on its own")
@@ -109,7 +113,7 @@ struct DioramaContentBuilderTests {
         let showMarker = true
         let group = buildContent {
             if showMarker {
-                DioramaAnnotation.marker(at: Self.a, title: "Visible")
+                DioramaMarker("Visible", coordinate: Self.a)
             }
         }
 
@@ -118,7 +122,7 @@ struct DioramaContentBuilderTests {
         let hidden = false
         let group2 = buildContent {
             if hidden {
-                DioramaAnnotation.marker(at: Self.a, title: "Hidden")
+                DioramaMarker("Hidden", coordinate: Self.a)
             }
         }
 
@@ -130,9 +134,9 @@ struct DioramaContentBuilderTests {
         let useMarker = true
         let group = buildContent {
             if useMarker {
-                DioramaAnnotation.marker(at: Self.a, title: "Marker")
+                DioramaMarker("Marker", coordinate: Self.a)
             } else {
-                DioramaAnnotation.line(through: [Self.a, Self.b])
+                DioramaPolyline(coordinates: [Self.a, Self.b])
             }
         }
 
@@ -149,7 +153,7 @@ struct DioramaContentBuilderTests {
 
         let group = buildContent {
             for (index, coordinate) in coordinates.enumerated() {
-                DioramaAnnotation.marker(at: coordinate, title: "Pin \(index)")
+                DioramaMarker("Pin \(index)", coordinate: coordinate)
             }
         }
 
@@ -172,9 +176,9 @@ struct DioramaContentBuilderTests {
     @Test("Mixed content types are preserved in order")
     func mixedContent() throws {
         let group = buildContent {
-            DioramaAnnotation.marker(at: Self.a, title: "First")
-            DioramaAnnotation.line(through: [Self.a, Self.b])
-            DioramaAnnotation.marker(at: Self.c, title: "Third")
+            DioramaMarker("First", coordinate: Self.a)
+            DioramaPolyline(coordinates: [Self.a, Self.b])
+            DioramaMarker("Third", coordinate: Self.c)
         }
 
         #expect(group.items.count == 3)
@@ -191,13 +195,13 @@ struct DioramaContentBuilderTests {
     func styleCarriesTheAltitudeReference() {
         // The feature carries a number and the style says how to read it — which is the whole
         // reason altitude lives on the style rather than being inferred from the geometry.
-        #expect(DioramaAnnotation.marker(at: Self.a).style.altitude == .clampToGround)
+        #expect(DioramaMarker(coordinate: Self.a).annotation.style.altitude == .clampToGround)
         #expect(
-            DioramaAnnotation.marker(at: Self.a, altitude: .relativeToGround)
-                .style.altitude == .relativeToGround
+            DioramaMarker(coordinate: Self.a, altitude: .relativeToGround)
+                .annotation.style.altitude == .relativeToGround
         )
-        #expect(DioramaAnnotation.line(through: [Self.a, Self.b], lineWidth: 0.01)
-            .style.lineWidth == 0.01)
+        #expect(DioramaPolyline(coordinates: [Self.a, Self.b], lineWidth: 0.01)
+            .annotation.style.lineWidth == 0.01)
     }
 
     // MARK: - Helper

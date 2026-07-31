@@ -4,7 +4,7 @@ import SwiftUI
 import simd
 
 /// Controls whether terrain elevation is rendered.
-public enum ElevationStyle: Sendable {
+public enum ElevationStyle: Sendable, Equatable {
     /// Realistic elevation from terrain data.
     case realistic
     /// Flat surface with no elevation.
@@ -12,7 +12,7 @@ public enum ElevationStyle: Sendable {
 }
 
 /// Source for satellite/aerial imagery tiles used to texture a terrain chunk.
-public enum ImagerySource: Sendable {
+public enum ImagerySource: Sendable, Equatable {
     /// ESRI World Imagery (free, no API key required).
     case esriSatellite
     /// MapTiler high-resolution satellite (requires API key).
@@ -39,7 +39,7 @@ public enum DioramaPresentation: Sendable {
 }
 
 /// Source for elevation/terrain data.
-public enum ElevationSource: Sendable {
+public enum ElevationSource: Sendable, Equatable {
     /// Mapzen Terrarium tiles from AWS (free, no API key required).
     case mapzen
     /// MapTiler terrain-rgb tiles (requires API key). Higher resolution in many regions.

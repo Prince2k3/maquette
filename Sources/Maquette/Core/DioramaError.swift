@@ -1,7 +1,7 @@
 import Foundation
 
 /// Errors that can occur during diorama construction and rendering.
-public enum DioramaError: LocalizedError, Sendable {
+public enum DioramaError: LocalizedError, Sendable, Equatable {
     /// A network request failed.
     case networkFailure(message: String)
     /// The requested tile was not found.

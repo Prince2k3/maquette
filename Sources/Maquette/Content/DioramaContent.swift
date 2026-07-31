@@ -16,7 +16,7 @@ public protocol DioramaContent {
 /// caller could draw was fixed by this enum: handing in a `.geojson` file meant unpacking it into
 /// whichever of the two it happened to resemble, and anything else had nowhere to go. An annotation
 /// is now a ``Feature`` plus a style, so what gets drawn is a property of the data.
-public enum DioramaContentItem: Sendable {
+public enum DioramaContentItem: Sendable, Equatable {
     case annotation(DioramaAnnotation)
     case routePreview(DioramaRoutePreview)
 }
@@ -26,10 +26,7 @@ public enum DioramaContentItem: Sendable {
 /// A GeoJSON feature drawn on the diorama.
 ///
 /// ```swift
-/// DioramaAnnotation.marker(
-///     at: Coordinate(latitude: 36.1069, longitude: -112.1129),
-///     title: "Grand Canyon"
-/// )
+/// DioramaMarker("Grand Canyon", coordinate: Coordinate(latitude: 36.1069, longitude: -112.1129))
 /// ```
 ///
 /// The feature is the same value that came out of the data, unmodified — a point becomes a pin, a
@@ -38,17 +35,20 @@ public enum DioramaContentItem: Sendable {
 ///
 /// ```swift
 /// let collection = try JSONDecoder().decode(FeatureCollection.self, from: data)
-/// DioramaView(configuration: config) {
+/// DioramaView(region: region) {
 ///     for feature in collection.features {
 ///         DioramaAnnotation(feature)
 ///     }
 /// }
 /// ```
-public struct DioramaAnnotation: DioramaContent, Sendable, Identifiable {
+public struct DioramaAnnotation: DioramaContent, Sendable, Equatable, Identifiable {
     /// Identity for the entity this becomes, so re-applying content replaces rather than duplicates.
     ///
     /// Taken from the feature's own `id` when it has one — GeoJSON carries identity and a caller's
-    /// data should keep it — and generated otherwise.
+    /// data should keep it — and otherwise derived as a stable digest of the feature itself, so
+    /// declaring the same content twice produces the same identity rather than a fresh one per
+    /// evaluation. Two literally identical anonymous features therefore collide, and harmlessly:
+    /// they would render identically anyway.
     public let id: String
     /// The feature to draw.
     public var feature: Feature
@@ -60,7 +60,7 @@ public struct DioramaAnnotation: DioramaContent, Sendable, Identifiable {
     /// - Parameters:
     ///   - feature: The geometry and properties to draw.
     ///   - style: How it is drawn. Defaults to a red pin and a blue ribbon.
-    ///   - id: Identity for the resulting entity. Defaults to the feature's own, or a fresh UUID.
+    ///   - id: Identity for the resulting entity. Defaults to the feature's own, or a digest.
     public init(_ feature: Feature, style: AnnotationStyle = AnnotationStyle(), id: String? = nil) {
         self.feature = feature
         self.style = style
@@ -71,84 +71,132 @@ public struct DioramaAnnotation: DioramaContent, Sendable, Identifiable {
         switch feature.id {
         case .string(let value): value
         case .number(let value): String(value)
-        case nil: UUID().uuidString
+        case nil: Self.digest(of: feature)
         }
+    }
+
+    /// A deterministic identity for a feature that carries none.
+    ///
+    /// A fresh UUID here — the previous rule — meant every re-evaluation of a content closure
+    /// produced all-new identities, which alone forced the scene to tear its overlays down and
+    /// rebuild them on every SwiftUI render. A digest of the encoded feature is the same string
+    /// every time the same feature is declared, which is what lets a diff say "unchanged".
+    private static func digest(of feature: Feature) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        guard let data = try? encoder.encode(feature) else { return UUID().uuidString }
+        // FNV-1a: cheap, deterministic across launches, and collision-tolerant here because two
+        // colliding features render identically by construction.
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in data {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01B3
+        }
+        return "feature-\(String(hash, radix: 36))"
     }
 
     public var items: [DioramaContentItem] { [.annotation(self)] }
 }
 
-// MARK: - Convenience
+// MARK: - Marker & Polyline
 
-extension DioramaAnnotation {
-    /// A pin at a coordinate.
+/// A pin at a coordinate. The parallel of MapKit's `Marker`.
+///
+/// ```swift
+/// DioramaView(region: region) {
+///     DioramaMarker("Summit", coordinate: summit, tint: .orange)
+/// }
+/// ```
+public struct DioramaMarker: DioramaContent, Sendable, Equatable {
+    /// The annotation this marker reduces to.
+    public var annotation: DioramaAnnotation
+
+    /// Creates a marker.
     ///
     /// - Parameters:
+    ///   - title: Stored as the feature's `title` property. Display only — never identity.
     ///   - coordinate: Where the pin goes.
     ///   - tint: Colour of the pin. Defaults to `.red`.
     ///   - altitude: What any altitude on the coordinate means. Defaults to sitting on the ground.
-    ///   - title: Identity for the pin, and the `title` property on the feature it makes.
-    public static func marker(
-        at coordinate: Coordinate,
+    ///   - id: Explicit identity, or `nil` to derive a stable one from the feature.
+    public init(
+        _ title: String = "",
+        coordinate: Coordinate,
         tint: Color = .red,
         altitude: AltitudeReference = .clampToGround,
-        title: String = UUID().uuidString
-    ) -> DioramaAnnotation {
-        DioramaAnnotation(
-            Feature.point(coordinate, id: .string(title), properties: ["title": .string(title)]),
+        id: String? = nil
+    ) {
+        let properties: [String: JSONValue] = title.isEmpty ? [:] : ["title": .string(title)]
+        self.annotation = DioramaAnnotation(
+            Feature.point(coordinate, id: id.map { .string($0) }, properties: properties),
             style: AnnotationStyle(tint: tint, altitude: altitude),
-            id: title
+            id: id
         )
     }
 
-    /// A pin at a CoreLocation coordinate.
-    public static func marker(
-        at coordinate: CLLocationCoordinate2D,
+    /// Creates a marker at a CoreLocation coordinate.
+    public init(
+        _ title: String = "",
+        coordinate: CLLocationCoordinate2D,
         tint: Color = .red,
         altitude: AltitudeReference = .clampToGround,
-        title: String = UUID().uuidString
-    ) -> DioramaAnnotation {
-        marker(at: Coordinate(coordinate), tint: tint, altitude: altitude, title: title)
+        id: String? = nil
+    ) {
+        self.init(title, coordinate: Coordinate(coordinate), tint: tint, altitude: altitude, id: id)
     }
 
-    /// A ribbon following a run of coordinates.
+    public var items: [DioramaContentItem] { annotation.items }
+}
+
+/// A ribbon following a run of coordinates. The parallel of MapKit's `MapPolyline`.
+///
+/// A ribbon drops the vertices the diorama has no ground for, which welds the line across the gap
+/// rather than breaking it in two — right for a line clipping the outline's corner, wrong for one
+/// that leaves the chunk and comes back.
+public struct DioramaPolyline: DioramaContent, Sendable, Equatable {
+    /// The annotation this polyline reduces to.
+    public var annotation: DioramaAnnotation
+
+    /// Creates a polyline.
     ///
     /// - Parameters:
     ///   - coordinates: The path, in order.
     ///   - tint: Colour of the ribbon. Defaults to `.blue`.
     ///   - lineWidth: Width in diorama metres. Defaults to `0.003`.
     ///   - altitude: What any altitude on the coordinates means. Defaults to following the ground.
-    ///   - id: Identity for the ribbon.
-    public static func line(
-        through coordinates: [Coordinate],
+    ///   - id: Explicit identity, or `nil` to derive a stable one from the feature.
+    public init(
+        coordinates: [Coordinate],
         tint: Color = .blue,
         lineWidth: Float = 0.003,
         altitude: AltitudeReference = .clampToGround,
-        id: String = UUID().uuidString
-    ) -> DioramaAnnotation {
-        DioramaAnnotation(
-            Feature.line(coordinates, id: .string(id)),
+        id: String? = nil
+    ) {
+        self.annotation = DioramaAnnotation(
+            Feature.line(coordinates, id: id.map { .string($0) }),
             style: AnnotationStyle(tint: tint, lineWidth: lineWidth, altitude: altitude),
             id: id
         )
     }
 
-    /// A ribbon following a run of CoreLocation coordinates.
-    public static func line(
-        through coordinates: [CLLocationCoordinate2D],
+    /// Creates a polyline through CoreLocation coordinates.
+    public init(
+        coordinates: [CLLocationCoordinate2D],
         tint: Color = .blue,
         lineWidth: Float = 0.003,
         altitude: AltitudeReference = .clampToGround,
-        id: String = UUID().uuidString
-    ) -> DioramaAnnotation {
-        line(
-            through: coordinates.map { Coordinate($0) },
+        id: String? = nil
+    ) {
+        self.init(
+            coordinates: coordinates.map { Coordinate($0) },
             tint: tint,
             lineWidth: lineWidth,
             altitude: altitude,
             id: id
         )
     }
+
+    public var items: [DioramaContentItem] { annotation.items }
 }
 
 // MARK: - Style
@@ -159,7 +207,7 @@ extension DioramaAnnotation {
 /// points and lines under a single visual treatment, and splitting the style by shape would make the
 /// caller sort its own data before styling it. Fields that do not apply to a geometry are simply
 /// unused — `lineWidth` means nothing to a pin.
-public struct AnnotationStyle: Sendable {
+public struct AnnotationStyle: Sendable, Equatable {
     /// Colour of the pin, or of the ribbon.
     public var tint: Color
     /// Width of a ribbon, in diorama metres.
@@ -181,8 +229,11 @@ public struct AnnotationStyle: Sendable {
 // MARK: - Content Group
 
 /// Collects multiple `DioramaContent` values into a flat array. Produced by `DioramaContentBuilder`.
-public struct DioramaContentGroup: DioramaContent, Sendable {
+public struct DioramaContentGroup: DioramaContent, Sendable, Equatable {
     public let items: [DioramaContentItem]
+
+    /// The group with nothing in it — what a `DioramaView` with no content closure shows.
+    public static let empty = DioramaContentGroup(items: [])
 
     public init(items: [DioramaContentItem]) {
         self.items = items
@@ -203,31 +254,46 @@ extension FeatureCollection: DioramaContent {
 /// Result builder for declaring diorama content in a SwiftUI-like syntax.
 ///
 /// ```swift
-/// DioramaView(configuration: config) {
-///     DioramaAnnotation.marker(at: coord1, title: "A")
-///     DioramaAnnotation.line(through: [coord1, coord2])
+/// DioramaView(region: region) {
+///     DioramaMarker("A", coordinate: coord1)
+///     DioramaPolyline(coordinates: [coord1, coord2])
 /// }
 /// ```
 @resultBuilder
 public struct DioramaContentBuilder {
-    public static func buildBlock(_ components: any DioramaContent...) -> DioramaContentGroup {
+    /// Admits any content value as an expression, which is what lets a `for` loop's body or a
+    /// bare statement produce content without wrapping.
+    public static func buildExpression(_ content: some DioramaContent) -> DioramaContentGroup {
+        DioramaContentGroup(items: content.items)
+    }
+
+    /// A bare ``Feature`` is content on its own, drawn with the default style.
+    public static func buildExpression(_ feature: Feature) -> DioramaContentGroup {
+        DioramaContentGroup(items: [.annotation(DioramaAnnotation(feature))])
+    }
+
+    public static func buildBlock(_ components: DioramaContentGroup...) -> DioramaContentGroup {
         DioramaContentGroup(items: components.flatMap(\.items))
     }
 
-    public static func buildOptional(_ component: (any DioramaContent)?) -> DioramaContentGroup {
-        DioramaContentGroup(items: component?.items ?? [])
+    public static func buildOptional(_ component: DioramaContentGroup?) -> DioramaContentGroup {
+        component ?? .empty
     }
 
-    public static func buildEither(first component: any DioramaContent) -> DioramaContentGroup {
-        DioramaContentGroup(items: component.items)
+    public static func buildEither(first component: DioramaContentGroup) -> DioramaContentGroup {
+        component
     }
 
-    public static func buildEither(second component: any DioramaContent) -> DioramaContentGroup {
-        DioramaContentGroup(items: component.items)
+    public static func buildEither(second component: DioramaContentGroup) -> DioramaContentGroup {
+        component
     }
 
-    public static func buildArray(_ components: [any DioramaContent]) -> DioramaContentGroup {
+    public static func buildArray(_ components: [DioramaContentGroup]) -> DioramaContentGroup {
         DioramaContentGroup(items: components.flatMap(\.items))
+    }
+
+    public static func buildLimitedAvailability(_ component: DioramaContentGroup) -> DioramaContentGroup {
+        component
     }
 }
 

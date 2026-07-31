@@ -86,6 +86,20 @@ public struct DioramaRoutePreview: DioramaContent, Sendable {
     }
 }
 
+extension RoutePreviewStyle: Equatable {}
+
+extension DioramaRoutePreview: Equatable {
+    /// Coordinate-wise; written out because `CLLocationCoordinate2D` itself is not `Equatable`.
+    public static func == (lhs: DioramaRoutePreview, rhs: DioramaRoutePreview) -> Bool {
+        lhs.id == rhs.id
+            && lhs.style == rhs.style
+            && lhs.coordinates.count == rhs.coordinates.count
+            && zip(lhs.coordinates, rhs.coordinates).allSatisfy {
+                $0.latitude == $1.latitude && $0.longitude == $1.longitude
+            }
+    }
+}
+
 // MARK: - Environment Key
 
 extension EnvironmentValues {

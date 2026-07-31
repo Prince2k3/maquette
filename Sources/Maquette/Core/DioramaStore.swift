@@ -4,7 +4,7 @@ import RealityKit
 import os
 
 /// Loading state for the diorama.
-public enum DioramaLoadingState: Sendable {
+public enum DioramaLoadingState: Sendable, Equatable {
     /// Not yet started loading.
     case idle
     /// Currently fetching tiles and generating meshes.

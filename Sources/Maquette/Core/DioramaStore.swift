@@ -1556,11 +1556,13 @@ public final class DioramaStore {
         projection?.panOffset = offset
         refreshEffect()
 
-        setTerrainProjection(
-            grids: zoomed.tilePositions.enumerated().map { index, position in
-                (x: position.x, y: position.y, grid: zoomed.grids[index])
-            }
-        )
+        // The projection reads the same surface the chunk was just re-sampled from, so it is handed
+        // `zoomed` rather than a field rebuilt from its parts. Going through
+        // ``setTerrainProjection(grids:)`` here took the grids apart into tuples and put them back
+        // together into a height field identical to this one — which is not merely redundant but
+        // the more expensive half of the step, since constructing a field measures every resident
+        // grid's extremes.
+        projection = TerrainProjection(heightField: zoomed, panOffset: offset)
         applyContent(appliedContent)
 
         buildings?.heightField = zoomed

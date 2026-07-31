@@ -170,14 +170,6 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
         logger.debug("Google session token acquired")
     }
 
-    /// Discards the cached root so the next load establishes a new session.
-    ///
-    /// Costs a billable request, so it is only worth doing when tile requests start failing
-    /// authentication, which is how an expired session presents.
-    public func invalidateCachedRoot() async {
-        await rootCache.invalidate(key: rootCacheKey)
-    }
-
     public func fetchTileContent(uri: String) async throws -> Data {
         // Content URIs resolve against the tileset document that referenced them, not the host
         // root. Google mixes both forms: geometry arrives as absolute paths

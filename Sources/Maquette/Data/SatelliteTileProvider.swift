@@ -15,11 +15,6 @@ public struct SatelliteTileProvider: TileProvider, Sendable {
     /// Default satellite imagery URL template (ESRI World Imagery — free, no API key).
     public static let esriSatelliteTemplate = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
 
-    /// MapTiler satellite URL template (requires API key).
-    public static func mapTilerTemplate(apiKey: String) -> String {
-        "https://api.maptiler.com/tiles/satellite-v2/{z}/{x}/{y}.jpg?key=\(apiKey)"
-    }
-
     /// Creates a satellite tile provider.
     /// - Parameters:
     ///   - urlTemplate: URL template with `{z}`, `{x}`, `{y}` placeholders. Defaults to OSM.

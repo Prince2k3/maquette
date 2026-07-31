@@ -36,9 +36,6 @@ public class DioramaEntity: Entity {
     /// The optional display base beneath the chunk.
     public private(set) var base: Entity?
 
-    /// Annotation anchor entities keyed by identifier.
-    public private(set) var annotationAnchors: [String: Entity] = [:]
-
     /// Marker entities keyed by identifier.
     public private(set) var markerEntities: [String: MarkerEntity] = [:]
 
@@ -96,27 +93,6 @@ public class DioramaEntity: Entity {
         self.base?.removeFromParent()
         self.base = baseEntity
         addChild(baseEntity)
-    }
-
-    /// Adds an annotation anchor at the specified 3D position.
-    ///
-    /// - Parameters:
-    ///   - identifier: Unique identifier for this annotation.
-    ///   - position: 3D position in the diorama's local coordinate space.
-    public func addAnnotationAnchor(identifier: String, position: SIMD3<Float>) {
-        let anchor = Entity()
-        anchor.name = "Annotation_\(identifier)"
-        anchor.position = position
-        annotationAnchors[identifier] = anchor
-        addChild(anchor)
-    }
-
-    /// Removes all annotation anchors.
-    public func clearAnnotationAnchors() {
-        for (_, anchor) in annotationAnchors {
-            anchor.removeFromParent()
-        }
-        annotationAnchors.removeAll()
     }
 
     // MARK: - Markers & Polylines

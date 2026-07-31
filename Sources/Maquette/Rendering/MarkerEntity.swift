@@ -2,12 +2,6 @@ import Foundation
 import RealityKit
 import SwiftUI
 
-#if canImport(UIKit)
-import UIKit
-#elseif canImport(AppKit)
-import AppKit
-#endif
-
 /// A 3D pin entity representing a map marker on the diorama.
 ///
 /// Composed of a sphere head and a thin cylinder stem, sized proportionally

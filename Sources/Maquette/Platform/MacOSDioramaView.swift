@@ -2,7 +2,17 @@
 import SwiftUI
 import RealityKit
 import os
+
+#if canImport(_RealityKit_SwiftUI)
+// `RealityView` lives in the RealityKit ↔ SwiftUI *cross-import overlay*. Xcode enables
+// cross-import overlays by default, so app targets never notice — but plain `swift build`
+// does not, and the only SPM knob that would (`-Xfrontend -enable-cross-import-overlays`
+// via `unsafeFlags`) makes the package unusable as a dependency. Naming the overlay module
+// directly is the one route that keeps both `swift build` and consumers working; the
+// `canImport` guard makes it degrade harmlessly for Xcode builds if the underscored module
+// is ever renamed.
 @preconcurrency import _RealityKit_SwiftUI
+#endif
 
 /// macOS presentation of the diorama with embedded RealityView and trackpad/mouse controls.
 ///

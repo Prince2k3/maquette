@@ -87,15 +87,6 @@ public actor RootTilesetCache {
         }
     }
 
-    /// Removes every cached root.
-    public func clearAll() {
-        memory.removeAll()
-        if let directory {
-            try? FileManager.default.removeItem(at: directory)
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        }
-    }
-
     private func fileURL(for key: String) -> URL? {
         directory?.appendingPathComponent("\(Self.fileName(for: key)).json")
     }

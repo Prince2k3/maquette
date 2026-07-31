@@ -40,17 +40,6 @@ public struct Tile3DLoader: Sendable {
 
     private let logger = Logger(subsystem: "com.maquette", category: "Tile3DLoader")
 
-    /// Loads a single tile's GLB content and creates a ModelEntity.
-    /// - Parameters:
-    ///   - uri: The content URI from the tile JSON.
-    ///   - transform: The accumulated ECEF transform for this tile (Double precision).
-    /// - Returns: A `ModelEntity` positioned in local coordinates, or `nil` if the tile uses unsupported features.
-    @MainActor
-    public func loadTile(uri: String, transform: simd_double4x4?) async throws -> LoadedTile? {
-        let data = try await provider.fetchTileContent(uri: uri)
-        return try await loadTileFromData(data, uri: uri, transform: transform)
-    }
-
     /// Loads a tile from pre-fetched binary data (GLB/b3dm).
     /// - Parameters:
     ///   - data: Raw GLB or b3dm file data.

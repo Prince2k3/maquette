@@ -29,29 +29,6 @@ public enum DioramaMaterials {
         return material
     }
 
-    /// Creates a material from multiple satellite tile images composited into a single texture.
-    ///
-    /// - Parameters:
-    ///   - tiles: Array of tile positions and their image data.
-    ///   - minX: Minimum tile X coordinate.
-    ///   - minY: Minimum tile Y coordinate.
-    ///   - tilesWide: Number of tiles horizontally.
-    ///   - tilesTall: Number of tiles vertically.
-    /// - Returns: A `SimpleMaterial` with the composited satellite texture.
-    @MainActor
-    public static func compositeSatelliteMaterial(
-        tiles: [(x: Int, y: Int, data: Data)],
-        minX: Int,
-        minY: Int,
-        tilesWide: Int,
-        tilesTall: Int
-    ) throws -> SimpleMaterial {
-        let composited = try compositeSatelliteImage(
-            tiles: tiles, minX: minX, minY: minY, tilesWide: tilesWide, tilesTall: tilesTall
-        )
-        return try satelliteMaterial(from: composited)
-    }
-
     /// Wraps an already-composited image as a terrain surface material.
     ///
     /// Separated from the compositing so a rolling fetch can draw the mosaic off the main actor and

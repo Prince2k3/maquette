@@ -82,6 +82,15 @@ public struct DioramaView: View {
         IOSDioramaView(configuration: configuration, content: content)
         #elseif os(macOS)
         MacOSDioramaView(configuration: configuration, content: content)
+        #else
+        // RealityKit's RealityView does not exist on this platform, so there is nothing to render
+        // with. Degrading at runtime rather than failing to compile keeps a multi-platform target
+        // that merely *links* Maquette buildable.
+        ContentUnavailableView(
+            "Unsupported Platform",
+            systemImage: "cube.transparent",
+            description: Text("Maquette requires RealityKit, which is available on iOS, iPadOS, macOS, and visionOS.")
+        )
         #endif
     }
 }

@@ -24,8 +24,6 @@ public enum DioramaError: LocalizedError, Sendable {
     case unsupportedTileFormat(reason: String)
     /// Failed to parse a 3D Tiles tileset.json.
     case tilesetParsingFailed(reason: String)
-    /// ECEF coordinate conversion failed.
-    case coordinateConversionFailed
 
     public var errorDescription: String? {
         switch self {
@@ -51,8 +49,6 @@ public enum DioramaError: LocalizedError, Sendable {
             "Unsupported tile format: \(reason)"
         case .tilesetParsingFailed(let reason):
             "Tileset parsing failed: \(reason)"
-        case .coordinateConversionFailed:
-            "ECEF coordinate conversion failed"
         }
     }
 }

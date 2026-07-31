@@ -168,36 +168,6 @@ private struct RoutePreviewDemoView: View {
     .frame(minWidth: 400, minHeight: 400)
 }
 
-// MARK: - MapTiler Satellite Previews
-// Uncomment and add your MapTiler API key to test high-resolution satellite imagery:
-//
-// #Preview("MapTiler Satellite — Grand Canyon") {
-//     DioramaView(
-//         configuration: DioramaConfiguration(
-//             center: CLLocationCoordinate2D(latitude: 36.1069, longitude: -112.1129),
-//             radiusMeters: 5000,
-//             imagerySource: .mapTilerSatellite(apiKey: "YOUR_MAPTILER_KEY")
-//         )
-//     )
-//     .frame(minWidth: 400, minHeight: 400)
-// }
-
-// MARK: - Photorealistic 3D Tiles Previews
-// Uncomment and add your Google API key to test photorealistic 3D tiles:
-//
-// #Preview("Google 3D Tiles — Grand Canyon") {
-//     DioramaView(
-//         configuration: DioramaConfiguration(
-//             center: CLLocationCoordinate2D(latitude: 36.1069, longitude: -112.1129),
-//             radiusMeters: 5000,
-//             imagerySource: .photorealistic(
-//                 provider: GoogleTiles3DProvider(apiKey: "YOUR_GOOGLE_KEY")
-//             )
-//         )
-//     )
-//     .frame(minWidth: 400, minHeight: 400)
-// }
-
 /// A credential supplied to a preview through the scheme's environment rather than through source.
 ///
 /// Previews of the photorealistic path need a provider credential, and a credential written into a

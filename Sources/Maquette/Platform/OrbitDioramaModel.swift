@@ -1,6 +1,5 @@
 #if os(iOS) || os(macOS)
 import Foundation
-import os
 import RealityKit
 import SwiftUI
 
@@ -17,8 +16,19 @@ import SwiftUI
 final class OrbitDioramaModel {
     let store: DioramaStore
     let cameraController = CameraController()
-    var transition = GlobeTransition()
+    /// The handoff's shared mechanics; the model supplies the orbit-camera framing response.
+    let handoff = GlobeHandoffConductor()
     let content: DioramaContentGroup?
+
+    /// The transition, read and written through the conductor that owns it.
+    var transition: GlobeTransition {
+        get { handoff.transition }
+        set { handoff.transition = newValue }
+    }
+
+    /// The transition's animation clock, owned by the conductor. Exposed for the tests that pin
+    /// the clock-clearing regression.
+    var lastTransitionDate: Date? { handoff.lastTransitionDate }
 
     var viewSize = CGSize(width: 400, height: 400)
 
@@ -30,16 +40,9 @@ final class OrbitDioramaModel {
     var globeStyle: GlobeTransitionStyle?
 
     var lastAnimationDate: Date?
-    /// The transition's own animation clock, kept apart from the route preview's: the two run
-    /// independently and sharing one date would have each of them consuming the other's elapsed time.
-    var lastTransitionDate: Date?
-    var legStart: Date?
-    var legSteps = 0
     var chunkCenterY: Float = 0
     /// The orbit's own tilt range, captured before the transition starts widening it.
     var chunkElevationLimits: ClosedRange<Float> = 0...0
-
-    private let logger = Logger(maquette: "OrbitDiorama")
 
     init(configuration: DioramaConfiguration, content: DioramaContentGroup?) {
         self.store = DioramaStore(configuration: configuration)
@@ -152,44 +155,13 @@ final class OrbitDioramaModel {
         )
     }
 
-    /// Advances whichever leg of the handoff is playing.
-    ///
-    /// Its clock is separate from the route preview's because the two run independently; sharing one
-    /// date would have whichever ticked first consume the other's elapsed time.
-    ///
-    /// **The clock is cleared by the step that ends the leg, not by a later tick that finds nothing
-    /// animating.** There is no later tick: the timeline is paused the moment `isAnimating` goes
-    /// false, so a date left behind here survives however long the scene sits settled and arrives as
-    /// the *next* leg's first elapsed time. That is a handoff which plays properly the first time and
-    /// snaps thereafter — and it reads as the pinch deciding, because a user who cycles is a user
-    /// who pinches hard.
+    /// Advances whichever leg of the handoff is playing. The clock discipline lives in the
+    /// conductor; the model contributes its framing response.
     func advanceTransition(at date: Date) {
-        guard transition.isAnimating else {
-            lastTransitionDate = nil
-            return
+        handoff.advance(at: date) {
+            applyTransitionFraming()
+            applyTransitionVisibility()
         }
-        guard let last = lastTransitionDate else {
-            lastTransitionDate = date
-            legStart = date
-            legSteps = 0
-            return
-        }
-        lastTransitionDate = date
-        legSteps += 1
-        transition.advance(by: Float(date.timeIntervalSince(last)))
-        if !transition.isAnimating {
-            lastTransitionDate = nil
-            // A leg that took one step is a leg that snapped, and on screen that is indistinguishable
-            // from a handoff nobody asked to be gradual. Logged with its step count because the
-            // difference between playing and jumping is not visible in a still.
-            let seconds = legStart.map { date.timeIntervalSince($0) } ?? 0
-            logger.debug("""
-                Globe handoff settled at \(self.transition.progress, format: .fixed(precision: 0)) \
-                after \(self.legSteps) steps over \(seconds, format: .fixed(precision: 2)) s
-                """)
-        }
-        applyTransitionFraming()
-        applyTransitionVisibility()
     }
 
     // MARK: - Gesture intents
@@ -417,64 +389,17 @@ final class OrbitDioramaModel {
 
     /// Applies the cross-fade, and keeps a fully faded half out of the render entirely.
     func applyTransitionVisibility() {
-        if let entity = store.dioramaEntity {
-            let opacity = transition.chunkOpacity
-            entity.isEnabled = opacity > DioramaSceneRig.minimumVisibleOpacity
-            entity.components.set(OpacityComponent(opacity: opacity))
-        }
-        if let globe = store.globe {
-            let opacity = transition.globeOpacity
-            globe.isEnabled = opacity > DioramaSceneRig.minimumVisibleOpacity
-            globe.components.set(OpacityComponent(opacity: opacity))
-        }
+        handoff.applyVisibility(store: store)
     }
 
-    /// Rebuilds the chunk at whatever the globe was spun to.
-    ///
-    /// Fired as soon as the zoom starts coming back in rather than when it finishes, so the new
-    /// ground is fetched during the dissolve instead of after it.
-    ///
-    /// The landing is the dock's own coordinate rather than whatever the camera happens to face,
-    /// because steering *re-docks* — spinning the world puts the aimed-at ground at the sphere's
-    /// top, which is where the chunk will be rebuilt. Asking the camera instead makes the landing
-    /// depend on the tilt at the single frame progress leaves 1, and that tilt is mid-unwind by
-    /// then: measured, half a degree short of overhead, which is 42 km of ground and enough to
-    /// relocate a chunk nobody asked to move.
+    /// Rebuilds the chunk at whatever the globe was spun to. The hold-and-rebuild mechanics live
+    /// in the conductor; the model contributes the camera re-framing.
     func beginRelocation() {
-        guard let dock = store.globeDock else {
-            logger.debug("Came back from the globe with nothing docked; keeping the chunk")
-            return
-        }
-        let landing = dock.coordinate
-        let current = Coordinate(store.configuration.center)
-        // Straight back to where they started; the chunk in hand is already the right one. Logged
-        // because it is indistinguishable on screen from a relocation that never fired at all.
-        let travelled = Turf.distance(from: current, to: landing)
-        guard travelled > store.configuration.radiusMeters / 4 else {
-            logger.debug("Came back onto the same ground (\(travelled, format: .fixed(precision: 0)) m); keeping the chunk")
-            return
-        }
-        // The globe carries the scene for the whole rebuild, which the gesture knows nothing about:
-        // `relocate` nils the chunk entity from its first line to its last, so a crossfade run off
-        // the input's own clock hands back to nothing — the globe finishes fading half way through
-        // the fetch, and the new chunk appears at full opacity with no dissolve at all.
-        transition.beginHold()
-        lastTransitionDate = nil
-        applyTransitionFraming()
-        applyTransitionVisibility()
-        Task {
-            await store.relocate(to: landing)
-            store.applyContent(content)
-            frameLoadedChunk()
-            if case .failed = store.loadingState {
-                // Nothing to hand back to. Staying on the globe keeps the failure legible — and the
-                // overlay stops being suppressed, so the error surfaces.
-                transition.abandonHold()
-            } else {
-                transition.endHold()
-            }
-            applyTransitionFraming()
-            applyTransitionVisibility()
+        handoff.relocate(store: store, content: content) { [weak self] in
+            self?.frameLoadedChunk()
+        } applyFrames: { [weak self] in
+            self?.applyTransitionFraming()
+            self?.applyTransitionVisibility()
         }
     }
 }

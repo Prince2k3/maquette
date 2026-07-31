@@ -239,19 +239,39 @@ public struct GlobeTransition: Sendable, Equatable {
 
     /// Advances whichever leg is playing, settling the transition when it arrives.
     ///
-    /// - Parameter seconds: Wall-clock time elapsed since the last advance.
+    /// - Parameter seconds: Wall-clock time elapsed since the last advance, clamped to
+    ///   ``maximumStep``.
     public mutating func advance(by seconds: Float) {
+        let step = min(max(seconds, 0), Self.maximumStep)
         switch leg {
         case .departing:
-            progress = min(progress + seconds / Self.departureDuration, 1)
+            progress = min(progress + step / Self.departureDuration, 1)
             if progress >= 1 { leg = nil }
         case .returning:
-            progress = max(progress - seconds / Self.returnDuration, 0)
+            progress = max(progress - step / Self.returnDuration, 0)
             if progress <= 0 { leg = nil }
         case .waiting, nil:
             break
         }
     }
+
+    /// The most travel a single step may spend.
+    ///
+    /// A step is wall-clock time, and wall clock counts whatever the app was doing *instead* of
+    /// drawing — a re-level landing, a chunk finishing its rebuild, the first tick after a paused
+    /// timeline resumes. Left uncapped, any one of those spends the whole leg at once and the
+    /// handoff arrives instantly: the same snap the finger-driven version produced, wearing the
+    /// clock's clothes and reachable by no gesture the user can see.
+    ///
+    /// So a stall *stretches* the animation rather than skipping it, which is the honest failure —
+    /// a handoff that takes 1.2 s under load still reads as a handoff, and one that takes a single
+    /// frame does not. At 60 Hz an ordinary frame is a third of this and never reaches it.
+    ///
+    /// This is not a substitute for keeping the driver's clock honest: a caller must clear it
+    /// whenever the transition stops animating, or every leg after the first begins with a step of
+    /// however long the scene sat settled. The cap is what keeps that class of mistake from
+    /// destroying the animation outright.
+    public static let maximumStep: Float = 1.0 / 20
 
     /// How long the scene takes to leave the chunk for the globe.
     ///

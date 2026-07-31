@@ -1,6 +1,7 @@
 #if os(macOS)
 import SwiftUI
 import RealityKit
+import os
 @preconcurrency import _RealityKit_SwiftUI
 
 /// macOS presentation of the diorama with embedded RealityView and trackpad/mouse controls.
@@ -19,7 +20,10 @@ struct MacOSDioramaView: View {
     @State private var viewSize: CGSize = CGSize(width: 400, height: 400)
     @State private var lastAnimationDate: Date?
     @State private var lastTransitionDate: Date?
+    @State private var legStart: Date?
+    @State private var legSteps = 0
     @State private var transition = GlobeTransition()
+    private let logger = Logger(subsystem: "com.maquette", category: "MacOSDioramaView")
     @State private var chunkCenterY: Float = 0
     /// The orbit's own tilt range, captured before the transition starts widening it.
     @State private var chunkElevationLimits: ClosedRange<Float> = 0...0
@@ -236,15 +240,35 @@ struct MacOSDioramaView: View {
     ///
     /// Its clock is separate from the route preview's because the two run independently; sharing one
     /// date would have whichever ticked first consume the other's elapsed time.
+    ///
+    /// **The clock is cleared by the step that ends the leg, not by a later tick that finds nothing
+    /// animating.** There is no later tick: the timeline is paused the moment `isAnimating` goes
+    /// false, so a date left behind here survives however long the scene sits settled and arrives as
+    /// the *next* leg's first elapsed time — a handoff that plays properly once and snaps thereafter.
     private func advanceTransition(at date: Date) {
         guard transition.isAnimating else {
             lastTransitionDate = nil
             return
         }
-        let elapsed = lastTransitionDate.map { Float(date.timeIntervalSince($0)) } ?? 0
+        guard let last = lastTransitionDate else {
+            lastTransitionDate = date
+            legStart = date
+            legSteps = 0
+            return
+        }
         lastTransitionDate = date
-        guard elapsed > 0 else { return }
-        transition.advance(by: elapsed)
+        legSteps += 1
+        transition.advance(by: Float(date.timeIntervalSince(last)))
+        if !transition.isAnimating {
+            lastTransitionDate = nil
+            // A leg that took one step is a leg that snapped, and on screen that is indistinguishable
+            // from a handoff nobody asked to be gradual.
+            let seconds = legStart.map { date.timeIntervalSince($0) } ?? 0
+            logger.debug("""
+                Globe handoff settled at \(transition.progress, format: .fixed(precision: 0)) \
+                after \(legSteps) steps over \(seconds, format: .fixed(precision: 2)) s
+                """)
+        }
         applyTransitionFraming()
         applyTransitionVisibility()
     }

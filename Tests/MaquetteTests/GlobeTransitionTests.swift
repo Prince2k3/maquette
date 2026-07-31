@@ -34,6 +34,18 @@ struct GlobeTransitionTests {
         }
     }
 
+    /// Plays part of a leg, a frame at a time.
+    ///
+    /// A single `advance(by: seconds)` is *not* the same thing and cannot stand in for this: a step
+    /// that long is a stall, and ``GlobeTransition/maximumStep`` deliberately refuses to spend it.
+    private func play(_ transition: inout GlobeTransition, for seconds: Float) {
+        var spent: Float = 0
+        while spent < seconds, transition.isAnimating {
+            transition.advance(by: Self.frame)
+            spent += Self.frame
+        }
+    }
+
     /// Triggers the departure and plays it all the way out to the globe.
     private func atMaximum(_ transition: inout GlobeTransition, distance: Float = 1.5, elevation: Float = 0.4) {
         _ = transition.absorb(zoomDelta: -1, cameraDistance: distance, cameraElevation: elevation, chunkHasRoom: false)
@@ -113,7 +125,7 @@ struct GlobeTransitionTests {
                 play(&transition)
                 _ = transition.absorb(zoomDelta: 1, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
             }
-            transition.advance(by: GlobeTransition.departureDuration / 4)
+            play(&transition, for: GlobeTransition.departureDuration / 4)
 
             let before = transition.progress
             for delta in [Float(-1000), -1, 1, 1000] {
@@ -124,6 +136,43 @@ struct GlobeTransitionTests {
                 #expect(absorption.committedReturn == false)
             }
             #expect(transition.progress == before, "input scrubbed a leg that was already playing")
+        }
+    }
+
+    /// A step is wall-clock time, and wall clock counts whatever the app was doing instead of
+    /// drawing. The step that matters is the first one after a paused timeline resumes: a driver that
+    /// carries its date across a settled scene hands the next leg an elapsed of however long the user
+    /// spent looking at the globe, and the leg is spent in a single frame. That is a snap with no
+    /// gesture behind it — the very thing the clock was introduced to remove — and it reads to the
+    /// user as the pinch deciding, because somebody who cycles the handoff is somebody pinching hard.
+    ///
+    /// A driver still has to keep its own clock honest. This is what stops the mistake from
+    /// destroying the animation when it is made.
+    @Test("No single step can cross the handoff, however long the frame took")
+    func aStallCannotSpendAWholeLeg() {
+        for returning in [false, true] {
+            var transition = GlobeTransition()
+            _ = transition.absorb(zoomDelta: -1, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
+            if returning {
+                play(&transition)
+                _ = transition.absorb(zoomDelta: 1, cameraDistance: 1.5, cameraElevation: 0.4, chunkHasRoom: false)
+            }
+            let start = transition.progress
+            let duration = returning ? GlobeTransition.returnDuration : GlobeTransition.departureDuration
+
+            // Thirty seconds: a timeline resuming after the scene sat settled for half a minute.
+            transition.advance(by: 30)
+
+            #expect(transition.isAnimating, "one stalled frame ended the leg outright")
+            #expect(
+                abs(transition.progress - start) <= GlobeTransition.maximumStep / duration + 1e-5,
+                "a single step spent more travel than the cap allows"
+            )
+
+            // Stretched, not skipped — the leg still gets where it is going.
+            play(&transition)
+            #expect(transition.progress == (returning ? 0 : 1))
+            #expect(transition.isBusy == false)
         }
     }
 
@@ -479,12 +528,12 @@ struct GlobeTransitionTests {
         #expect(transition.cameraElevation() == .pi / 2)
 
         transition.endHold()
-        transition.advance(by: GlobeTransition.returnDuration / 2)
+        play(&transition, for: GlobeTransition.returnDuration / 2)
         let midway = transition.cameraDistance(globeDistance: globeDistance) ?? 0
         #expect(midway < globeDistance, "the camera had not started coming back down")
         #expect((transition.cameraElevation() ?? 0) < .pi / 2, "the tilt had not started unwinding")
 
-        transition.advance(by: GlobeTransition.returnDuration)
+        play(&transition)
         #expect(transition.cameraDistance(globeDistance: globeDistance) == 1.5)
         #expect(transition.cameraElevation() == 0.4)
     }
@@ -498,7 +547,7 @@ struct GlobeTransitionTests {
         atMaximum(&transition, distance: 1.5)
         transition.beginHold()
         transition.endHold()
-        transition.advance(by: GlobeTransition.returnDuration / 2)
+        play(&transition, for: GlobeTransition.returnDuration / 2)
 
         // A zoom-out taken at the globe's own framing, which is what the camera is at mid-descent.
         _ = transition.absorb(zoomDelta: -20, cameraDistance: 9.9, cameraElevation: .pi / 2, chunkHasRoom: false)

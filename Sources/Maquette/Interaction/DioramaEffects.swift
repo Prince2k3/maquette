@@ -302,7 +302,7 @@ public struct InkStyle: Sendable, Equatable {
 /// A model-maker's treatment: the terrain cut into stacked flat steps, the way a contour model is
 /// built up out of sheets of card, and painted from a colour ramp by height rather than from
 /// photography. What makes it read as a made object rather than as a low-resolution render is that
-/// the plateaus are exactly flat and the steps between them are vertical — see ``TerraceGeometry``
+/// the plateaus are exactly flat and the steps between them are vertical — see `TerraceGeometry`
 /// for why quantizing per vertex delivers both for free.
 public struct TerraceStyle: Sendable, Equatable {
     /// How the terrain's height is divided into steps.

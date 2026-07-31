@@ -7,7 +7,7 @@ import Foundation
 /// specifies exactly that, and it is the one thing about bounding boxes that is easy to get wrong:
 /// a containment test written as `west <= longitude && longitude <= east` silently reports *every*
 /// point outside such a box, so a diorama over Fiji finds nothing. The tests here go through
-/// ``contains(_:)`` and ``intersects(_:)``, which split the span in two when it wraps.
+/// ``contains(_:)-(Coordinate)`` and ``intersects(_:)``, which split the span in two when it wraps.
 ///
 /// Encoded as `[west, south, east, north]`, or `[west, south, minimumAltitude, east, north,
 /// maximumAltitude]` when altitudes are present — all axes of the southwesterly point followed by

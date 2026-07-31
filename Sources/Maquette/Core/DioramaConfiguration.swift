@@ -71,7 +71,7 @@ public enum DioramaShape: Sendable, Equatable {
     /// The ring is resolved into diorama space through the same frame the terrain is fetched and
     /// generated in, so the cut edge follows the real boundary at the terrain's own scale. It is
     /// neither re-centred nor scaled to fit: an outline offset from the diorama's centre is drawn
-    /// offset, because that is where the ground it names is. Use ``GeographicFrame/init(fitting:padding:)``
+    /// offset, because that is where the ground it names is. Use `GeographicFrame/init(fitting:padding:)`
     /// to get the centre and radius that hold one.
     ///
     /// Only the ring is cut to. A polygon's holes are dropped rather than punched out, which needs

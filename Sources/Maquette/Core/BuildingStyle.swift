@@ -39,7 +39,7 @@ public struct BuildingStyle: Sendable, Equatable {
     public var followsPan: Bool
     /// Whether the blocks are drawn.
     ///
-    /// A switch, not a scope: `nil` buildings on a ``DioramaConfiguration`` are never fetched, while
+    /// A switch, not a scope: `nil` buildings on a `DioramaConfiguration` are never fetched, while
     /// `isVisible == false` keeps the fetch and the arena and only stops drawing them. Turning them
     /// back on therefore costs nothing — no query, no re-extrude, no reload — which is what makes
     /// this usable as a live toggle rather than as a load-time decision.

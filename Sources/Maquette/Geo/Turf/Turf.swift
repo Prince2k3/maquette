@@ -10,7 +10,7 @@ import Foundation
 ///   where nothing else would flag it.
 /// - **The earth is a sphere of radius ``earthRadiusMeters``**, which is Turf's mean radius. That is
 ///   the right model for "how far is it" and the wrong one for "where does this go on the model" —
-///   placement goes through a ``DioramaProjection``, which uses the same projection the geometry
+///   placement goes through a `DioramaProjection`, which uses the same projection the geometry
 ///   itself was built with. Mixing the two is how a pin ends up beside the building it names.
 public enum Turf {
     /// The IUGG mean earth radius, in metres. Turf.js uses the same figure.

@@ -11,9 +11,12 @@ extension Turf {
     /// the same list of vertices either way — while saying nothing about great-circle edges between
     /// them. For the extents a diorama covers the two are the same to well under a metre.
     ///
-    /// - Parameter ignoringBoundary: When true, a point sitting exactly on an edge counts as
-    ///   outside. Neighbouring regions that share a border are the reason this exists: with the
-    ///   default, a point on the border is inside *both*.
+    /// - Parameters:
+    ///   - coordinate: The position to test.
+    ///   - polygon: The polygon to test it against, holes included.
+    ///   - ignoringBoundary: When true, a point sitting exactly on an edge counts as
+    ///     outside. Neighbouring regions that share a border are the reason this exists: with the
+    ///     default, a point on the border is inside *both*.
     public static func contains(
         _ coordinate: Coordinate,
         in polygon: Polygon,

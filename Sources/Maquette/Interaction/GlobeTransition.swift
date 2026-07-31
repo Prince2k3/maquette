@@ -6,7 +6,7 @@ import simd
 public struct GlobeTransitionStyle: Sendable, Equatable {
     /// The globe's radius in diorama meters.
     ///
-    /// Not a true scale and cannot be — see ``GlobeDock``. What it has to be is *comparable to the
+    /// Not a true scale and cannot be — see `GlobeDock`. What it has to be is *comparable to the
     /// distance the camera is at when the handoff starts*, because the camera keeps orbiting through
     /// the transition and its target slides from the origin down to the globe's centre. A globe far
     /// larger than the camera's distance puts the camera almost on the surface, where the orbit's
@@ -23,7 +23,7 @@ public struct GlobeTransitionStyle: Sendable, Equatable {
     /// sphere spans ~78° of a 60° frame, and the globe arrives as an edge-to-edge wall of ocean with
     /// no limb anywhere on screen. Which reads as a broken texture rather than as a camera too close.
     ///
-    /// See ``GlobeTransition/globeDistance(radius:halfFieldOfView:)``.
+    /// See `GlobeTransition.globeDistance(radius:halfFieldOfView:)`.
     public var frameFill: Float
 
     /// Zoom level the world imagery is fetched at. Sixteen tiles at 2, sixty-four at 3.
@@ -31,11 +31,11 @@ public struct GlobeTransitionStyle: Sendable, Equatable {
 
     /// How far past the chunk's own size the orbit may pull back before the world takes over.
     ///
-    /// See ``GlobeTransition/orbitLimit(chunkExtent:)`` for why the camera's own default cannot be
+    /// See `GlobeTransition.orbitLimit(chunkExtent:)` for why the camera's own default cannot be
     /// left alone here.
     public var orbitLimitMultiple: Float
 
-    /// Rows and columns of the globe mesh. See ``GlobeGeometry/build(radius:rows:columns:)``.
+    /// Rows and columns of the globe mesh. See `GlobeGeometry/build(radius:rows:columns:)`.
     public var rows: Int
     public var columns: Int
 
@@ -306,7 +306,7 @@ struct GlobeTransition: Sendable, Equatable {
     /// the chunk was left at. It grows strictly monotonically into that frame rather than reaching it
     /// from outside.
     ///
-    /// Scaling is ``GlobeDock/matrix(scale:)``'s job, not the entity's, because the pivot has to be
+    /// Scaling is `GlobeDock/matrix(scale:)`'s job, not the entity's, because the pivot has to be
     /// the docked point rather than the sphere's centre — see there.
     public var globeScale: Float { eased }
 
@@ -317,7 +317,7 @@ struct GlobeTransition: Sendable, Equatable {
     /// stays between the camera and the centre throughout, which is what makes the place the chunk
     /// was still be the place the globe shows.
     ///
-    /// The second term is *derived*, not a lerp towards a fixed point: ``GlobeDock`` hangs the sphere
+    /// The second term is *derived*, not a lerp towards a fixed point: `GlobeDock` hangs the sphere
     /// one radius below the origin and ``globeScale`` shrinks that along with everything else, so
     /// `−globeRadius · globeScale` **is** where the centre of the globe currently drawn actually is.
     /// Aiming at the full-size centre instead would point the camera below a sphere that has not
@@ -325,7 +325,7 @@ struct GlobeTransition: Sendable, Equatable {
     ///
     /// **Both arguments are in the camera's own space, not the diorama's.** The chunk and the globe
     /// are drawn under a scale the camera is not, so a target taken straight from
-    /// ``GlobeDock`` — which is defined in diorama metres — points at a sphere that is no longer
+    /// `GlobeDock` — which is defined in diorama metres — points at a sphere that is no longer
     /// there. On a phone the scale is within a percent of 1 and the error is invisible; on an iPad it
     /// is over two, and the camera ends up *inside* the globe with no clue as to why.
     ///
@@ -492,7 +492,7 @@ extension View {
     /// Pinching out past the camera's furthest orbit dissolves the chunk into the whole world,
     /// docked so the chunk's own centre is the point facing the camera. Spinning the globe and
     /// pinching back in rebuilds the chunk wherever it was left facing — see
-    /// ``DioramaStore/relocate(to:)``.
+    /// `DioramaStore/relocate(to:)`.
     ///
     /// Not available on visionOS, which presents a volume rather than orbiting a camera.
     public func globeTransition(_ style: GlobeTransitionStyle = GlobeTransitionStyle()) -> some View {

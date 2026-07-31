@@ -581,8 +581,13 @@ public final class DioramaStore {
         )
         rootEntity.setTerrain(terrainEntity)
 
-        // Add water plane if terrain has sea-level areas
-        if globalMinElev <= 0 && exaggeration > 0 {
+        // Fill the sea-level ground, where there is land for it to meet. A region wholly at or below
+        // sea level gets none: the plane would cover the whole top face and the chunk would come back
+        // as a blue lid with its terrain sealed underneath.
+        if WaterPlaneEntity.belongsInRegion(
+            minElevation: globalMinElev,
+            maxElevation: heightField.maxElevation
+        ), exaggeration > 0 {
             if let waterEntity = WaterPlaneEntity.generate(
                 boundary: boundary,
                 baselineElevation: globalMinElev,

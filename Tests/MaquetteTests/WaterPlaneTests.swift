@@ -15,6 +15,34 @@ struct WaterPlaneTests {
         ])
     }
 
+    @Test("A coast gets water; open ocean gets none")
+    func waterBelongsWhereThereIsLandToMeet() {
+        // A coast: seabed below the datum, headland above it. Without the plane the sea is a hole in
+        // the chunk with the beach standing over it.
+        #expect(WaterPlaneEntity.belongsInRegion(minElevation: -120, maxElevation: 340))
+        // Open ocean, as Terrarium reports it — every point flat at the datum. A plane here covers the
+        // whole top face, and the chunk comes back as a blue lid over sealed-off terrain.
+        #expect(!WaterPlaneEntity.belongsInRegion(minElevation: 0, maxElevation: 0))
+        // Deep ocean, where the tiles do carry bathymetry. Still no land, so still no plane — this is
+        // the case that used to render as a disc floating clear of the seabed.
+        #expect(!WaterPlaneEntity.belongsInRegion(minElevation: -5300, maxElevation: -60))
+    }
+
+    @Test("A single rock out of the water is still land")
+    func theSmallestLandIsEnough() {
+        // Nothing here weighs how *much* land there is. An atoll is mostly lagoon and reads as one,
+        // and the alternative — a share of the chunk that has to be above water — is a threshold
+        // nobody can name that would delete the water from real coastlines just short of it.
+        #expect(WaterPlaneEntity.belongsInRegion(minElevation: -400, maxElevation: 1))
+    }
+
+    @Test("Ground wholly above sea level never had a sea-level plane to draw")
+    func inlandTerrainIsUnaffected() {
+        // An alpine valley, and the lake in it — which this plane has never drawn, since it fills the
+        // datum and a lake sits wherever its own surface is. Unchanged by the gate either way.
+        #expect(!WaterPlaneEntity.belongsInRegion(minElevation: 1600, maxElevation: 2900))
+    }
+
     @Test("The water surface never lands on a flat seabed")
     func waterClearsAFlatSeabed() {
         // Terrarium reports whole regions of open ocean as exactly 0 m, so the baseline is 0 and

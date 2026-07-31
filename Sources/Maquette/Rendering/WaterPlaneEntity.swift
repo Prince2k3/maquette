@@ -10,6 +10,35 @@ import AppKit
 
 /// Generates a flat water plane entity for filling sea-level areas in the diorama.
 public enum WaterPlaneEntity {
+    /// Whether a region has sea-level ground worth filling — which takes land as well as water.
+    ///
+    /// **The plane fills the sea between land; it is not a way of drawing the sea.** A coast needs
+    /// it: the tiles carry the seabed down below the datum, and without a surface at Y = 0 the water
+    /// is a hole in the chunk with the beach standing over it. Open ocean is the opposite case and
+    /// gets nothing — every point in the region is at or below sea level, so the plane covers the
+    /// whole top face edge to edge and the chunk becomes a solid blue lid with the terrain sealed
+    /// underneath it. That is not a diorama of the Pacific; it is a diorama with its surface painted
+    /// out, and the imagery, the relief and the ``DioramaEffect`` painted over it all go with it.
+    ///
+    /// The tell that this was never the plane's job is the lift ``surfaceY`` has to apply. On open
+    /// water Terrarium reports the seabed as exactly 0, so the two faces are coplanar and the lift
+    /// exists purely to give the depth buffer an order to find — a tie that only ever arises where
+    /// there is no land for the water to meet.
+    ///
+    /// Measured against the region rather than the outline, deliberately: that is the ground the pan
+    /// can reach, so a chunk cut just offshore keeps its water as the coast slides in. It is a
+    /// property of where the diorama was built, though, not of what is under it at this instant —
+    /// panning a coastal chunk out into open sea still ends with the lid, and closing that means
+    /// building and dropping the plane mid-drag, against a baseline frozen precisely so the chunk
+    /// does not change under a gesture.
+    ///
+    /// - Parameters:
+    ///   - minElevation: The lowest elevation in the fetched region, in metres.
+    ///   - maxElevation: The highest, in metres.
+    public static func belongsInRegion(minElevation: Float, maxElevation: Float) -> Bool {
+        minElevation <= 0 && maxElevation > 0
+    }
+
     /// Where the water surface sits, given the chunk's baseline and elevation scale.
     ///
     /// Sea level is an elevation like any other, so it rides the elevation scale down — plus a lift

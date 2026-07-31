@@ -300,6 +300,9 @@ struct ContentView: View {
     /// The tapped marker, written by the view's selection binding.
     @State private var selectedAnnotation: DioramaAnnotation.ID?
 
+    /// Whether the diorama is placed on a real surface through the camera (iOS only).
+    @State private var arActive = false
+
     private var preset: DemoPreset { DemoPresets.all[selection] }
 
     /// The preset's style with the live buildings toggle folded in.
@@ -344,6 +347,7 @@ struct ContentView: View {
                     }
                     .dioramaStyle(style)
                     .dioramaEffect(preset.effect)
+                    .dioramaARPlacement($arActive)
                     // Pinching widens the ground the chunk covers, and once it is covering about
                     // as much world as a flat cut can, the chunk dissolves into the globe; spin
                     // that and pinch back in to cut a chunk somewhere else.
@@ -386,6 +390,20 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
+        .overlay(alignment: .trailing) {
+            #if os(iOS)
+            // Places the diorama on a real surface at its true physical size. Needs a device —
+            // the simulator has no camera to track planes with.
+            Button {
+                arActive.toggle()
+            } label: {
+                Image(systemName: arActive ? "arkit.badge.xmark" : "arkit")
+                    .font(.title3)
+            }
+            .padding(.trailing, 16)
+            .accessibilityIdentifier("toggle-ar")
+            #endif
+        }
     }
 
     private var presetPicker: some View {

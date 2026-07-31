@@ -198,9 +198,15 @@ final class OrbitDioramaModel {
         return store.loadingState
     }
 
+    /// Whether the diorama is currently parented to a real-world plane anchor (iOS AR placement).
+    var arPlacementActive = false
+
     /// Scale applied to the diorama entity so it fills the available view.
+    ///
+    /// In AR placement it is exactly 1: `physicalSize` is real meters, and a diorama on a real
+    /// table is the one place that number stops being a viewport reference and means itself.
     var entityScale: Float {
-        Float(min(viewSize.width, viewSize.height) / DioramaSceneRig.referenceViewSpan)
+        arPlacementActive ? 1 : Float(min(viewSize.width, viewSize.height) / DioramaSceneRig.referenceViewSpan)
     }
 
     func updateEntityScale() {

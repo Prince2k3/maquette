@@ -30,6 +30,11 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
     @Environment(\.globeTransitionStyle) private var globeStyle
     @Environment(\.dioramaCameraChangeAction) private var cameraChangeAction
     @Environment(\.dioramaLoadingChangeAction) private var loadingChangeAction
+    @Environment(\.dioramaARPlacement) private var arPlacement
+
+    #if os(iOS)
+    @State private var arController = ARPlacementController()
+    #endif
 
     init(
         inputs: DioramaViewInputs,
@@ -102,6 +107,20 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
         .onChange(of: model.store.loadingState) { _, state in
             loadingChangeAction?.action(state)
         }
+        .onChange(of: arPlacement?.wrappedValue) { _, active in
+            #if os(iOS)
+            Task {
+                if active == true {
+                    await arController.activate()
+                    model.arPlacementActive = true
+                } else {
+                    await arController.deactivate()
+                    model.arPlacementActive = false
+                    model.updateEntityScale()
+                }
+            }
+            #endif
+        }
         .onChange(of: routePreviewController?.playbackState) { _, newState in
             RouteAnimationHelper.handlePlaybackStateChange(
                 newState,
@@ -147,6 +166,28 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
             if let camera = content.entities.first(where: { $0.name == "OrbitCamera" }) {
                 camera.transform = model.cameraController.cameraTransform
             }
+
+            #if os(iOS)
+            // AR placement swaps the virtual orbit camera for the device's own, and rides the
+            // diorama on the plane anchor at scale 1 — `physicalSize` is real meters on a real
+            // table. The standard entity management below is skipped while the anchor owns the
+            // chunk; coming back, the entity falls out of the anchor and the ordinary path
+            // re-adopts it at viewport scale.
+            content.camera = model.arPlacementActive ? .spatialTracking : .virtual
+            if model.arPlacementActive {
+                if let anchor = arController.planeAnchor {
+                    if anchor.parent == nil { content.add(anchor) }
+                    if let entity = model.store.dioramaEntity, entity.parent !== anchor {
+                        entity.removeFromParent()
+                        anchor.addChild(entity)
+                        entity.position = .zero
+                        entity.scale = .one
+                    }
+                }
+                model.applyTransitionVisibility()
+                return
+            }
+            #endif
 
             // Matched on identity, not on the name: the store builds a *fresh* entity on every
             // load, and a relocation off the globe is a load. Asking only whether something called

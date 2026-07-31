@@ -178,15 +178,6 @@ public struct DioramaConfiguration: Sendable {
     /// rate-limited and asks not to be pointed at end users. See ``BuildingStyle``.
     public var buildings: BuildingStyle?
 
-    // MARK: - Platform-Specific Hints
-
-    /// Initial orbit camera elevation angle in radians (iOS/macOS only; ignored on visionOS).
-    public var cameraElevation: Float?
-    /// Initial orbit camera distance in meters (iOS/macOS only; ignored on visionOS).
-    public var cameraDistance: Float?
-    /// When `true`, enables AR table detection for real-world diorama placement on iOS.
-    public var allowsARPlacement: Bool
-
     // MARK: - Data Sources
 
     /// What the diorama is made of. Defaults to a terrain chunk.
@@ -212,9 +203,6 @@ public struct DioramaConfiguration: Sendable {
         chunk: TerrainChunkStyle = .standard,
         panRange: Float = 0,
         buildings: BuildingStyle? = nil,
-        cameraElevation: Float? = nil,
-        cameraDistance: Float? = nil,
-        allowsARPlacement: Bool = false,
         presentation: DioramaPresentation = .terrainChunk,
         imagerySource: ImagerySource = .esriSatellite,
         elevationSource: ElevationSource = .mapzen
@@ -229,108 +217,28 @@ public struct DioramaConfiguration: Sendable {
         self.chunk = chunk
         self.panRange = max(0, panRange)
         self.buildings = buildings
-        self.cameraElevation = cameraElevation
-        self.cameraDistance = cameraDistance
-        self.allowsARPlacement = allowsARPlacement
         self.presentation = presentation
         self.imagerySource = imagerySource
         self.elevationSource = elevationSource
     }
 
-    /// Creates a configuration framed on a real-world outline.
-    ///
-    /// ```swift
-    /// let park = try JSONDecoder().decode(FeatureCollection.self, from: data)
-    /// let configuration = DioramaConfiguration(outline: park)
-    /// ```
-    ///
-    /// The outline decides where the diorama is and how much ground it fetches — centre and radius
-    /// both come from ``GeographicFrame/init(fitting:padding:)`` — and the chunk is then cut to it.
-    /// Giving the centre and radius separately is what the designated initializer is for, and is
-    /// what to reach for when the outline sits off to one side of a larger region.
-    ///
-    /// - Returns: `nil` when the outline holds no polygon, or when it is a single point.
-    public init?(
-        outline: Geometry,
-        padding: Double = 0.05,
-        elevation: ElevationStyle = .realistic,
-        physicalDiameter: Float = 0.8,
-        zoomLevel: Int? = nil,
-        elevationExaggeration: Float = 1.0,
-        chunk: TerrainChunkStyle = .standard,
-        panRange: Float = 0,
-        buildings: BuildingStyle? = nil,
-        cameraElevation: Float? = nil,
-        cameraDistance: Float? = nil,
-        allowsARPlacement: Bool = false,
-        presentation: DioramaPresentation = .terrainChunk,
-        imagerySource: ImagerySource = .esriSatellite,
-        elevationSource: ElevationSource = .mapzen
-    ) {
-        guard let shape = DioramaShape.geoJSON(outline),
-              let frame = GeographicFrame(fitting: outline, padding: padding)
-        else { return nil }
-
+    /// Assembles a configuration from the public API's vocabulary: a region, a shape, a physical
+    /// size, and a style.
+    init(region: DioramaRegion, shape: DioramaShape, physicalSize: Float, style: DioramaStyle) {
         self.init(
-            center: frame.center.clLocationCoordinate,
-            radiusMeters: frame.radiusMeters,
-            elevation: elevation,
+            center: region.center.clLocationCoordinate,
+            radiusMeters: region.radius,
+            elevation: style.elevation,
             shape: shape,
-            physicalDiameter: physicalDiameter,
-            zoomLevel: zoomLevel,
-            elevationExaggeration: elevationExaggeration,
-            chunk: chunk,
-            panRange: panRange,
-            buildings: buildings,
-            cameraElevation: cameraElevation,
-            cameraDistance: cameraDistance,
-            allowsARPlacement: allowsARPlacement,
-            presentation: presentation,
-            imagerySource: imagerySource,
-            elevationSource: elevationSource
-        )
-    }
-
-    /// Creates a configuration framed on the first polygon in a decoded GeoJSON document.
-    public init?(
-        outline: FeatureCollection,
-        padding: Double = 0.05,
-        elevation: ElevationStyle = .realistic,
-        physicalDiameter: Float = 0.8,
-        zoomLevel: Int? = nil,
-        elevationExaggeration: Float = 1.0,
-        chunk: TerrainChunkStyle = .standard,
-        panRange: Float = 0,
-        buildings: BuildingStyle? = nil,
-        cameraElevation: Float? = nil,
-        cameraDistance: Float? = nil,
-        allowsARPlacement: Bool = false,
-        presentation: DioramaPresentation = .terrainChunk,
-        imagerySource: ImagerySource = .esriSatellite,
-        elevationSource: ElevationSource = .mapzen
-    ) {
-        // Framed on the polygon that is cut to, not on the whole document: a boundary file that
-        // also carries labels or a route would otherwise fetch the ground those reach across.
-        guard let geometry = outline.features.lazy.compactMap(\.geometry)
-            .first(where: { DioramaShape.geoJSON($0) != nil })
-        else { return nil }
-
-        self.init(
-            outline: geometry,
-            padding: padding,
-            elevation: elevation,
-            physicalDiameter: physicalDiameter,
-            zoomLevel: zoomLevel,
-            elevationExaggeration: elevationExaggeration,
-            chunk: chunk,
-            panRange: panRange,
-            buildings: buildings,
-            cameraElevation: cameraElevation,
-            cameraDistance: cameraDistance,
-            allowsARPlacement: allowsARPlacement,
-            presentation: presentation,
-            imagerySource: imagerySource,
-            elevationSource: elevationSource
+            physicalDiameter: physicalSize,
+            zoomLevel: style.zoomLevel,
+            elevationExaggeration: style.elevationExaggeration,
+            chunk: style.chunk,
+            panRange: style.panRange,
+            buildings: style.buildings,
+            presentation: style.presentation,
+            imagerySource: style.imagerySource,
+            elevationSource: style.elevationSource
         )
     }
 }

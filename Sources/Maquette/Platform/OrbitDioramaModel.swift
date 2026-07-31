@@ -18,7 +18,7 @@ final class OrbitDioramaModel {
     let cameraController = CameraController()
     /// The handoff's shared mechanics; the model supplies the orbit-camera framing response.
     let handoff = GlobeHandoffConductor()
-    let content: DioramaContentGroup?
+    private(set) var content: DioramaContentGroup?
 
     /// The transition, read and written through the conductor that owns it.
     var transition: GlobeTransition {
@@ -39,6 +39,21 @@ final class OrbitDioramaModel {
     var routePreviewController: RoutePreviewController?
     var globeStyle: GlobeTransitionStyle?
 
+    /// The camera-position binding handed to `DioramaView`, and the value last applied through it.
+    ///
+    /// The guard against feedback: gestures write the binding, the binding's `onChange` calls
+    /// ``applyCameraPosition(_:)``, and without remembering what was last written the write-back
+    /// would re-apply itself. Single-direction sync — apply on change in, publish on gesture out.
+    var positionBinding: Binding<DioramaCameraPosition>?
+    private var lastAppliedPosition: DioramaCameraPosition?
+
+    /// The selection binding handed to `DioramaView`, written on marker taps.
+    var selectionBinding: Binding<DioramaAnnotation.ID?>?
+
+    /// Observation hooks from the environment.
+    var cameraChangeAction: DioramaCameraChangeAction?
+    var loadingChangeAction: DioramaLoadingChangeAction?
+
     var lastAnimationDate: Date?
     var chunkCenterY: Float = 0
     /// The orbit's own tilt range, captured before the transition starts widening it.
@@ -51,19 +66,81 @@ final class OrbitDioramaModel {
 
     // MARK: - Lifecycle
 
-    /// The initial load: camera hints, effect, terrain, content, framing.
+    /// The initial load: camera request, effect, terrain, content, framing.
     func initialLoad(effect: DioramaEffect) async {
-        if let elevation = store.configuration.cameraElevation {
-            cameraController.elevation = elevation
-        }
-        if let distance = store.configuration.cameraDistance {
-            cameraController.distance = distance
-        }
+        applyCameraPosition(positionBinding?.wrappedValue)
         chunkElevationLimits = cameraController.minElevation...cameraController.maxElevation
         store.setEffect(effect)
         await store.load()
         store.applyContent(content)
         frameLoadedChunk()
+    }
+
+    /// Adopts a changed region/style key; see ``DioramaLiveInputs/applyReloadKey(_:store:content:afterLoad:)``.
+    func applyReloadKey(_ key: DioramaViewInputs.ReloadKey) {
+        DioramaLiveInputs.applyReloadKey(key, store: store, content: content) { [weak self] in
+            self?.frameLoadedChunk()
+        }
+    }
+
+    /// Re-applies changed content against the substrate already in hand.
+    func setContent(_ newContent: DioramaContentGroup) {
+        content = newContent
+        store.applyContent(newContent)
+        applySelection(selectionBinding?.wrappedValue)
+    }
+
+    // MARK: - Camera binding
+
+    /// Applies an incoming camera request, once per distinct value.
+    func applyCameraPosition(_ position: DioramaCameraPosition?) {
+        guard let position, position != lastAppliedPosition else { return }
+        lastAppliedPosition = position
+        switch position.request {
+        case .automatic:
+            frameLoadedChunk()
+        case .camera(let camera):
+            cameraController.azimuth = Float(camera.azimuth.radians)
+            cameraController.elevation = min(
+                max(Float(camera.elevation.radians), cameraController.minElevation),
+                cameraController.maxElevation
+            )
+            cameraController.distance = min(
+                max(camera.distance, cameraController.minDistance),
+                cameraController.maxDistance
+            )
+        }
+    }
+
+    /// Publishes the camera a gesture just moved: to the binding, and to the observation hook.
+    ///
+    /// Called from gesture intents only — programmatic moves (the transition's framing, a route
+    /// follow) are not the user positioning the camera, and `positionedByUser` should mean what
+    /// it says.
+    func publishCameraPosition() {
+        let camera = DioramaCamera(
+            azimuth: .radians(Double(cameraController.azimuth)),
+            elevation: .radians(Double(cameraController.elevation)),
+            distance: cameraController.distance
+        )
+        cameraChangeAction?.action(camera)
+        guard let positionBinding else { return }
+        let position = DioramaCameraPosition.userPositioned(camera)
+        // Remembered as applied before writing, so the binding's own onChange does not re-apply it.
+        lastAppliedPosition = position
+        positionBinding.wrappedValue = position
+    }
+
+    // MARK: - Selection
+
+    /// A tap landed on an entity; walk up for a marker and toggle the selection.
+    func handleTap(on entity: Entity) {
+        DioramaLiveInputs.handleTap(on: entity, selection: selectionBinding, store: store)
+    }
+
+    /// Reflects the selected identity onto the marker entities.
+    func applySelection(_ id: DioramaAnnotation.ID?) {
+        DioramaLiveInputs.applySelection(id, store: store)
     }
 
     /// The overlay's retry: tear down and load again.
@@ -207,6 +284,7 @@ final class OrbitDioramaModel {
             )
         } else if enabledGestures.contains(.rotate) {
             cameraController.rotate(deltaX: dx, deltaY: dy)
+            publishCameraPosition()
         }
     }
 
@@ -222,6 +300,7 @@ final class OrbitDioramaModel {
         }
         if enabledGestures.contains(.rotate) {
             cameraController.rotate(deltaX: dx, deltaY: dy)
+            publishCameraPosition()
         }
     }
 
@@ -307,6 +386,7 @@ final class OrbitDioramaModel {
         guard store.canZoomGround else {
             guard globeStyle != nil, store.globe != nil, !chunkHasZoomRoom, delta < 0 else {
                 cameraController.zoom(delta: delta)
+                publishCameraPosition()
                 return
             }
             absorbIntoTransition(delta)

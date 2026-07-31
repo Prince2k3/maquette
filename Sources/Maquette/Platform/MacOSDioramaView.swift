@@ -8,11 +8,10 @@ import SwiftUI
 /// option-drag orbits, matching the two-finger gesture, and a plain drag slides the ground the
 /// way a map does. Zoom comes from trackpad pinch and the scroll wheel.
 struct MacOSDioramaView: View {
-    let configuration: DioramaConfiguration
-    let content: DioramaContentGroup?
+    let inputs: DioramaViewInputs
 
     var body: some View {
-        OrbitDioramaView(configuration: configuration, content: content) { model in
+        OrbitDioramaView(inputs: inputs) { model in
             MacOSDioramaGestures(model: model)
         }
     }

@@ -21,6 +21,43 @@ public struct DioramaStyle: Sendable {
     /// The default terrain chunk: realistic elevation, ESRI imagery, standard strata.
     public static let standard = DioramaStyle.standard()
 
+    init(
+        elevation: ElevationStyle,
+        elevationExaggeration: Float,
+        imagerySource: ImagerySource,
+        elevationSource: ElevationSource,
+        chunk: TerrainChunkStyle,
+        buildings: BuildingStyle?,
+        panRange: Float,
+        zoomLevel: Int?,
+        presentation: DioramaPresentation
+    ) {
+        self.elevation = elevation
+        self.elevationExaggeration = elevationExaggeration
+        self.imagerySource = imagerySource
+        self.elevationSource = elevationSource
+        self.chunk = chunk
+        self.buildings = buildings
+        self.panRange = panRange
+        self.zoomLevel = zoomLevel
+        self.presentation = presentation
+    }
+
+    /// Recovers the style half of a configuration, for change comparison.
+    init(configuration: DioramaConfiguration) {
+        self.init(
+            elevation: configuration.elevation,
+            elevationExaggeration: configuration.elevationExaggeration,
+            imagerySource: configuration.imagerySource,
+            elevationSource: configuration.elevationSource,
+            chunk: configuration.chunk,
+            buildings: configuration.buildings,
+            panRange: configuration.panRange,
+            zoomLevel: configuration.zoomLevel,
+            presentation: configuration.presentation
+        )
+    }
+
     /// A terrain chunk built from elevation and imagery tiles.
     ///
     /// - Parameters:

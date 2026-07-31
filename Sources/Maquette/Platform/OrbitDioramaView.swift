@@ -19,26 +19,27 @@ import SwiftUI
 /// lifecycle tasks, the animation timeline, and the RealityView make/update closures. The one
 /// thing a platform supplies is its gesture adapter: a `ViewModifier` built over the model's
 /// intent methods, so the input vocabulary is per-platform and its meaning is not.
-///
-/// The duplication this replaces was not free: two of the three divergences it had accumulated
-/// were bugs (the stale-entity removal branch and the relocation clock reset existed on iOS and
-/// not on macOS), which is what happens to six hundred lines maintained twice.
 struct OrbitDioramaView<Gestures: ViewModifier>: View {
+    let inputs: DioramaViewInputs
     @State private var model: OrbitDioramaModel
     private let makeGestures: (OrbitDioramaModel) -> Gestures
 
     @Environment(\.routePreviewController) private var routePreviewController
-    @Environment(\.enabledDioramaGestures) private var enabledGestures
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dioramaEffect) private var effect
     @Environment(\.globeTransitionStyle) private var globeStyle
+    @Environment(\.dioramaCameraChangeAction) private var cameraChangeAction
+    @Environment(\.dioramaLoadingChangeAction) private var loadingChangeAction
 
     init(
-        configuration: DioramaConfiguration,
-        content: DioramaContentGroup?,
+        inputs: DioramaViewInputs,
         makeGestures: @escaping (OrbitDioramaModel) -> Gestures
     ) {
-        self._model = State(initialValue: OrbitDioramaModel(configuration: configuration, content: content))
+        self.inputs = inputs
+        self._model = State(initialValue: OrbitDioramaModel(
+            configuration: inputs.configuration,
+            content: inputs.content
+        ))
         self.makeGestures = makeGestures
     }
 
@@ -68,14 +69,14 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
             await model.adoptGlobeStyle(globeStyle)
         }
         .task {
-            syncEnvironment()
+            syncInputs()
             await model.initialLoad(effect: effect)
         }
         .onChange(of: effect) { _, newEffect in
             model.store.setEffect(newEffect)
         }
-        .onChange(of: enabledGestures) { _, gestures in
-            model.enabledGestures = gestures
+        .onChange(of: inputs.interactionModes.rawValue) { _, _ in
+            model.enabledGestures = inputs.interactionModes.gestureTypes
         }
         .onChange(of: displayScale) { _, scale in
             model.displayScale = scale
@@ -83,8 +84,23 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
         .onChange(of: routePreviewController.map(ObjectIdentifier.init)) { _, _ in
             model.routePreviewController = routePreviewController
         }
-        .onChange(of: model.store.configuration.buildings?.isVisible) { _, isVisible in
-            model.store.setBuildingsVisible(isVisible ?? false)
+        .onChange(of: inputs.reloadKey) { _, key in
+            syncInputs()
+            model.applyReloadKey(key)
+        }
+        .onChange(of: inputs.content) { _, content in
+            model.setContent(content)
+        }
+        .onChange(of: inputs.position?.wrappedValue) { _, position in
+            model.positionBinding = inputs.position
+            model.applyCameraPosition(position)
+        }
+        .onChange(of: inputs.selection?.wrappedValue) { _, selected in
+            model.selectionBinding = inputs.selection
+            model.applySelection(selected)
+        }
+        .onChange(of: model.store.loadingState) { _, state in
+            loadingChangeAction?.action(state)
         }
         .onChange(of: routePreviewController?.playbackState) { _, newState in
             RouteAnimationHelper.handlePlaybackStateChange(
@@ -96,11 +112,16 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
         }
     }
 
-    /// Pushes the environment's values into the model, which has no hierarchy to read them from.
-    private func syncEnvironment() {
-        model.enabledGestures = enabledGestures
+    /// Pushes the view's inputs and environment into the model, which has no hierarchy to read
+    /// them from.
+    private func syncInputs() {
+        model.enabledGestures = inputs.interactionModes.gestureTypes
         model.displayScale = displayScale
         model.routePreviewController = routePreviewController
+        model.positionBinding = inputs.position
+        model.selectionBinding = inputs.selection
+        model.cameraChangeAction = cameraChangeAction
+        model.loadingChangeAction = loadingChangeAction
     }
 
     @ViewBuilder
@@ -170,6 +191,16 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
                 )
             }
         }
+        // Marker selection. Simultaneous with the platform's drag gestures so a tap that never
+        // becomes a drag still lands; only entities carrying collision + input-target components
+        // — the markers — can be hit, so terrain drags are unaffected.
+        .simultaneousGesture(
+            SpatialTapGesture()
+                .targetedToAnyEntity()
+                .onEnded { value in
+                    model.handleTap(on: value.entity)
+                }
+        )
         .modifier(makeGestures(model))
     }
 }

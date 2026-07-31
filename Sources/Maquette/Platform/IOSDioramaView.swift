@@ -9,11 +9,10 @@ import SwiftUI
 /// raw touch locations through ``MultitouchDragTracker``. Handling all three intents in one
 /// gesture also avoids arbitration between competing recognizers.
 struct IOSDioramaView: View {
-    let configuration: DioramaConfiguration
-    let content: DioramaContentGroup?
+    let inputs: DioramaViewInputs
 
     var body: some View {
-        OrbitDioramaView(configuration: configuration, content: content) { model in
+        OrbitDioramaView(inputs: inputs) { model in
             IOSDioramaGestures(model: model)
         }
     }

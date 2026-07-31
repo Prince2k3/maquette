@@ -10,23 +10,26 @@ import RealityKit
 /// the way out hands off to the globe. The handoff's mechanics come from the shared
 /// ``GlobeHandoffConductor``; only the framing response is volumetric.
 struct VisionOSDioramaView: View {
-    let configuration: DioramaConfiguration
-    let content: DioramaContentGroup?
+    let inputs: DioramaViewInputs
 
     @State private var model: VisionOSDioramaModel
     @State private var lastMagnification: CGFloat?
     @State private var dragStartOrientation: simd_quatf?
 
     @Environment(\.routePreviewController) private var routePreviewController
-    @Environment(\.enabledDioramaGestures) private var enabledGestures
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dioramaEffect) private var effect
     @Environment(\.globeTransitionStyle) private var globeStyle
+    @Environment(\.dioramaLoadingChangeAction) private var loadingChangeAction
 
-    init(configuration: DioramaConfiguration, content: DioramaContentGroup?) {
-        self.configuration = configuration
-        self.content = content
-        self._model = State(initialValue: VisionOSDioramaModel(configuration: configuration, content: content))
+    private var enabledGestures: Set<DioramaGestureType> { inputs.interactionModes.gestureTypes }
+
+    init(inputs: DioramaViewInputs) {
+        self.inputs = inputs
+        self._model = State(initialValue: VisionOSDioramaModel(
+            configuration: inputs.configuration,
+            content: inputs.content
+        ))
     }
 
     var body: some View {
@@ -44,20 +47,31 @@ struct VisionOSDioramaView: View {
                 }
                 .task {
                     model.enabledGestures = enabledGestures
+                    model.selectionBinding = inputs.selection
                     model.store.setEffect(effect)
                     await model.store.load()
-                    model.store.applyContent(content)
+                    model.store.applyContent(inputs.content)
                 }
                 // No backdrop here: a volumetric window has the user's own room behind it, which is
                 // the point of the platform. `backgroundColor` is for the flat presentations.
                 .onChange(of: effect) { _, newEffect in
                     model.store.setEffect(newEffect)
                 }
-                .onChange(of: enabledGestures) { _, gestures in
-                    model.enabledGestures = gestures
+                .onChange(of: inputs.interactionModes.rawValue) { _, _ in
+                    model.enabledGestures = enabledGestures
                 }
-                .onChange(of: configuration.buildings?.isVisible) { _, isVisible in
-                    model.store.setBuildingsVisible(isVisible ?? false)
+                .onChange(of: inputs.reloadKey) { _, key in
+                    model.applyReloadKey(key)
+                }
+                .onChange(of: inputs.content) { _, content in
+                    model.setContent(content)
+                }
+                .onChange(of: inputs.selection?.wrappedValue) { _, selected in
+                    model.selectionBinding = inputs.selection
+                    model.applySelection(selected)
+                }
+                .onChange(of: model.store.loadingState) { _, state in
+                    loadingChangeAction?.action(state)
                 }
                 .onChange(of: routePreviewController.map(ObjectIdentifier.init)) { _, _ in
                     model.routePreviewController = routePreviewController
@@ -65,6 +79,13 @@ struct VisionOSDioramaView: View {
                 .onAppear {
                     model.routePreviewController = routePreviewController
                 }
+                .simultaneousGesture(
+                    SpatialTapGesture()
+                        .targetedToAnyEntity()
+                        .onEnded { value in
+                            model.handleTap(on: value.entity)
+                        }
+                )
                 .gestureIf(enabledGestures.contains(.pan) || enabledGestures.contains(.rotate),
                     DragGesture()
                         .targetedToAnyEntity()
@@ -172,13 +193,15 @@ struct VisionOSDioramaView: View {
 @Observable
 final class VisionOSDioramaModel {
     let store: DioramaStore
-    let content: DioramaContentGroup?
+    private(set) var content: DioramaContentGroup?
     /// The handoff's shared mechanics; this model supplies the volumetric framing response.
     let handoff = GlobeHandoffConductor()
 
     var enabledGestures: Set<DioramaGestureType> = [.rotate, .zoom, .pan]
     var globeStyle: GlobeTransitionStyle?
     var routePreviewController: RoutePreviewController?
+    /// The selection binding handed to `DioramaView`, written on marker taps.
+    var selectionBinding: Binding<DioramaAnnotation.ID?>?
 
     /// The scale mapping diorama meters to volume meters, measured from the window's bounds.
     private(set) var fitScale: Float = 1
@@ -206,6 +229,30 @@ final class VisionOSDioramaModel {
             await store.load()
             store.applyContent(content)
         }
+    }
+
+    /// Adopts a changed region/style key; see ``DioramaLiveInputs/applyReloadKey(_:store:content:afterLoad:)``.
+    func applyReloadKey(_ key: DioramaViewInputs.ReloadKey) {
+        DioramaLiveInputs.applyReloadKey(key, store: store, content: content) {
+            // No camera to re-frame; the volume fit re-applies when the entity swaps in.
+        }
+    }
+
+    /// Re-applies changed content against the substrate already in hand.
+    func setContent(_ newContent: DioramaContentGroup) {
+        content = newContent
+        store.applyContent(newContent)
+        applySelection(selectionBinding?.wrappedValue)
+    }
+
+    /// A tap landed on an entity; walk up for a marker and toggle the selection.
+    func handleTap(on entity: Entity) {
+        DioramaLiveInputs.handleTap(on: entity, selection: selectionBinding, store: store)
+    }
+
+    /// Reflects the selected identity onto the marker entities.
+    func applySelection(_ id: DioramaAnnotation.ID?) {
+        DioramaLiveInputs.applySelection(id, store: store)
     }
 
     func adoptGlobeStyle(_ style: GlobeTransitionStyle) async {

@@ -38,6 +38,23 @@ public class MarkerEntity: Entity {
         headEntity.name = "MarkerHead"
         headEntity.position = SIMD3<Float>(0, stemHeight + headRadius, 0)
         addChild(headEntity)
+
+        // A tap target. The collision sphere covers the whole pin rather than the head alone —
+        // the head is a couple of millimetres across on a tabletop diorama, and a target that
+        // small punishes exactly the gesture selection exists for.
+        let hitRadius = stemHeight + headRadius * 2
+        components.set(CollisionComponent(shapes: [
+            .generateSphere(radius: hitRadius).offsetBy(translation: SIMD3<Float>(0, hitRadius / 2, 0))
+        ]))
+        components.set(InputTargetComponent())
+    }
+
+    /// Reflects selection: a selected pin stands half again as large.
+    ///
+    /// Scale rather than a colour change, because the tint is the caller's own vocabulary — two
+    /// markers distinguished by colour must stay distinguishable while one of them is selected.
+    public func setSelected(_ selected: Bool) {
+        scale = SIMD3<Float>(repeating: selected ? 1.5 : 1.0)
     }
 
     @MainActor

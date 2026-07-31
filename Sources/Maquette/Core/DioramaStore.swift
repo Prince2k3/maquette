@@ -327,6 +327,16 @@ public final class DioramaStore {
         await restoreGroundScale(departureScale)
     }
 
+    /// Tears down and rebuilds against a new configuration, for a live style or region change.
+    ///
+    /// Unlike ``relocate(to:)`` this does not carry the ground scale across: a new radius or style
+    /// is a new diorama, and it comes up the way a fresh load does.
+    public func reload(configuration newConfiguration: DioramaConfiguration) async {
+        reset()
+        configuration = newConfiguration
+        await load()
+    }
+
     /// Re-widens a freshly loaded chunk to the ground zoom the one it replaced was showing.
     ///
     /// Two things here are deliberate and both fail quietly if they are dropped.

@@ -234,7 +234,7 @@ struct GeoJSONShapeTests {
         #expect(DioramaShape.geoJSON(FeatureCollection([])) == nil)
     }
 
-    @Test("A decoded boundary file configures a diorama on its own")
+    @Test("A decoded boundary file frames and cuts a diorama on its own")
     func decodedDocumentBecomesAConfiguration() throws {
         let json = """
         {
@@ -256,7 +256,11 @@ struct GeoJSONShapeTests {
         }
         """
         let collection = try JSONDecoder().decode(FeatureCollection.self, from: Data(json.utf8))
-        let configuration = try #require(DioramaConfiguration(outline: collection))
+        let region = try #require(DioramaRegion(fitting: collection))
+        let shape = try #require(DioramaShape.geoJSON(collection))
+        let configuration = DioramaConfiguration(
+            region: region, shape: shape, physicalSize: 0.8, style: .standard
+        )
 
         // The outline decides where the diorama is and how much ground it fetches.
         #expect(abs(configuration.center.longitude - -112.11) < 0.001)
@@ -272,8 +276,8 @@ struct GeoJSONShapeTests {
         )
         #expect(fanNormalPointsUp(boundary))
 
-        // A document with no polygon in it has no outline to be cut to.
-        #expect(DioramaConfiguration(outline: FeatureCollection([])) == nil)
+        // A document with no polygon in it has no outline to be framed on.
+        #expect(DioramaRegion(fitting: FeatureCollection([])) == nil)
     }
 
     @Test("A geographic outline reports the diameter as its scale reference")

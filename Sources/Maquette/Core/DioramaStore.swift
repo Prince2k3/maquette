@@ -1443,7 +1443,7 @@ public final class DioramaStore {
     /// The surface re-reads the tiles already in hand — one resample, no fetch — and the imagery
     /// stretches across the chunk until coarser tiles arrive to replace it.
     ///
-    /// Four things move together with the scale, and leaving any one of them out fails quietly:
+    /// Three things move together with the scale, and leaving any one of them out fails quietly:
     ///
     /// - **The pan offset divides by the same factor.** The ground under the chunk is
     ///   `originTile + panOffset · tilesPerDioramaMeter`, and scaling only the second term slides
@@ -1456,11 +1456,12 @@ public final class DioramaStore {
     /// - **The margin ring is re-counted.** A tile spans half as much diorama distance at twice the
     ///   scale, so the ring the roller keeps beyond the outline has to be measured in the new tiles
     ///   or the chunk pans off its own margin immediately.
-    /// - **The earth mass takes back what the terrain gives up.** The elevation scale is exactly
-    ///   what makes the chunk's *own* thickness change with the map, which it must not: the object
-    ///   on the table is the same object at every zoom. ``TerrainEntity/baseDepth(atGroundScale:)``
-    ///   deepens the earth mass by what the rim's terrain lost, so the strata wall keeps its height
-    ///   and the underside drops instead.
+    ///
+    /// And one thing deliberately does *not* move: ``TerrainEntity/baseDepth``. The earth mass is
+    /// what the strata wall is made of, so scaling it would answer a gesture about the *map* by
+    /// resizing the object — the wall growing as the ground widens and shrinking on the way back in.
+    /// The chunk's total thickness therefore does change with the zoom, by the relief the terrain
+    /// gives up, and that is the honest reading of a map pulling back.
     ///
     /// The elevation baseline is deliberately *not* re-measured, for the reason a roll does not
     /// re-measure it: it is what diorama Y = 0 means, and moving it makes the chunk bob.
@@ -1511,10 +1512,6 @@ public final class DioramaStore {
                 baselineElevation: template.globalMinElev,
                 elevationScale: mapping.elevationScale
             )
-        }
-        // The display base rests against the chunk's underside, which the earth mass has just moved.
-        if let base = entity?.base, let terrain = entity?.terrain {
-            base.position.y = terrain.undersideShift
         }
         projection?.panOffset = offset
         refreshEffect()

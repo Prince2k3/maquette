@@ -333,8 +333,63 @@ final class DioramaStore {
             """)
         reset()
         configuration.center = coordinate.clLocationCoordinate
+        // The two windows a steered return needs used to be fetched in sequence: the fine one
+        // `load()` builds from — which is re-widened by a couple of hundred before a single frame
+        // shows it — and then the coarse one the chunk actually comes back wearing. The globe held
+        // still over both round trips, which is the pause between "pinched in" and "descending".
+        // The coarse window's tiles go out now, alongside the fine load, so the awaited re-level
+        // inside `restoreGroundScale` lands from a warm cache.
+        prewarmRestoredWindow(scale: departureScale)
         await load()
         await restoreGroundScale(departureScale)
+    }
+
+    /// Starts fetching the tiles the restored ground scale will need, without waiting on them.
+    ///
+    /// Fire-and-forget into the cache: a tile that arrives in time makes the re-level's fetch a
+    /// cache hit, one that arrives late is still there for the first roll, and one that fails is
+    /// simply fetched again by the roller with its usual retry-next-roll behaviour. The window is
+    /// derived the way the re-level derives its own — the load's zoom taken down by the scale's
+    /// doublings, over the fetched region widened by the same scale — so the two ask for the same
+    /// ground; a tile or two of disagreement at the rim costs one fetch, not correctness.
+    private func prewarmRestoredWindow(scale: Float) {
+        guard abs(scale - 1) > 1e-4 else { return }
+        let center = Coordinate(configuration.center)
+        let fineZoom = configuration.zoomLevel ?? TileMath.optimalZoomLevel(
+            radiusMeters: configuration.radiusMeters,
+            latitude: center.latitude
+        )
+        let coarseZoom = Self.desiredTileZoom(base: fineZoom, scale: scale)
+        guard coarseZoom != fineZoom else { return }
+        let tiles = TileMath.tilesInRegion(
+            center: center,
+            radiusMeters: configuration.terrainFetchRadiusMeters * Double(scale),
+            zoom: coarseZoom
+        )
+        // A mis-derived window must degrade to the old sequential timing, never to a fetch storm.
+        guard tiles.count <= 48 else { return }
+        logger.debug("Pre-warming \(tiles.count) tiles at z\(coarseZoom) for ground scale \(scale)")
+
+        let cache = tileCache
+        let terrain = elevationProvider
+        let imagery = imageryProvider
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                for tile in tiles {
+                    let requestX = TileMath.wrappedColumn(tile.x, zoom: coarseZoom)
+                    group.addTask {
+                        _ = try? await cache.cachedOrFetch(
+                            x: requestX, y: tile.y, zoom: coarseZoom, provider: terrain
+                        )
+                    }
+                    group.addTask {
+                        _ = try? await cache.cachedOrFetch(
+                            x: requestX, y: tile.y, zoom: coarseZoom, provider: imagery
+                        )
+                    }
+                }
+            }
+        }
     }
 
     /// Tears down and rebuilds against a new configuration, for a live style or region change.
@@ -377,6 +432,16 @@ final class DioramaStore {
             SatelliteTileProvider()
         case .mapTilerSatellite(let apiKey):
             MapTilerSatelliteProvider(apiKey: apiKey)
+        }
+    }
+
+    /// The tile provider the configuration's elevation source names.
+    private var elevationProvider: any TileProvider {
+        switch configuration.elevationSource {
+        case .mapzen:
+            TerrainTileProvider()
+        case .mapTiler(let apiKey):
+            MapTilerTerrainProvider(apiKey: apiKey)
         }
     }
 
@@ -506,39 +571,54 @@ final class DioramaStore {
         logger.debug("Loading \(tiles.count) tiles at zoom \(zoom), radius \(fetchRadius)m")
 
         // Select providers based on configuration
-        let terrainProvider: any TileProvider = switch configuration.elevationSource {
-        case .mapzen:
-            TerrainTileProvider()
-        case .mapTiler(let apiKey):
-            MapTilerTerrainProvider(apiKey: apiKey)
-        }
-
+        let terrainProvider: any TileProvider = elevationProvider
         let satelliteProvider: any TileProvider = imageryProvider
 
-        var terrainGrids: [(x: Int, y: Int, grid: ElevationGrid)] = []
-        var satelliteImages: [(x: Int, y: Int, data: Data)] = []
-
-        for tile in tiles {
-            // The window keeps counting east past the antimeridian so it stays a rectangle; only the
-            // request folds back into the range a provider will accept. The grid keeps the unwrapped
-            // column, which is what the anchor and the height field are laid out against.
-            let requestX = TileMath.wrappedColumn(tile.x, zoom: zoom)
-            async let terrainData = tileCache.cachedOrFetch(
-                x: requestX, y: tile.y, zoom: zoom,
-                provider: terrainProvider
-            )
-            async let satelliteData = tileCache.cachedOrFetch(
-                x: requestX, y: tile.y, zoom: zoom,
-                provider: satelliteProvider
-            )
-
-            let tData = try await terrainData
-            let sData = try await satelliteData
-
-            let grid = try TerrariumDecoder.decodeElevation(from: tData)
-            terrainGrids.append((x: tile.x, y: tile.y, grid: grid))
-            satelliteImages.append((x: tile.x, y: tile.y, data: sData))
+        // The whole window goes out as one volley, not one round trip per tile: this loop used to
+        // await each tile before asking for the next, so a nine-tile window cost nine network
+        // round trips in a row — which is most of what a relocation's hold used to spend. Results
+        // land in whatever order the network answers and are put back in row-major order, the
+        // order the sequential loop produced them in.
+        struct FetchedTile: Sendable {
+            let x: Int
+            let y: Int
+            let grid: ElevationGrid
+            let imagery: Data
         }
+        let cache = tileCache
+        var fetched = try await withThrowingTaskGroup(of: FetchedTile.self) { group in
+            for tile in tiles {
+                // The window keeps counting east past the antimeridian so it stays a rectangle;
+                // only the request folds back into the range a provider will accept. The grid
+                // keeps the unwrapped column, which is what the anchor and the height field are
+                // laid out against.
+                let requestX = TileMath.wrappedColumn(tile.x, zoom: zoom)
+                group.addTask {
+                    async let terrainData = cache.cachedOrFetch(
+                        x: requestX, y: tile.y, zoom: zoom,
+                        provider: terrainProvider
+                    )
+                    async let satelliteData = cache.cachedOrFetch(
+                        x: requestX, y: tile.y, zoom: zoom,
+                        provider: satelliteProvider
+                    )
+                    let grid = try TerrariumDecoder.decodeElevation(from: try await terrainData)
+                    return FetchedTile(x: tile.x, y: tile.y, grid: grid, imagery: try await satelliteData)
+                }
+            }
+            var results: [FetchedTile] = []
+            results.reserveCapacity(tiles.count)
+            for try await result in group {
+                results.append(result)
+            }
+            return results
+        }
+        fetched.sort { $0.y == $1.y ? $0.x < $1.x : $0.y < $1.y }
+
+        var terrainGrids: [(x: Int, y: Int, grid: ElevationGrid)] =
+            fetched.map { (x: $0.x, y: $0.y, grid: $0.grid) }
+        let satelliteImages: [(x: Int, y: Int, data: Data)] =
+            fetched.map { (x: $0.x, y: $0.y, data: $0.imagery) }
 
         // Kept unstitched for the roller: stitching reconciles a grid against whichever neighbours
         // are loaded, so it has to be redone for each new window rather than accumulated.

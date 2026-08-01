@@ -2,12 +2,22 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- The app's only scene on visionOS is volumetric. Without naming that as the preferred
-	     default role, the system requests a plain window scene at launch, SwiftUI finds no
-	     matching scene, and the app asserts in findSceneListItem before a window exists.
-	     GENERATE_INFOPLIST_FILE cannot emit this key, so it merges in from this file, which the
-	     build applies only for the visionOS SDKs. -->
+	<!-- Names the volumetric window as the preferred default scene role. Without it a launch
+	     path that honours the preference would request a plain window scene, SwiftUI would find
+	     no matching scene, and the app would assert in findSceneListItem before a window exists.
+	     (This simulator's shell requests the plain role regardless, which is why the app also
+	     declares a plain window scene as the reliable host.) GENERATE_INFOPLIST_FILE cannot emit
+	     this key, so it merges in from this file, applied only for the visionOS SDKs. -->
 	<key>UIApplicationPreferredDefaultSceneSessionRole</key>
 	<string>UIWindowSceneSessionRoleVolumetricApplication</string>
+	<!-- The app is two scenes — the plain window and the volume it opens — and openWindow(id:)
+	     refuses outright without this: SwiftUI faults with "Unable to open a window when the app
+	     does not support multiple scenes" and the "Open in a volume" button silently does
+	     nothing. The generated plist never emits the key, and its default is NO. -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

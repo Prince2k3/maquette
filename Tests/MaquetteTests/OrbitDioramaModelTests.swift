@@ -32,13 +32,24 @@ struct OrbitDioramaModelTests {
         #expect(model.cameraController.distance > before)
     }
 
-    @Test("A fixed chunk has zoom room until the orbit reaches its furthest")
-    func chunkZoomRoomTracksTheOrbit() {
+    @Test("A fixed chunk never reports zoom room, because it can never depart")
+    func fixedChunkHasNoZoomRoom() {
         let model = Self.makeModel()
-        model.cameraController.distance = model.cameraController.maxDistance - 0.5
-        #expect(model.chunkHasZoomRoom)
-        model.cameraController.distance = model.cameraController.maxDistance
+        // The handoff rides the ground zoom; with none, the transition is never consulted and the
+        // camera keeps whatever range the caller gave it.
         #expect(!model.chunkHasZoomRoom)
+        model.cameraController.distance = model.cameraController.maxDistance - 0.5
+        #expect(!model.chunkHasZoomRoom)
+    }
+
+    @Test("A fixed chunk's zoom-out never starts a departure")
+    func fixedChunkZoomNeverDeparts() {
+        let model = Self.makeModel()
+        model.globeStyle = GlobeTransitionStyle()
+        model.transition.style = GlobeTransitionStyle()
+        for _ in 0..<50 { model.zoom(by: -10) }
+        #expect(!model.transition.isBusy)
+        #expect(model.transition.progress == 0)
     }
 
     @Test("Interaction is locked exactly while a handoff leg is playing")
@@ -138,16 +149,15 @@ struct OrbitDioramaModelTests {
         #expect(model.cameraController.target.y == model.chunkCenterY)
     }
 
-    @Test("The orbit limit is a property of the chunk, not of the window")
-    func orbitLimitIgnoresViewSize() {
+    @Test("The orbit limit leaves a fixed chunk's zoom range alone")
+    func orbitLimitSparesFixedChunks() {
         let model = Self.makeModel()
         model.globeStyle = GlobeTransitionStyle()
-        model.viewSize = CGSize(width: 400, height: 400)
+        let range = model.cameraController.maxDistance
+        // No ground zoom: the chunk can never depart, so narrowing the orbit toward a handoff
+        // that will not happen would only take zoom away from the camera.
         model.applyOrbitLimit()
-        let small = model.cameraController.maxDistance
-        model.viewSize = CGSize(width: 2000, height: 1200)
-        model.applyOrbitLimit()
-        #expect(model.cameraController.maxDistance == small)
+        #expect(model.cameraController.maxDistance == range)
     }
 
     @Test("The overlay reports loading only when the globe is not carrying the scene")

@@ -120,7 +120,6 @@ struct VisionOSDioramaView: View {
                         }
                         .onEnded { _ in
                             lastMagnification = nil
-                            model.endPinch()
                         }
                 )
         }
@@ -614,21 +613,10 @@ final class VisionOSDioramaModel {
             absorb(delta)
             return
         }
-        guard store.canZoomGround else {
-            // A fixed diorama has no map to widen and no orbit camera to dolly; a zoom-out hands
-            // straight to the globe when one is on offer, and otherwise has nowhere to go. The
-            // hand-off is accumulated across the gesture rather than fired on the first negative
-            // sample: with no ladder to climb there is no runway at all, and a single frame of
-            // two-hand jitter at the start of an intended zoom-in would otherwise commit a whole
-            // departure. The threshold is a fifth of a doubling — deliberate, but barely.
-            guard globeStyle != nil, store.globe != nil else { return }
-            fixedChunkPinch += delta
-            if delta < 0, fixedChunkPinch <= -Self.fixedChunkDepartureThreshold {
-                fixedChunkPinch = 0
-                absorb(delta)
-            }
-            return
-        }
+        // A fixed diorama has no map to widen, and the handoff rides the map: a chunk that cannot
+        // zoom its ground never departs for the globe. With no camera in a volume to dolly either,
+        // its pinch is deliberately inert.
+        guard store.canZoomGround else { return }
 
         store.zoomGround(by: exp2(-delta * DioramaSceneRig.groundZoomOctaves))
 
@@ -640,17 +628,6 @@ final class VisionOSDioramaModel {
     /// How much zoom delta a doubling of pinch ratio is worth, matched to the iOS pinch so a full
     /// spread covers about the same share of the ground-zoom ladder on both platforms.
     private static let pinchOctaveScale: Float = 25
-
-    /// The cumulative zoom-out a fixed chunk requires before it departs for the globe.
-    private static let fixedChunkDepartureThreshold: Float = 5
-
-    /// Net pinch delta of the current gesture on a fixed chunk; see `applyPinch`.
-    private var fixedChunkPinch: Float = 0
-
-    /// Called when a pinch gesture ends, so the next one starts its departure runway fresh.
-    func endPinch() {
-        fixedChunkPinch = 0
-    }
 
     private var chunkHasZoomRoom: Bool {
         guard store.canZoomGround else { return false }

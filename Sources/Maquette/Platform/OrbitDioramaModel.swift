@@ -177,10 +177,11 @@ final class OrbitDioramaModel {
 
     /// Pulls the orbit's furthest distance in to the chunk, so zooming out reaches the world.
     ///
-    /// Only when a globe is on offer: without one the camera's own range is what the caller asked
-    /// for, and narrowing it would take zoom away from a diorama that has nowhere else to go.
+    /// Only when a globe is on offer *and* the chunk can actually depart — the handoff rides the
+    /// ground zoom, so a fixed diorama never leaves and narrowing its range would take zoom away
+    /// from a camera that has nowhere else to go.
     func applyOrbitLimit() {
-        guard globeStyle != nil else { return }
+        guard globeStyle != nil, store.canZoomGround else { return }
         let extent = store.configuration.horizontalExtent
         cameraController.maxDistance = transition.orbitLimit(
             chunkExtent: max(extent.x, extent.y) * entityScale
@@ -395,18 +396,20 @@ final class OrbitDioramaModel {
     /// onto, and the camera only when there is no map to zoom. The chunk itself never changes size
     /// — zooming out shows more world across the same object on the table, which is what a map
     /// does, and is why panning goes on working the whole way out.
+    ///
+    /// **The globe handoff rides the map, never the camera.** A fixed diorama — no `panRange`, or
+    /// the photorealistic pipeline, which has no height field to re-read — has no ground zoom, so
+    /// its zoom is a plain camera dolly and it never departs for the globe however far out it goes.
+    /// The handoff is a continuation of the map widening; departing from a chunk that cannot widen
+    /// would hand back a globe whose return had no ladder to descend.
     func zoom(by delta: Float) {
         if transition.isShowingGlobe {
             absorbIntoTransition(delta)
             return
         }
         guard store.canZoomGround else {
-            guard globeStyle != nil, store.globe != nil, !chunkHasZoomRoom, delta < 0 else {
-                cameraController.zoom(delta: delta)
-                publishCameraPosition()
-                return
-            }
-            absorbIntoTransition(delta)
+            cameraController.zoom(delta: delta)
+            publishCameraPosition()
             return
         }
 
@@ -420,13 +423,11 @@ final class OrbitDioramaModel {
 
     /// Whether a zoom-out still has somewhere to go before the world has to take over.
     ///
-    /// Two different questions with one answer, because the handoff is one moment: a chunk that
-    /// zooms its ground runs out when the map reaches the scale a flat cut stops suiting, and a
-    /// fixed chunk — which has no map to widen — runs out when the orbit reaches its furthest.
+    /// Only a chunk with a ground zoom can run out of room: the map reaches the scale a flat cut
+    /// stops suiting. A fixed chunk answers false, and nothing reads the answer there — its zoom
+    /// path never consults the transition at all.
     var chunkHasZoomRoom: Bool {
-        guard store.canZoomGround else {
-            return cameraController.distance < cameraController.maxDistance
-        }
+        guard store.canZoomGround else { return false }
         return store.groundScale < store.groundScaleLimits.upperBound * 0.999
     }
 

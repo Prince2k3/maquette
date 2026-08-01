@@ -13,7 +13,8 @@ import SwiftUI
 /// second finger, so **drag** slides the terrain and **option-drag** orbits, with pinch or scroll
 /// to zoom. On visionOS a drag slides and a pinch zooms. Zoom is also the road to the globe
 /// handoff on every platform: zooming *out* — fingers pinching together — past the last ground the
-/// map can widen onto departs, and zooming in at the globe commits the return.
+/// map can widen onto departs, and zooming in at the globe commits the return. The handoff rides
+/// the ground zoom, so only a pannable chunk (non-zero `panRange`) ever departs.
 ///
 /// Terrain sliding requires a chunk that can pan, which means a style with a non-zero `panRange`.
 /// Without one, a single drag orbits instead, so a fixed diorama behaves as it always has.

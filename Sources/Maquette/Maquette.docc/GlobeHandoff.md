@@ -5,7 +5,9 @@ spinnable globe; zoom back in to cut a chunk from wherever you left it pointing.
 
 ## How it behaves
 
-Apply ``SwiftUICore/View/globeTransition(_:)`` to opt in. From then on:
+Apply ``SwiftUICore/View/globeTransition(_:)`` to opt in. The handoff rides the ground zoom, so it
+requires a standard style with a non-zero `panRange` — a fixed diorama has no map to widen and
+never departs, and the photorealistic pipeline has no ground zoom at all. From then on:
 
 - **A pinch zooms the map, not the camera.** The chunk stays the same object on the table while
   the ground beneath it widens, re-fetching coarser tiles as it goes. Panning keeps working the

@@ -494,9 +494,12 @@ extension View {
     /// point facing the camera. Spinning the globe and zooming back in (fingers spreading apart)
     /// rebuilds the chunk wherever it was left facing — see `DioramaStore/relocate(to:)`.
     ///
-    /// On iOS and macOS the handoff rides the orbit camera; on visionOS, where a volume has no
-    /// camera, the globe grows out of the chunk's own footprint on the table instead. The gesture
-    /// vocabulary is the same everywhere.
+    /// **The handoff rides the ground zoom, so it requires a style that pans** — a standard style
+    /// with a non-zero `panRange`. A fixed diorama has no map to widen and never departs; the
+    /// photorealistic pipeline has no ground zoom at all, so it never departs either. On iOS and
+    /// macOS the framing rides the orbit camera; on visionOS, where a volume has no camera, the
+    /// globe grows out of the chunk's own footprint on the table instead. The gesture vocabulary
+    /// is the same everywhere.
     public func globeTransition(_ style: GlobeTransitionStyle = GlobeTransitionStyle()) -> some View {
         modifier(GlobeTransitionModifier(style: style))
     }

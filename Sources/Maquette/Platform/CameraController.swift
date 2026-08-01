@@ -42,9 +42,9 @@ final class CameraController {
     /// The dolly is multiplicative for the same reason the ground zoom is: a step has to *scale*
     /// the distance or the same pinch crawls up close and barely registers far out. The old linear
     /// `distance -= delta * 0.01` needed a cumulative delta of ~350 to cross a fixed chunk's whole
-    /// orbit range on macOS — about fifteen full trackpad pinches to reach the globe, which reads
-    /// as the handoff not existing. At 0.02 octaves per unit a full pinch (|delta| ≈ 25 on macOS,
-    /// ≈ 50 on iOS) covers half to one doubling, and the range is two or three pinches end to end.
+    /// orbit range on macOS — about fifteen full trackpad pinches end to end. At 0.02 octaves per
+    /// unit a full pinch (|delta| ≈ 25 on macOS, ≈ 50 on iOS) covers half to one doubling, and the
+    /// range is two or three pinches.
     public var zoomOctaves: Float = 0.02
 
     /// Pan sensitivity multiplier.

@@ -77,7 +77,13 @@ private struct MacOSDioramaGestures: ViewModifier {
 
     /// How much zoom a unit of pinch ratio is worth, calibrated so a full trackpad pinch covers
     /// about the same share of the ground-zoom ladder as a full-width pinch does on iOS.
-    private static let magnifyZoomScale: Float = 12
+    ///
+    /// A full trackpad pinch spans a magnification ratio of roughly ¼–4, so |log2| ≈ 2 either way;
+    /// at 25 that is a delta of ~50, the same ~4 octaves per gesture iOS and visionOS deliver, and
+    /// the globe is two or three pinches out from a freshly loaded chunk. The previous 12 was half
+    /// that rate — the same handoff at twice the pinch count, which is how "the transition doesn't
+    /// work on macOS" gets reported by someone who gave up before reaching it.
+    private static let magnifyZoomScale: Float = 25
 
     /// How much zoom a point of scroll delta is worth. The previous scroll path used 0.1 per point;
     /// kept, so anyone used to the old feel gets the same rate now that the events actually arrive.
@@ -147,11 +153,20 @@ private struct ScrollWheelReader: NSViewRepresentable {
             guard let window, event.window === window else { return }
             let location = convert(event.locationInWindow, from: nil)
             guard bounds.contains(location) else { return }
+            // The momentum tail is dropped: fingers that have lifted are not asking for more zoom,
+            // and a flick that kept zooming for a second after the gesture reads as the camera
+            // running away on its own.
+            guard event.momentumPhase == [] else { return }
             // Precise deltas (trackpads) arrive in points and already feel right; line-based
             // wheels report small line counts, so they are stepped up to a comparable rate.
-            let delta = event.hasPreciseScrollingDeltas
+            var delta = event.hasPreciseScrollingDeltas
                 ? event.scrollingDeltaY
                 : event.scrollingDeltaY * 10
+            // Zoom is not scrolled content, so the "natural scrolling" flip is undone: the deltas
+            // arrive inverted under that setting, and without this the physical finger direction
+            // that zooms in would depend on a system preference. Fingers pushing up (away) zoom in,
+            // whichever way the user scrolls their documents.
+            if event.isDirectionInvertedFromDevice { delta = -delta }
             guard delta != 0 else { return }
             onScroll?(delta)
         }

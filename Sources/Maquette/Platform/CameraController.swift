@@ -37,8 +37,15 @@ final class CameraController {
     /// Rotation sensitivity multiplier.
     public var rotationSensitivity: Float = 0.005
 
-    /// Zoom sensitivity multiplier.
-    public var zoomSensitivity: Float = 0.01
+    /// Doublings of orbit distance per unit of zoom delta.
+    ///
+    /// The dolly is multiplicative for the same reason the ground zoom is: a step has to *scale*
+    /// the distance or the same pinch crawls up close and barely registers far out. The old linear
+    /// `distance -= delta * 0.01` needed a cumulative delta of ~350 to cross a fixed chunk's whole
+    /// orbit range on macOS — about fifteen full trackpad pinches to reach the globe, which reads
+    /// as the handoff not existing. At 0.02 octaves per unit a full pinch (|delta| ≈ 25 on macOS,
+    /// ≈ 50 on iOS) covers half to one doubling, and the range is two or three pinches end to end.
+    public var zoomOctaves: Float = 0.02
 
     /// Pan sensitivity multiplier.
     public var panSensitivity: Float = 0.002
@@ -93,9 +100,9 @@ final class CameraController {
         elevation = min(max(elevation, minElevation), maxElevation)
     }
 
-    /// Updates orbit distance based on zoom delta.
+    /// Updates orbit distance based on zoom delta. Positive delta moves closer.
     public func zoom(delta: Float) {
-        distance -= delta * zoomSensitivity
+        distance *= exp2(-delta * zoomOctaves)
         distance = min(max(distance, minDistance), maxDistance)
     }
 

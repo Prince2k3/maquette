@@ -137,8 +137,16 @@ final class GlobeEntity: Entity {
 
     /// Where a coordinate sits on this globe's surface, in the globe's own space.
     /// Repaints the sphere with a restyled world image, leaving the photographic original in hand.
-    public func applyEffectImagery(_ image: CGImage) {
-        surface?.model?.materials = [Self.material(for: image)]
+    ///
+    /// - Parameter opacity: How solid the restyled sphere is. Below 1 the material blends, which
+    ///   is what lets a hologram's globe read as projected light rather than a painted marble.
+    public func applyEffectImagery(_ image: CGImage, opacity: Float = 1) {
+        var material = Self.material(for: image)
+        if opacity < 1, var unlit = material as? UnlitMaterial {
+            unlit.blending = .transparent(opacity: .init(floatLiteral: max(0, opacity)))
+            material = unlit
+        }
+        surface?.model?.materials = [material]
     }
 
     /// Puts the photographic mosaic back.

@@ -51,10 +51,17 @@ protocol DioramaEffectPass: AnyObject {
     /// Returning `nil` keeps the photographic mosaic, which is what the default does for a pass
     /// whose look has no image-level statement.
     func globeImagery(from world: CGImage) -> CGImage?
+
+    /// How solid the restyled globe is drawn, in `0...1`. `1` — the default — is opaque.
+    ///
+    /// The one consumer is the hologram: its chunk reads as projected light because everything in
+    /// it is translucent, and an opaque restyled sphere beside that reads as a painted marble.
+    var globeOpacity: Float { get }
 }
 
 extension DioramaEffectPass {
     func globeImagery(from world: CGImage) -> CGImage? { nil }
+    var globeOpacity: Float { 1 }
 }
 
 extension DioramaEffect {
@@ -218,11 +225,17 @@ final class HologramEffectPass: DioramaEffectPass {
     ///
     /// The chunk's treatment is line geometry a sphere cannot have, so the globe carries the
     /// *palette* half of the look — luma in, tint out, over near-black, which is what a projected
-    /// earth reads as. A small floor keeps the oceans present rather than dissolving the sphere's
-    /// silhouette into the room.
+    /// earth reads as. The floor keeps the oceans present rather than dissolving the sphere's
+    /// silhouette into the room, and the luma is lifted through a square root because satellite
+    /// imagery lives in the midtones: mapped linearly the sphere came out as a dark marble, which
+    /// beside a chunk made of glowing lines reads as a different effect entirely. The translucency
+    /// (``globeOpacity``) is the other half of that fix — everything in the hologram is projected
+    /// light, and light is not opaque.
     func globeImagery(from world: CGImage) -> CGImage? {
         try? Self.tintedMonochrome(world, tint: StrataTexture.rgbComponents(of: style.tint))
     }
+
+    var globeOpacity: Float { 0.75 }
 
     /// Remaps an image's luma into a single tint over black.
     private static func tintedMonochrome(
@@ -252,7 +265,7 @@ final class HologramEffectPass: DioramaEffectPass {
             ) else { return nil }
 
             context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-            let floor: Float = 0.08
+            let floor: Float = 0.14
             for row in 0..<height {
                 var offset = row * bytesPerRow
                 for _ in 0..<width {
@@ -260,7 +273,7 @@ final class HologramEffectPass: DioramaEffectPass {
                     let g = Float(raw[offset + 1])
                     let b = Float(raw[offset + 2])
                     let luma = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-                    let level = floor + (1 - floor) * luma
+                    let level = floor + (1 - floor) * luma.squareRoot()
                     raw[offset] = UInt8(min(level * tint.0 * 255, 255))
                     raw[offset + 1] = UInt8(min(level * tint.1 * 255, 255))
                     raw[offset + 2] = UInt8(min(level * tint.2 * 255, 255))
@@ -413,8 +426,23 @@ final class HologramEffectPass: DioramaEffectPass {
             positions: surface.positions,
             indices: surface.indices,
             axis: .y,
-            levels: elevationLevels(lower: lower, upper: upper, context: context)
+            levels: elevationLevels(
+                lower: lower,
+                upper: upper,
+                context: context,
+                drawnWidth: drawnLineWidth(context: context)
+            )
         )
+    }
+
+    /// The width of a contour's bright core on the ground.
+    ///
+    /// The core, not the glow: the halo is a faint wash two lines can share without either
+    /// becoming illegible, and measuring the spacing floor against it thinned the *resting*
+    /// chunk's ladder — the fix for the zoomed-out scribble must not restyle the chunk at rest.
+    private func drawnLineWidth(context: DioramaEffectContext) -> Float {
+        let extent = max(context.boundary.extent.x, context.boundary.extent.y)
+        return style.lineWidth * extent
     }
 
     /// The straight ruling, draped over the relief.
@@ -456,21 +484,46 @@ final class HologramEffectPass: DioramaEffectPass {
     private func elevationLevels(
         lower: Float,
         upper: Float,
-        context: DioramaEffectContext
+        context: DioramaEffectContext,
+        drawnWidth: Float
     ) -> ContourExtractor.LevelSet {
+        // Levels are never packed closer than a few line-widths apart. A ground zoom divides the
+        // elevation scale, so the relief under the outline compresses toward flat while the drawn
+        // line keeps its width — and 22 isolines through near-flat noisy ground are space-filling
+        // squiggles buried in the surface they trace, which on screen is a solid scribble tearing
+        // against the body. Ink degrades on its own there (flatter ground passes fewer creases);
+        // contours have to be told. Thinning the ladder instead of the lines keeps every contour
+        // that *is* drawn legible, and a chunk zoomed out to a continent simply stops carrying
+        // contours at all — the reading a printed map at that scale would make too. Two core
+        // widths, calibrated so the default ladder is untouched at ground scale 1 on the demo's
+        // own presets and runs out around an order of magnitude of zoom later.
+        let minimumSpacing = drawnWidth * 2
+
         switch style.contours {
         case .automatic(let count):
+            let relief = upper - lower
+            var count = count
+            if minimumSpacing > 0 {
+                count = min(count, Int(relief / minimumSpacing))
+            }
+            guard count > 0 else { return ContourExtractor.LevelSet(first: 0, step: 0, count: 0) }
             return .dividing(lower, upper, into: count)
 
         case .elevationMeters(let spacing):
-            let spacing = Float(spacing)
+            var spacing = Float(spacing)
             guard spacing > 0, context.elevationScale > 0 else {
                 return ContourExtractor.LevelSet(first: 0, step: 0, count: 0)
             }
             // Levels land on multiples of the spacing in *real* elevation, the way a printed
             // topographic map is drawn — which is not the same as multiples of it above the chunk's
             // own floor, since Y = 0 is wherever the region happens to bottom out.
-            let step = spacing * context.elevationScale
+            var step = spacing * context.elevationScale
+            if step < minimumSpacing {
+                // Decimated by a whole factor so the survivors stay on printed-map multiples.
+                let factor = (minimumSpacing / step).rounded(.up)
+                spacing *= factor
+                step *= factor
+            }
             let baseline = context.baselineElevation * context.elevationScale
             return .spaced(step, from: lower + baseline, to: upper + baseline)
                 .shifted(by: -baseline)

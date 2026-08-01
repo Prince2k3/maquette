@@ -459,7 +459,7 @@ final class DioramaStore {
         guard let globe else { return }
         if let pass = effectPass, let world = globe.worldImage,
            let styled = pass.globeImagery(from: world) {
-            globe.applyEffectImagery(styled)
+            globe.applyEffectImagery(styled, opacity: pass.globeOpacity)
         } else {
             globe.restoreImagery()
         }

@@ -11,7 +11,9 @@ import SwiftUI
 /// On iOS the split follows what a map does: **one finger** slides the terrain beneath the chunk's
 /// outline, and **two fingers** orbit the camera and pinch to zoom. On macOS a pointer has no
 /// second finger, so **drag** slides the terrain and **option-drag** orbits, with pinch or scroll
-/// to zoom. On visionOS a drag slides and a pinch zooms.
+/// to zoom. On visionOS a drag slides and a pinch zooms. Zoom is also the road to the globe
+/// handoff on every platform: zooming *out* — fingers pinching together — past the last ground the
+/// map can widen onto departs, and zooming in at the globe commits the return.
 ///
 /// Terrain sliding requires a chunk that can pan, which means a style with a non-zero `panRange`.
 /// Without one, a single drag orbits instead, so a fixed diorama behaves as it always has.

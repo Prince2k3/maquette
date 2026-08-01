@@ -1,7 +1,7 @@
 # The Globe Handoff
 
-Pinch out past the map's edge and the chunk dissolves into a spinnable globe; pinch back in to cut
-a chunk from wherever you left it pointing.
+Zoom out past the map's edge — fingers pinching together — and the chunk dissolves into a
+spinnable globe; zoom back in to cut a chunk from wherever you left it pointing.
 
 ## How it behaves
 
@@ -15,9 +15,9 @@ Apply ``SwiftUICore/View/globeTransition(_:)`` to opt in. From then on:
   the fingers do meanwhile. Coming back is the same in reverse.
 - **The globe steers like a map.** North stays up; a drag walks the docked point along parallels
   and meridians, clamped at Mercator's edge where the data ends.
-- **The return relocates.** Pinching in from the globe commits a descent onto the ground under the
-  centre, fetching it during the dissolve. The rebuilt chunk comes back at the breadth you were
-  looking at, so the way home is the way out reversed.
+- **The return relocates.** Zooming in at the globe — fingers spreading apart — commits a descent
+  onto the ground under the centre, fetching it during the dissolve. The rebuilt chunk comes back
+  at the breadth you were looking at, so the way home is the way out reversed.
 
 ## Styling
 

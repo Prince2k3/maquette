@@ -66,9 +66,9 @@ public struct GlobeTransitionStyle: Sendable, Equatable {
 /// **The handoff is an animation, and a pinch triggers it rather than scrubs it.** Progress moves
 /// on a clock: the zoom-out the chunk has no room left for starts the departure, and from that
 /// moment the transition plays itself out to the globe whatever the fingers go on doing. Coming back
-/// is the same in reverse — one pinch inwards commits the return, and the scene comes down on its
-/// own. Between the two the user has a globe to steer; *during* either leg they have an animation to
-/// watch.
+/// is the same in reverse — one zoom-in at the globe (fingers spreading apart) commits the return,
+/// and the scene comes down on its own. Between the two the user has a globe to steer; *during*
+/// either leg they have an animation to watch.
 ///
 /// Driven from the finger instead, the handoff is a dissolve the user has to keep feeding: it stops
 /// wherever they stop, which puts the scene at half a chunk over half a globe as a resting state,
@@ -489,12 +489,14 @@ extension View {
     ///     .globeTransition()
     /// ```
     ///
-    /// Pinching out past the camera's furthest orbit dissolves the chunk into the whole world,
-    /// docked so the chunk's own centre is the point facing the camera. Spinning the globe and
-    /// pinching back in rebuilds the chunk wherever it was left facing — see
-    /// `DioramaStore/relocate(to:)`.
+    /// Zooming out past the map's edge — fingers pinching *together*, the gesture that widens the
+    /// ground — dissolves the chunk into the whole world, docked so the chunk's own centre is the
+    /// point facing the camera. Spinning the globe and zooming back in (fingers spreading apart)
+    /// rebuilds the chunk wherever it was left facing — see `DioramaStore/relocate(to:)`.
     ///
-    /// Not available on visionOS, which presents a volume rather than orbiting a camera.
+    /// On iOS and macOS the handoff rides the orbit camera; on visionOS, where a volume has no
+    /// camera, the globe grows out of the chunk's own footprint on the table instead. The gesture
+    /// vocabulary is the same everywhere.
     public func globeTransition(_ style: GlobeTransitionStyle = GlobeTransitionStyle()) -> some View {
         modifier(GlobeTransitionModifier(style: style))
     }

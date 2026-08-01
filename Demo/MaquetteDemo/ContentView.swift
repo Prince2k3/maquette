@@ -379,9 +379,9 @@ struct ContentView: View {
         .dioramaStyle(style)
         .dioramaEffect(preset.effect)
         .dioramaARPlacement($arActive)
-        // Pinching widens the ground the chunk covers, and once it is covering about as much
-        // world as a flat cut can, the chunk dissolves into the globe; spin that and pinch back
-        // in to cut a chunk somewhere else.
+        // Zooming out (fingers pinching together) widens the ground the chunk covers, and once it
+        // is covering about as much world as a flat cut can, the chunk dissolves into the globe;
+        // spin that and zoom back in (fingers apart) to cut a chunk somewhere else.
         .globeTransition()
         // The region and the style are live: switching presets relocates or rebuilds the diorama
         // in place, with no `.id` identity tricks.

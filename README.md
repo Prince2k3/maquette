@@ -10,8 +10,8 @@ geological strata down the cut sides, a closing face underneath: a solid, not a 
 - **macOS** — the same scene under trackpad and mouse: drag pans, option-drag orbits, pinch or
   scroll zooms.
 
-Zoom out far enough and the chunk dissolves into a globe you can spin; pinch back in to cut a new
-chunk wherever you left it pointing.
+Zoom out far enough — fingers pinching together — and the chunk dissolves into a globe you can
+spin; zoom back in to cut a new chunk wherever you left it pointing.
 
 ## Quick start
 

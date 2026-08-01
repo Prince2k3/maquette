@@ -6,9 +6,9 @@ import RealityKit
 ///
 /// No virtual camera is needed — the user physically moves around the diorama — so this view
 /// carries the same interactions the orbit platforms do, expressed without one: a drag slides the
-/// terrain (or steers the globe), a pinch zooms the *ground* the way a map zooms, and pinching all
-/// the way out hands off to the globe. The handoff's mechanics come from the shared
-/// ``GlobeHandoffConductor``; only the framing response is volumetric.
+/// terrain (or steers the globe), a pinch zooms the *ground* the way a map zooms, and zooming all
+/// the way out — hands pinching together — hands off to the globe. The handoff's mechanics come
+/// from the shared ``GlobeHandoffConductor``; only the framing response is volumetric.
 struct VisionOSDioramaView: View {
     let inputs: DioramaViewInputs
 
@@ -120,6 +120,7 @@ struct VisionOSDioramaView: View {
                         }
                         .onEnded { _ in
                             lastMagnification = nil
+                            model.endPinch()
                         }
                 )
         }
@@ -416,7 +417,7 @@ final class VisionOSDioramaModel {
     /// place with the chunk buried inside it. A stage in between leaves diorama space to the store.
     ///
     /// The stage scale is the volumetric answer to "how big is the world on the table": the globe is
-    /// framed to the same share of the window the chunk was, so pinching out dissolves the diorama
+    /// framed to the same share of the window the chunk was, so zooming out dissolves the diorama
     /// into a tabletop globe of comparable size rather than a sphere that filled the room.
     func updateEntityPlacement() {
         let rotation = Self.pitchRotation(stagePitch)
@@ -615,8 +616,15 @@ final class VisionOSDioramaModel {
         }
         guard store.canZoomGround else {
             // A fixed diorama has no map to widen and no orbit camera to dolly; a zoom-out hands
-            // straight to the globe when one is on offer, and otherwise has nowhere to go.
-            if delta < 0, globeStyle != nil, store.globe != nil {
+            // straight to the globe when one is on offer, and otherwise has nowhere to go. The
+            // hand-off is accumulated across the gesture rather than fired on the first negative
+            // sample: with no ladder to climb there is no runway at all, and a single frame of
+            // two-hand jitter at the start of an intended zoom-in would otherwise commit a whole
+            // departure. The threshold is a fifth of a doubling — deliberate, but barely.
+            guard globeStyle != nil, store.globe != nil else { return }
+            fixedChunkPinch += delta
+            if delta < 0, fixedChunkPinch <= -Self.fixedChunkDepartureThreshold {
+                fixedChunkPinch = 0
                 absorb(delta)
             }
             return
@@ -632,6 +640,17 @@ final class VisionOSDioramaModel {
     /// How much zoom delta a doubling of pinch ratio is worth, matched to the iOS pinch so a full
     /// spread covers about the same share of the ground-zoom ladder on both platforms.
     private static let pinchOctaveScale: Float = 25
+
+    /// The cumulative zoom-out a fixed chunk requires before it departs for the globe.
+    private static let fixedChunkDepartureThreshold: Float = 5
+
+    /// Net pinch delta of the current gesture on a fixed chunk; see `applyPinch`.
+    private var fixedChunkPinch: Float = 0
+
+    /// Called when a pinch gesture ends, so the next one starts its departure runway fresh.
+    func endPinch() {
+        fixedChunkPinch = 0
+    }
 
     private var chunkHasZoomRoom: Bool {
         guard store.canZoomGround else { return false }

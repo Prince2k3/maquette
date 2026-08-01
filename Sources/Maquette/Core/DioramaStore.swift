@@ -1735,6 +1735,15 @@ final class DioramaStore {
     /// costs a fraction of the one it saves.
     private static let relevelSettleInterval = Duration.milliseconds(120)
 
+    /// How many tile levels the mosaic may stretch mid-gesture before a re-level stops waiting.
+    ///
+    /// Two levels is where soft turns into smeared: at one level out the imagery is merely √2–2×
+    /// blurry, and by two the chunk is asking for ground the window does not hold, so sampling
+    /// clamps to the window's edge and paints its border pixels in streaks across the face. The
+    /// settle wait exists to avoid fetching a ladder one rung at a time, and it keeps that job —
+    /// this only bounds how bad the picture may look while it waits.
+    private static let urgentStretchLevels = 2
+
     /// Fetches the ground again at a coarser tile level once the mosaic has stretched far enough.
     ///
     /// The zoom itself needs no fetch, which is what makes it cheap — but it *stretches* what is in
@@ -1767,6 +1776,18 @@ final class DioramaStore {
                     try? await Task.sleep(for: Self.relevelSettleInterval)
                     guard !Task.isCancelled else { return }
                     if groundScale == before { break }
+                    // **Unless the smear has arrived.** Waiting out the gesture is the cheap
+                    // choice only while the stretch stays soft: past a couple of levels every
+                    // sample beyond the resident window clamps to its edge, and the face is the
+                    // window's border pixels streaked across most of the chunk — the tearing.
+                    // A pinch that keeps running would leave that on screen for its whole
+                    // duration, so a mid-gesture rung is landed instead, and the landing guard
+                    // below is what keeps that from becoming one landing per rung.
+                    if let template = samplerTemplate,
+                       template.zoom - desiredTileZoom(for: template, scale: groundScale)
+                           >= Self.urgentStretchLevels {
+                        break
+                    }
                 }
                 guard let template = samplerTemplate, let state = rolling, !Task.isCancelled else { return }
                 let wanted = desiredTileZoom(for: template, scale: groundScale)
@@ -1820,7 +1841,18 @@ final class DioramaStore {
                 // landing per rung. Measured on a full-width outward pinch: three applied re-levels
                 // (z11 mid-gesture, then z10, then z8) with the chunk re-texturing for 0.958 s after
                 // the fingers lifted became one (z8) landing 0.230 s after them.
-                guard desiredTileZoom(for: template, scale: groundScale) == wanted else { continue }
+                //
+                // The one exception is a landing that still *improves* the stretch by a level or
+                // more — the urgent mid-gesture case above exists precisely because the chunk is
+                // showing the clamp smear right now, and a stale window that halves the stretch is
+                // better on screen than the exact one that is still hundreds of milliseconds out.
+                // It is applied and the loop goes round for the rest of the ladder.
+                let wantedNow = desiredTileZoom(for: template, scale: groundScale)
+                if wantedNow != wanted {
+                    let currentGap = abs(template.zoom - wantedNow)
+                    let landedGap = abs(wanted - wantedNow)
+                    guard landedGap < currentGap else { continue }
+                }
 
                 // The mapping is restated at the scale in force *now*, not the one the fetch was
                 // issued under. A fetch is hundreds of milliseconds and a pinch does not stop for

@@ -56,6 +56,26 @@ final class TerraceEffectPass: DioramaEffectPass {
         self.style = style
     }
 
+    /// The world's mosaic in flat tonal bands, the nearest image-level statement of the terrace.
+    ///
+    /// The chunk's paint is measured per *elevation* band, and a sphere has no elevation to band
+    /// by — so the globe takes the same flat-fill look keyed by tone instead, one band per step of
+    /// the ladder, through the same machinery the ink effect flattens with. The style's own
+    /// saturation push rides along, so a muted terrace gets a muted world.
+    func globeImagery(from world: CGImage) -> CGImage? {
+        let levels: Int
+        switch style.steps {
+        case .automatic(let count):
+            levels = max(count, 2)
+        case .elevationMeters:
+            levels = 8
+        }
+        return try? InkImagery.posterize(
+            world,
+            recipe: InkImagery.Recipe(patchSize: 24, levels: levels, saturation: style.saturation)
+        ).image
+    }
+
     func apply(to root: DioramaEntity, context: DioramaEffectContext) {
         guard let terrain = root.terrain, let buffers = terrain.surfaceBuffers else {
             Self.logger.info(

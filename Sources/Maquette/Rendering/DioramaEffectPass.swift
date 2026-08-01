@@ -39,6 +39,22 @@ protocol DioramaEffectPass: AnyObject {
     func refresh(on root: DioramaEntity, context: DioramaEffectContext)
     func reapply(to root: DioramaEntity, context: DioramaEffectContext)
     func revert(from root: DioramaEntity)
+
+    /// The globe's world mosaic, restyled the way this pass restyles the chunk's imagery.
+    ///
+    /// The handoff dissolves the chunk into the globe, and a styled chunk fading into a
+    /// photographic world breaks the treatment at exactly the moment everything else is moving —
+    /// an inked chunk should depart from an inked world. Only the *imagery* crosses over: the
+    /// geometry half of an effect (crease lines, terrace steps, contour rings) reads the chunk's
+    /// height field, and a sphere has none.
+    ///
+    /// Returning `nil` keeps the photographic mosaic, which is what the default does for a pass
+    /// whose look has no image-level statement.
+    func globeImagery(from world: CGImage) -> CGImage?
+}
+
+extension DioramaEffectPass {
+    func globeImagery(from world: CGImage) -> CGImage? { nil }
 }
 
 extension DioramaEffect {
@@ -196,6 +212,68 @@ final class HologramEffectPass: DioramaEffectPass {
 
     init(style: HologramStyle) {
         self.style = style
+    }
+
+    /// The world as a projection: its own light, remapped into the hologram's tint.
+    ///
+    /// The chunk's treatment is line geometry a sphere cannot have, so the globe carries the
+    /// *palette* half of the look — luma in, tint out, over near-black, which is what a projected
+    /// earth reads as. A small floor keeps the oceans present rather than dissolving the sphere's
+    /// silhouette into the room.
+    func globeImagery(from world: CGImage) -> CGImage? {
+        try? Self.tintedMonochrome(world, tint: StrataTexture.rgbComponents(of: style.tint))
+    }
+
+    /// Remaps an image's luma into a single tint over black.
+    private static func tintedMonochrome(
+        _ image: CGImage,
+        tint: (Float, Float, Float)
+    ) throws -> CGImage {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else {
+            throw DioramaError.meshGenerationFailed(reason: "Cannot tint an empty image")
+        }
+
+        let bytesPerRow = width * 4
+        var pixels = [UInt8](repeating: 0, count: bytesPerRow * height)
+
+        // Redrawn into a known layout rather than read through `dataProvider`, for the reason
+        // `InkImagery.posterize` does: the source's component order is the decoder's business.
+        let result: CGImage? = pixels.withUnsafeMutableBytes { raw -> CGImage? in
+            guard let context = CGContext(
+                data: raw.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return nil }
+
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            let floor: Float = 0.08
+            for row in 0..<height {
+                var offset = row * bytesPerRow
+                for _ in 0..<width {
+                    let r = Float(raw[offset])
+                    let g = Float(raw[offset + 1])
+                    let b = Float(raw[offset + 2])
+                    let luma = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+                    let level = floor + (1 - floor) * luma
+                    raw[offset] = UInt8(min(level * tint.0 * 255, 255))
+                    raw[offset + 1] = UInt8(min(level * tint.1 * 255, 255))
+                    raw[offset + 2] = UInt8(min(level * tint.2 * 255, 255))
+                    offset += 4
+                }
+            }
+            return context.makeImage()
+        }
+
+        guard let result else {
+            throw DioramaError.meshGenerationFailed(reason: "Failed to create tinting context")
+        }
+        return result
     }
 
     func apply(to root: DioramaEntity, context: DioramaEffectContext) {

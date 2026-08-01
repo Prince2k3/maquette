@@ -204,6 +204,24 @@ final class InkEffectPass: DioramaEffectPass {
         body.replace(root.terrain?.surface, with: surfaceMaterial(context: context))
     }
 
+    /// The world's mosaic, flattened the way the chunk's is.
+    ///
+    /// Fresh tones rather than the chunk's cached ones: the two images are different exposures of
+    /// different ground, and the globe is styled once per effect application rather than per roll,
+    /// so there is no held palette that needs to stay still. `showsImagery` is deliberately not
+    /// honoured here — on the chunk the crease and outline lines carry the form once the imagery
+    /// is off, and the globe has no lines, so a ball in flat paper colour would not be a world.
+    func globeImagery(from world: CGImage) -> CGImage? {
+        try? InkImagery.posterize(
+            world,
+            recipe: InkImagery.Recipe(
+                patchSize: style.patchSize,
+                levels: style.colorLevels,
+                saturation: style.saturation
+            )
+        ).image
+    }
+
     /// The imagery, flattened — or a flat colour when there is none to flatten.
     ///
     /// Falling back rather than failing is the point of the ordering here. `showsImagery` off, no

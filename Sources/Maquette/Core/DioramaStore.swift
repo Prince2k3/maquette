@@ -196,6 +196,9 @@ final class DioramaStore {
             )
             globe = entity
             dockGlobe()
+            // The effect may already be on — the globe fetch races the chunk's own load, and the
+            // effect is applied when the chunk lands. Whichever finishes second styles the world.
+            styleGlobeForEffect()
             logger.info("Globe ready at radius \(style.radius)")
         } catch {
             logger.error("Globe could not be loaded: \(error.localizedDescription)")
@@ -442,6 +445,24 @@ final class DioramaStore {
         effectPass?.revert(from: root)
         effectPass = effect.makePass()
         effectPass?.apply(to: root, context: effectContext)
+        styleGlobeForEffect()
+    }
+
+    /// Dresses the globe in the active effect's imagery treatment, or back in photography.
+    ///
+    /// The handoff dissolves the chunk into the globe, and an inked chunk departing from a
+    /// photographic world breaks the treatment at exactly the moment everything else is moving.
+    /// Called when the effect changes and when the globe finishes loading — whichever comes
+    /// second does the styling, since either can. A pass with no image-level statement returns
+    /// nil and the mosaic stays photographic.
+    private func styleGlobeForEffect() {
+        guard let globe else { return }
+        if let pass = effectPass, let world = globe.worldImage,
+           let styled = pass.globeImagery(from: world) {
+            globe.applyEffectImagery(styled)
+        } else {
+            globe.restoreImagery()
+        }
     }
 
     /// Re-traces an effect after the ground beneath the outline has changed.

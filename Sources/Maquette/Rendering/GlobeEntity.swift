@@ -21,6 +21,13 @@ final class GlobeEntity: Entity {
     /// The textured sphere.
     public private(set) var surface: ModelEntity?
 
+    /// The photographic world mosaic the sphere was built with.
+    ///
+    /// Kept so an effect's restyle can read it and be undone without refetching the world — the
+    /// texture on the material cannot be read back, which is the same reason
+    /// ``DioramaEffectContext`` carries the chunk's mosaic as an image.
+    public private(set) var worldImage: CGImage?
+
     // Nonisolated because the fetch runs off the main actor and logs its own failures from there.
     private nonisolated static let logger = Logger(maquette: "GlobeEntity")
 
@@ -40,6 +47,7 @@ final class GlobeEntity: Entity {
         columns: Int = 256
     ) throws {
         self.radius = radius
+        self.worldImage = worldImage
         super.init()
         self.name = "Globe"
 
@@ -128,6 +136,16 @@ final class GlobeEntity: Entity {
     // MARK: - Placement
 
     /// Where a coordinate sits on this globe's surface, in the globe's own space.
+    /// Repaints the sphere with a restyled world image, leaving the photographic original in hand.
+    public func applyEffectImagery(_ image: CGImage) {
+        surface?.model?.materials = [Self.material(for: image)]
+    }
+
+    /// Puts the photographic mosaic back.
+    public func restoreImagery() {
+        surface?.model?.materials = [Self.material(for: worldImage)]
+    }
+
     public func position(for coordinate: Coordinate) -> SIMD3<Float> {
         GlobeGeometry.position(for: coordinate, radius: radius)
     }

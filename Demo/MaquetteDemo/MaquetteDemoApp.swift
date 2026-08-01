@@ -20,6 +20,11 @@ struct MaquetteDemoApp: App {
         }
         .windowStyle(.volumetric)
         .defaultSize(width: 1.0, height: 1.0, depth: 1.0, in: .meters)
+        #elseif os(macOS)
+        WindowGroup {
+            ContentView()
+        }
+        .defaultSize(width: 1000, height: 760)
         #else
         WindowGroup {
             ContentView()

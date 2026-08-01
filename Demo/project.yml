@@ -5,6 +5,7 @@ options:
   deploymentTarget:
     iOS: "18.0"
     visionOS: "2.0"
+    macOS: "15.0"
   createIntermediateGroups: true
 
 packages:
@@ -14,7 +15,7 @@ packages:
 targets:
   MaquetteDemo:
     type: application
-    supportedDestinations: [iOS, visionOS]
+    supportedDestinations: [iOS, visionOS, macOS]
     sources:
       - path: MaquetteDemo
         # The template is documentation, not code — the real file is gitignored.
@@ -37,6 +38,11 @@ targets:
         "INFOPLIST_FILE[sdk=xrsimulator*]": MaquetteDemo/InfoPlist-visionOS.plist
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1,2,7"
+        # One Mac entry in the destination list: the native macOS app, not the iPad app in a
+        # window. Designed-for-iPad compiles the iOS slice, whose gestures need real touches —
+        # a Mac trackpad delivers one synthetic touch there, so orbit, pinch and scroll are all
+        # unreachable. That is what "no trackpad support" looks like from the outside.
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""
 

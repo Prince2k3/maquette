@@ -170,9 +170,8 @@ final class OrbitDioramaModel {
         // A chunk arriving mid-handoff must not pull the camera back to it: the transition owns the
         // framing until it is finished, and a relocated chunk finishes loading in the middle of one.
         guard !transition.isShowingGlobe else { return }
-        // Scaled, because the camera is not: the chunk is drawn under `entityScale` and its midpoint
-        // has to be read in the space the camera measures its own distance in. This is also the
-        // transition's framing at progress 0, and the two disagreeing is a jump on the first step.
+        // This is also the transition's framing at progress 0, and the two disagreeing is a jump
+        // on the first step.
         cameraController.target.y = chunkCenterY * entityScale
     }
 
@@ -201,13 +200,20 @@ final class OrbitDioramaModel {
     /// Whether the diorama is currently parented to a real-world plane anchor (iOS AR placement).
     var arPlacementActive = false
 
-    /// Scale applied to the diorama entity so it fills the available view.
+    /// Scale applied to the diorama entity. Always 1: perspective projection owns window size.
     ///
-    /// In AR placement it is exactly 1: `physicalSize` is real meters, and a diorama on a real
-    /// table is the one place that number stops being a viewport reference and means itself.
-    var entityScale: Float {
-        arPlacementActive ? 1 : Float(min(viewSize.width, viewSize.height) / DioramaSceneRig.referenceViewSpan)
-    }
+    /// This used to grow the entity with the view (`min(w, h) / 400`), which is half a fix for a
+    /// problem the projection already solves whole. A camera at a fixed distance with a fixed
+    /// *vertical* field of view shows the chunk at the same fraction of the view's height whatever
+    /// the window's size — scaling the object on top of that is what made a large window overflow
+    /// the frustum, since nothing scaled the camera's distance to match. Scaling both together is a
+    /// similarity transform, pixel-identical to scaling neither, so the scale is pinned at 1 and
+    /// every distance in the model lives in one currency: diorama meters.
+    ///
+    /// The property survives as the seam the scale would go through if it were ever needed again,
+    /// and because AR placement is the one consumer with an opinion: `physicalSize` is real meters
+    /// there, and 1 is the value that lets it mean itself.
+    var entityScale: Float { 1 }
 
     func updateEntityScale() {
         store.dioramaEntity?.scale = SIMD3<Float>(repeating: entityScale)
@@ -215,6 +221,12 @@ final class OrbitDioramaModel {
         // it is defined in diorama meters and the chunk it has to line up with is scaled.
         store.globe?.scale = SIMD3<Float>(repeating: entityScale)
         applyOrbitLimit()
+        // A resize while settled on the globe changes the view's aspect, and with it the distance
+        // that fits the whole world in frame — nothing else re-frames there, because the timeline
+        // is paused and no leg is running.
+        if transition.isShowingGlobe, !transition.isBusy {
+            applyTransitionFraming()
+        }
     }
 
     // MARK: - Animation
@@ -334,10 +346,9 @@ final class OrbitDioramaModel {
     /// 402 × 674 points that is 19°, not 30°. Framing against the wider axis instead is how a globe
     /// ends up correctly distanced and still running off both sides of the screen.
     ///
-    /// The camera's angle is taken as the vertical one, which is what `terrainPanDelta` assumes as
-    /// well. If the projection applies it horizontally instead, then the true narrow half-angle is
-    /// wider than this and the globe simply sits a little smaller in the frame — the error cannot
-    /// crop it.
+    /// The camera's angle is the vertical one — stated on the camera itself, which
+    /// ``DioramaSceneRig/makeOrbitCamera()`` configures with `fieldOfViewOrientation = .vertical`
+    /// so this arithmetic and `terrainPanDelta` read the projection they actually get.
     var globeDistanceInView: Float {
         let vertical = DioramaSceneRig.halfFieldOfView
         let aspect = viewSize.height > 0 ? Float(viewSize.width / viewSize.height) : 1
@@ -352,9 +363,9 @@ final class OrbitDioramaModel {
     ///
     /// The arc a point of screen covers is measured at the *near* surface rather than at the
     /// globe's centre, because that is the ground being dragged; measured at the centre the world
-    /// would lag the finger by the radius' share of the distance. It is measured in the camera's
-    /// own space, where both terms carry `entityScale`, so the scale cancels and the drag tracks
-    /// the finger whatever the view's size.
+    /// would lag the finger by the radius' share of the distance. Distance and radius are both in
+    /// diorama meters — the one currency the model has — so the drag tracks the finger whatever
+    /// the view's size.
     ///
     /// Which way is north on screen is the camera's to say, not the drag's. The transition drives
     /// the tilt to overhead and leaves the *azimuth* exactly where the chunk was left — so a user

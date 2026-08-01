@@ -111,6 +111,45 @@ struct OrbitDioramaModelTests {
         #expect(!model.canPanTerrain)
     }
 
+    @Test("The framing is view-size-invariant: the entity is never scaled by the window")
+    func entityScaleIsPinnedAtOne() {
+        let model = Self.makeModel()
+        for size in [CGSize(width: 390, height: 844), CGSize(width: 400, height: 400),
+                     CGSize(width: 1200, height: 800), CGSize(width: 2000, height: 600)] {
+            model.viewSize = size
+            #expect(model.entityScale == 1)
+        }
+        #if os(iOS)
+        model.arPlacementActive = true
+        #expect(model.entityScale == 1)
+        #endif
+    }
+
+    @Test("A window resize does not move the camera's target")
+    func resizeLeavesTheTargetAlone() {
+        let model = Self.makeModel()
+        // Stand in for a loaded chunk: the target the framing derived from its midpoint.
+        model.chunkCenterY = -0.15
+        model.cameraController.target.y = model.chunkCenterY * model.entityScale
+        model.viewSize = CGSize(width: 1200, height: 800)
+        model.updateEntityScale()
+        // The regression this pins: the entity used to rescale with the view while the target kept
+        // the old scale's midpoint, so every resize drifted the chunk vertically out of frame.
+        #expect(model.cameraController.target.y == model.chunkCenterY)
+    }
+
+    @Test("The orbit limit is a property of the chunk, not of the window")
+    func orbitLimitIgnoresViewSize() {
+        let model = Self.makeModel()
+        model.globeStyle = GlobeTransitionStyle()
+        model.viewSize = CGSize(width: 400, height: 400)
+        model.applyOrbitLimit()
+        let small = model.cameraController.maxDistance
+        model.viewSize = CGSize(width: 2000, height: 1200)
+        model.applyOrbitLimit()
+        #expect(model.cameraController.maxDistance == small)
+    }
+
     @Test("The overlay reports loading only when the globe is not carrying the scene")
     func overlayStateSuppression() {
         let model = Self.makeModel()

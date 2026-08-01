@@ -18,10 +18,6 @@ enum DioramaSceneRig {
     /// Half the field of view in radians, as the globe-framing arithmetic wants it.
     static let halfFieldOfView: Float = fieldOfViewRadians / 2
 
-    /// The smaller view dimension that maps to entity scale 1 — the reference the diorama is sized
-    /// against, so a 400-point view shows it at its configured physical size.
-    static let referenceViewSpan: CGFloat = 400
-
     /// The elevation the diorama is first seen from, in radians.
     ///
     /// **On the orbit platforms this places the camera; on visionOS it pitches the diorama**, because
@@ -64,6 +60,11 @@ enum DioramaSceneRig {
         let camera = PerspectiveCamera()
         camera.name = "OrbitCamera"
         camera.camera.fieldOfViewInDegrees = fieldOfViewDegrees
+        // Vertical is RealityKit's default, stated so it is configuration rather than folklore:
+        // the framing arithmetic (`globeDistanceInView`, `terrainPanDelta`) and the whole
+        // window-size-invariance story assume the 60° is the *vertical* angle, with the horizontal
+        // derived from aspect. A window widened at fixed height must reveal more, never crop.
+        camera.camera.fieldOfViewOrientation = .vertical
         return camera
     }
 

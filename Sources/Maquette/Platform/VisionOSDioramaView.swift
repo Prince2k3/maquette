@@ -421,17 +421,24 @@ final class VisionOSDioramaModel {
     func updateEntityPlacement() {
         let rotation = Self.pitchRotation(stagePitch)
 
-        // The *solid* is centred, not its origin. Diorama Y = 0 is the lowest terrain elevation and
-        // the earth mass hangs below it to `-baseDepth`, so resting the origin on the window's middle
-        // hangs most of that mass out through the bottom of the glass, over the ornament carrying the
-        // controls. Centring the pitched box puts as much room under the walls as over the peaks.
-        chunkStage.scale = SIMD3<Float>(repeating: fitScale)
-        chunkStage.orientation = rotation
-        chunkStage.position = volumeCenter - pitchedChunkBounds(pitch: stagePitch).center * fitScale
-
-        if let entity = store.dioramaEntity {
-            ensureGestureTarget(on: entity)
+        // The volumetric statement of the orbit camera's retreat. On iOS and macOS the departure
+        // pulls the camera from its entry distance out to the globe's framing distance, so the
+        // chunk visibly *shrinks into its place on the world* as the globe grows around it; a
+        // window has no camera to pull back, and a chunk that only fades at full size reads as a
+        // pale ring hanging around a smaller globe — the two halves of the crossfade at
+        // unrelated sizes. The same eased clock the camera rides is read back here as a scale:
+        // `absorb` seeds the nominal entry distance 1, so `1 / cameraDistance` is exactly the
+        // shrink the orbit platforms' projection produces, 1 at the chunk and
+        // 1/`chunkRecessionDistance` at the globe.
+        let recession: Float
+        if let distance = transition.cameraDistance(globeDistance: Self.chunkRecessionDistance) {
+            recession = 1 / max(distance, 0.01)
+        } else {
+            recession = 1
         }
+        let chunkScale = fitScale * recession
+
+        var chunkLift: Float = 0
         if let globe = store.globe {
             let radius = globe.radius
             let stageScale = radius > 0
@@ -448,6 +455,31 @@ final class VisionOSDioramaModel {
             let lift = radius * store.globeScale * stageScale
             globeStage.position = volumeCenter + rotation.act(SIMD3<Float>(0, lift, 0))
             ensureGestureTarget(on: globe, sphereRadius: radius)
+            // The chunk's anchor follows the *transition's* growth, not the store's: the store's
+            // scale rests at full size with the globe merely hidden, and an anchor read from it
+            // would hang the chunk a whole radius above the window on an ordinary load. The two
+            // agree everywhere a leg is actually playing, because the framing tick writes the
+            // transition's scale into the store one line before this runs.
+            chunkLift = radius * transition.globeScale * stageScale
+        }
+
+        // The *solid* is centred, not its origin. Diorama Y = 0 is the lowest terrain elevation and
+        // the earth mass hangs below it to `-baseDepth`, so resting the origin on the window's middle
+        // hangs most of that mass out through the bottom of the glass, over the ornament carrying the
+        // controls. Centring the pitched box puts as much room under the walls as over the peaks.
+        //
+        // Mid-handoff the centre is the *docked point* — the sphere's topmost point, which sits at
+        // the volume's centre while the globe is at zero and rides its top as it grows — so the
+        // receding chunk condenses onto the patch of world it stands for instead of shrinking in
+        // the middle of the window while the globe rises past it. At rest the lift is zero and
+        // this is exactly the centred fit.
+        chunkStage.scale = SIMD3<Float>(repeating: chunkScale)
+        chunkStage.orientation = rotation
+        chunkStage.position = volumeCenter + rotation.act(SIMD3<Float>(0, chunkLift, 0))
+            - pitchedChunkBounds(pitch: stagePitch).center * chunkScale
+
+        if let entity = store.dioramaEntity {
+            ensureGestureTarget(on: entity)
         }
     }
 
@@ -628,6 +660,13 @@ final class VisionOSDioramaModel {
     /// How much zoom delta a doubling of pinch ratio is worth, matched to the iOS pinch so a full
     /// spread covers about the same share of the ground-zoom ladder on both platforms.
     private static let pinchOctaveScale: Float = 25
+
+    /// The globe-framing distance the chunk's recession is measured against, in units of the
+    /// nominal entry distance `absorb` seeds. 4 is roughly what the orbit platforms' ratio of
+    /// entry distance to globe framing distance works out to on the demo presets, so the chunk
+    /// ends the departure about a quarter of its resting size — the same share of the settled
+    /// globe it visibly shrinks to on iOS and macOS.
+    private static let chunkRecessionDistance: Float = 4
 
     private var chunkHasZoomRoom: Bool {
         guard store.canZoomGround else { return false }

@@ -4,6 +4,10 @@ A Swift package that renders **configurable terrain chunks of the real world** �
 earth lifted out of the ground and set on a table. Real elevation and satellite imagery on top,
 geological strata down the cut sides, a closing face underneath: a solid, not a draped map.
 
+![A snow-covered alpine mountain on a hexagonal terrain chunk with exposed geological layers](assets/maquette-hero.png)
+
+*Generated concept illustration inspired by the Mount Rainier demo.*
+
 - **visionOS** — a volumetric diorama in the room; drag to pan, pinch to zoom the ground.
 - **iOS / iPadOS** — an interactive 3D view; one finger slides the terrain, two orbit and pinch.
   Optional AR placement puts the chunk on a real table at its true physical size.

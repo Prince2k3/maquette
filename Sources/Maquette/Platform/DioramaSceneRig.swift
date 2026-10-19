@@ -9,6 +9,19 @@ import SwiftUI
 /// Change the camera here and every consumer moves together; change it anywhere else and three of
 /// the four spellings silently go stale.
 enum DioramaSceneRig {
+    /// Replaces the chunk while retaining the placement anchor and unrelated children.
+    @MainActor
+    static func syncPlacedChunk(_ entity: Entity?, on parent: Entity) {
+        for child in Array(parent.children) where child.name == "Maquette" && child !== entity {
+            child.removeFromParent()
+        }
+        guard let entity, entity.parent !== parent else { return }
+        entity.removeFromParent()
+        parent.addChild(entity)
+        entity.position = .zero
+        entity.scale = .one
+    }
+
     /// The orbit camera's full field of view, in degrees. The one number the spellings derive from.
     static let fieldOfViewDegrees: Float = 60
 

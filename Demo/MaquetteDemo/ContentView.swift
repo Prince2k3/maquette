@@ -298,13 +298,24 @@ struct ContentView: View {
         $0.id == ProcessInfo.processInfo.environment["MAQUETTE_PRESET"]
     } ?? 0
 
+    private static var initialPreset: DemoPreset {
+        DemoPresets.all.first {
+            $0.id == ProcessInfo.processInfo.environment["MAQUETTE_PRESET"]
+        } ?? DemoPresets.all[0]
+    }
+
+    /// Geographic navigation has its own binding, separate from the orbit camera.
+    @State private var groundPosition = DioramaGroundPosition(region: Self.initialPreset.region)
+
     @State private var buildingsVisible = true
 
     /// The orbit camera, seeded from the preset and thereafter the user's.
     @State private var position: DioramaCameraPosition = .automatic
 
-    /// The tapped marker, written by the view's selection binding.
-    @State private var selectedAnnotation: DioramaAnnotation.ID?
+    private enum Place: Hashable, Sendable { case yavapaiPoint }
+
+    /// Application selection is independent of the marker's rendering identity.
+    @State private var selectedAnnotation: Place?
 
     /// Whether the diorama is placed on a real surface through the camera (iOS only).
     @State private var arActive = false
@@ -360,7 +371,7 @@ struct ContentView: View {
 
     private var diorama: some View {
         DioramaView(
-            region: preset.region,
+            groundPosition: $groundPosition,
             shape: preset.shape,
             physicalSize: preset.physicalSize,
             position: $position,
@@ -371,14 +382,23 @@ struct ContentView: View {
                 DioramaMarker(
                     "Yavapai Point",
                     coordinate: CLLocationCoordinate2D(latitude: 36.0667, longitude: -112.1170),
-                    tint: .orange,
                     id: "yavapai-point"
                 )
+                .tint(.orange)
+                .tag(Place.yavapaiPoint)
             }
         }
         .dioramaStyle(style)
         .dioramaEffect(preset.effect)
         .dioramaARPlacement($arActive)
+        .dioramaControls {
+            VStack {
+                DioramaCompass()
+                DioramaResetButton()
+            }
+            .buttonStyle(.bordered)
+            .labelStyle(.iconOnly)
+        }
         // Zooming out (fingers pinching together) widens the ground the chunk covers, and once it
         // is covering about as much world as a flat cut can, the chunk dissolves into the globe;
         // spin that and zoom back in (fingers apart) to cut a chunk somewhere else.
@@ -386,6 +406,7 @@ struct ContentView: View {
         // The region and the style are live: switching presets relocates or rebuilds the diorama
         // in place, with no `.id` identity tricks.
         .onChange(of: preset.id) { _, _ in
+            groundPosition = DioramaGroundPosition(region: preset.region)
             position = .camera(preset.camera)
         }
         .task {

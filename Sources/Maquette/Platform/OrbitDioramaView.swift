@@ -28,6 +28,8 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dioramaEffect) private var effect
     @Environment(\.globeTransitionStyle) private var globeStyle
+    @Environment(\.dioramaCameraObservation) private var cameraObservationAction
+    @Environment(\.dioramaNavigationAction) private var navigationAction
     @Environment(\.dioramaCameraChangeAction) private var cameraChangeAction
     @Environment(\.dioramaLoadingChangeAction) private var loadingChangeAction
     @Environment(\.dioramaARPlacement) private var arPlacement
@@ -69,6 +71,7 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
         ) {
             model.reload()
         }
+        .modifier(DioramaControlsOverlay(state: model.controlState))
         .dioramaAttribution(model.store.tilesAttribution)
         .task(id: globeStyle) {
             guard let globeStyle else { return }
@@ -94,16 +97,26 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
             syncInputs()
             model.applyReloadKey(key)
         }
+        .onChange(of: cameraObservationAction?.id) { _, _ in
+            model.cameraObservation.action = cameraObservationAction
+        }
+        .onChange(of: navigationAction?.id) { _, _ in
+            model.navigation.action = navigationAction
+        }
         .onChange(of: inputs.content) { _, content in
             model.setContent(content)
+        }
+        .onChange(of: inputs.groundPosition?.wrappedValue) { _, position in
+            syncInputs()
+            model.applyGroundPosition(position)
         }
         .onChange(of: inputs.position?.wrappedValue) { _, position in
             model.positionBinding = inputs.position
             model.applyCameraPosition(position)
         }
-        .onChange(of: inputs.selection?.wrappedValue) { _, selected in
+        .onChange(of: inputs.selection?.wrappedValue) { _, _ in
             model.selectionBinding = inputs.selection
-            model.applySelection(selected)
+            model.applySelection()
         }
         .onChange(of: model.store.loadingState) { _, state in
             loadingChangeAction?.action(state)
@@ -135,11 +148,13 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
     /// Pushes the view's inputs and environment into the model, which has no hierarchy to read
     /// them from.
     private func syncInputs() {
+        model.syncNavigation(binding: inputs.groundPosition, action: navigationAction, preservesGround: inputs.preservesGround, configuration: inputs.configuration)
         model.enabledGestures = inputs.interactionModes.gestureTypes
         model.displayScale = displayScale
         model.routePreviewController = routePreviewController
         model.positionBinding = inputs.position
         model.selectionBinding = inputs.selection
+        model.cameraObservation.action = cameraObservationAction
         model.cameraChangeAction = cameraChangeAction
         model.loadingChangeAction = loadingChangeAction
     }
@@ -178,12 +193,10 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
             if model.arPlacementActive {
                 if let anchor = arController.planeAnchor {
                     if anchor.parent == nil { content.add(anchor) }
-                    if let entity = model.store.dioramaEntity, entity.parent !== anchor {
-                        entity.removeFromParent()
-                        anchor.addChild(entity)
-                        entity.position = .zero
-                        entity.scale = .one
+                    if let drawn = content.entities.first(where: { $0.name == "Maquette" }) {
+                        content.remove(drawn)
                     }
+                    DioramaSceneRig.syncPlacedChunk(model.store.dioramaEntity, on: anchor)
                 }
                 model.applyTransitionVisibility()
                 return

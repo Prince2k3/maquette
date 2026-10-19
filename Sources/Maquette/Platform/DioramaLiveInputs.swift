@@ -17,6 +17,9 @@ enum DioramaLiveInputs {
         _ key: DioramaViewInputs.ReloadKey,
         store: DioramaStore,
         content: DioramaContentGroup?,
+        usesGeographicAnchor: Bool = false,
+        beforeReload: @MainActor () -> Void = {},
+        latestContent: (() -> DioramaContentGroup?)? = nil,
         afterLoad: @escaping @MainActor () -> Void
     ) {
         let current = store.configuration
@@ -30,11 +33,14 @@ enum DioramaLiveInputs {
         currentStyle.buildings?.isVisible = true
         targetStyle.buildings?.isVisible = true
 
-        let sameSubstrate = key.region.radius == current.radiusMeters
+        // In initial-only/bound navigation modes, geographic ownership belongs to the navigation
+        // controller. The substituted region is the target for a genuine substrate rebuild, not
+        // evidence that a visibility-only style update should relocate already panned/zoomed ground.
+        let sameSubstrate = (usesGeographicAnchor || key.region.radius == current.radiusMeters)
             && key.shape == current.shape
             && key.physicalSize == current.physicalSize
             && currentStyle == targetStyle
-        let sameCenter = Coordinate(current.center) == key.region.center
+        let sameCenter = usesGeographicAnchor || Coordinate(current.center) == key.region.center
 
         if sameSubstrate && sameCenter {
             if visibilityChanged, let targetVisibility {
@@ -43,45 +49,52 @@ enum DioramaLiveInputs {
             }
             return
         }
+        beforeReload()
+        let revision = store.beginNavigationRequest()
         Task {
+            guard revision == store.navigationRevision else { return }
+            let generation = store.loadGeneration
             if sameSubstrate {
                 await store.relocate(to: key.region.center)
             } else {
-                await store.reload(configuration: DioramaConfiguration(
+                var configuration = DioramaConfiguration(
                     region: key.region, shape: key.shape, physicalSize: key.physicalSize, style: key.style
-                ))
+                )
+                configuration.usesGeographicAnchor = usesGeographicAnchor
+                await store.reload(configuration: configuration)
             }
-            store.applyContent(content)
+            guard store.loadGeneration == generation + 1, revision == store.navigationRevision, !Task.isCancelled else { return }
+            if let latestContent { store.applyContent(latestContent()) } else { store.applyContent(content) }
             afterLoad()
         }
     }
 
-    /// A tap landed on an entity; walk up for a marker and toggle the selection binding.
+    /// A tap landed on an entity; walk up to structured marker identity and toggle selection.
     static func handleTap(
         on entity: Entity,
-        selection: Binding<DioramaAnnotation.ID?>?,
+        selection: DioramaSelection?,
         store: DioramaStore
     ) {
         guard let selection else { return }
         var current: Entity? = entity
         while let candidate = current {
-            if candidate.name.hasPrefix("Marker_") {
-                let id = String(candidate.name.dropFirst("Marker_".count))
-                let newValue = selection.wrappedValue == id ? nil : id
-                selection.wrappedValue = newValue
-                applySelection(newValue, store: store)
+            if let identity = candidate.components[DioramaMarkerIdentity.self] {
+                selection.toggle(identity)
+                applySelection(selection, store: store)
                 return
             }
             current = candidate.parent
         }
     }
 
-    /// Reflects the selected identity onto the marker entities.
-    static func applySelection(_ id: DioramaAnnotation.ID?, store: DioramaStore) {
+    /// Reflects the current selection onto every rendered part of each marker feature.
+    static func applySelection(_ selection: DioramaSelection?, store: DioramaStore) {
         guard let root = store.dioramaEntity as? DioramaEntity else { return }
-        for (key, marker) in root.markerEntities {
-            // A multi-geometry's parts are suffixed `id#index`; selecting the feature selects them all.
-            let selected = id.map { key == $0 || key.hasPrefix("\($0)#") } ?? false
+        root.selection = selection
+        for marker in root.markerEntities.values {
+            let selected = marker.components[DioramaMarkerIdentity.self].map {
+                selection?.isSelected($0) ?? false
+            } ?? false
             marker.setSelected(selected)
         }
     }

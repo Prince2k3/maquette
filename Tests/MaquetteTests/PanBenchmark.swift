@@ -10,8 +10,12 @@ private extension Duration {
     }
 }
 
-/// Temporary measurement harness for diagnosing pan cost. Not a correctness test.
-@Suite("Pan Benchmark", .disabled("Diagnostic only. Run with: swift test -c release --filter PanBenchmark"))
+/// Opt-in measurement harness for diagnosing pan cost. Not a correctness test.
+/// Run with `MAQUETTE_RUN_PAN_BENCHMARK=1 swift test -c release --filter PanBenchmark`.
+@Suite("Pan Benchmark", .enabled(
+    if: ProcessInfo.processInfo.environment["MAQUETTE_RUN_PAN_BENCHMARK"] == "1",
+    "Diagnostic only; set MAQUETTE_RUN_PAN_BENCHMARK=1 and build in release mode"
+))
 struct PanBenchmark {
     private func heightField() -> TerrainHeightField {
         let size = 256
@@ -30,7 +34,7 @@ struct PanBenchmark {
         )
     }
 
-    @Test("Measure resample and mesh rebuild")
+    @Test("Measure resample and LowLevelMesh buffer updates")
     @MainActor
     func measurePanCost() throws {
         let field = heightField()
@@ -48,25 +52,20 @@ struct PanBenchmark {
         let vertices = geometry.top.positions.count + geometry.walls.positions.count
         let clock = ContinuousClock()
 
+        // Fail rather than reporting a zero update cost when graphics resources are unavailable.
+        let surfaceMesh = try ChunkSurfaceMesh(buffers: geometry.top, name: "bench")
+        let wallMesh = try ChunkSurfaceMesh(buffers: geometry.walls, name: "benchWalls")
         var resampleTotal = Duration.zero
+        var updateTotal = Duration.zero
         for step in 1...10 {
             let offset = SIMD2<Float>(Float(step) * 0.005, 0)
             resampleTotal += clock.measure {
                 TerrainSolidGenerator.resample(&geometry, heightField: field, panOffset: offset)
             }
-        }
-
-        var rebuildTotal = Duration.zero
-        if let surfaceMesh = try? ChunkSurfaceMesh(buffers: geometry.top, name: "bench"),
-           let wallMesh = try? ChunkSurfaceMesh(buffers: geometry.walls, name: "benchWalls") {
-            for _ in 1...10 {
-                rebuildTotal += clock.measure {
-                    surfaceMesh.update(from: geometry.top)
-                    wallMesh.update(from: geometry.walls)
-                }
+            updateTotal += clock.measure {
+                surfaceMesh.update(from: geometry.top)
+                wallMesh.update(from: geometry.walls)
             }
-        } else {
-            print("!! ChunkSurfaceMesh unavailable in this context")
         }
 
         print("""
@@ -74,8 +73,8 @@ struct PanBenchmark {
         ===== PAN COST =====
         vertices:  \(vertices) (top \(geometry.top.positions.count), walls \(geometry.walls.positions.count))
         resample:  \(resampleTotal.elapsedMilliseconds / 10) ms/frame
-        rebuild:   \(rebuildTotal.elapsedMilliseconds / 10) ms/frame
-        total:     \((resampleTotal.elapsedMilliseconds + rebuildTotal.elapsedMilliseconds) / 10) ms/frame
+        buffers:   \(updateTotal.elapsedMilliseconds / 10) ms/frame
+        total:     \((resampleTotal.elapsedMilliseconds + updateTotal.elapsedMilliseconds) / 10) ms/frame
         ====================
 
         """)

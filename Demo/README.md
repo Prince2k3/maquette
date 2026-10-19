@@ -1,6 +1,6 @@
 # Maquette Demo
 
-An iOS app that renders terrain chunks from live elevation and imagery tiles, used to verify the
+An iOS/iPadOS, macOS, and visionOS app that renders terrain chunks from live elevation and imagery tiles, used to verify the
 chunk pipeline visually — unit tests cover the geometry buffers, but only a running app shows
 whether the result actually reads as a slice of the earth.
 
@@ -13,8 +13,8 @@ cd Demo && xcodegen generate && open MaquetteDemo.xcodeproj
 ```
 
 Requires [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) and network
-access — every preset fetches real Mapzen elevation and ESRI imagery tiles at launch, so the first
-render of each takes a few seconds.
+access. Raster presets fetch real Mapzen elevation and ESRI imagery tiles, so the first render takes
+a few seconds. Photorealistic presets require the provider credentials described in the main README.
 
 ## Presets
 
@@ -34,7 +34,36 @@ exactly what the chunk model adds.
 
 ## Gestures
 
-One finger slides the terrain beneath the chunk's outline; two fingers orbit the camera and pinch to
-zoom — the same split a map uses. Only the Pan preset can slide, since it is the one configured with
-a `panRange`; on the others a single finger orbits instead. It fetches a region 80% wider than the
-chunk to pan through, and the offset clamps at that edge.
+| Platform | Pan | Orbit | Ground zoom |
+|---|---|---|---|
+| iOS/iPadOS | One-finger drag | Two-finger drag | Pinch |
+| macOS | Plain drag | Option-drag | Trackpad pinch or scroll wheel |
+| visionOS | Drag | Move around the volume | Pinch |
+
+The automatic loading policy provisions a pan margin and respects each preset's explicit nonzero
+style margin. Panning stays inside the loaded ground while more tiles arrive; the initial margin
+does not impose a permanent geographic limit. With pan disabled or a zero-margin policy, an orbit
+view uses plain drag to rotate instead. Zooming out far enough enters the globe transition.
+
+The controls overlay provides a compass and reset button. Reset restores the last preset-requested
+ground and orbit. The compass faces north without changing tilt or distance; it is hidden in AR,
+visionOS, globe presentation, and camera route-follow mode. AR placement requires physical hardware.
+
+The demo binds `DioramaGroundPosition` independently from `DioramaCameraPosition`: gestures update
+the current geographic region, while preset changes issue an absolute ground request and a separate
+orbit request. Marker selection uses an application enum through `.tag`, independently of the pin's
+rendering ID. Existing presets retain their style-specific pan margins through the automatic loading
+policy.
+
+## Pan diagnostic
+
+From the repository root, explicitly enable the synthetic pan benchmark in Release mode:
+
+```bash
+MAQUETTE_RUN_PAN_BENCHMARK=1 swift test -c release --filter PanBenchmark
+```
+
+It measures terrain resampling and LowLevelMesh buffer writes over ten steps of a synthetic
+65,000-vertex chunk. It requires a working RealityKit graphics context and is skipped in ordinary
+test runs. These CPU timings exclude tile fetching, effect passes, SwiftUI updates, and rendering;
+they are not full frame times or an automated performance threshold.

@@ -40,7 +40,14 @@ public struct DioramaStyle: Sendable {
         self.buildings = buildings
         self.panRange = panRange
         self.zoomLevel = zoomLevel
-        self.presentation = presentation
+        if case .photorealistic(let provider, let style) = presentation,
+           provider.sourceID == nil {
+            self.presentation = .photorealistic(
+                provider: IdentifiedTiles3DProvider(provider: provider), style: style
+            )
+        } else {
+            self.presentation = presentation
+        }
     }
 
     /// Recovers the style half of a configuration, for change comparison.
@@ -96,6 +103,9 @@ public struct DioramaStyle: Sendable {
     /// A photorealistic model streamed from OGC 3D Tiles and cut to the outline.
     ///
     /// Terrain-chunk options do not apply; `style` carries everything that does.
+    /// Providers with a stable ``Tiles3DProvider/sourceID`` compare by that identity. For legacy
+    /// providers without one, retain the resulting style between updates: constructing another
+    /// style conservatively requests a reload.
     public static func photorealistic(
         provider: any Tiles3DProvider,
         style: Tiles3DStyle = .standard,
@@ -116,9 +126,7 @@ public struct DioramaStyle: Sendable {
 }
 
 extension DioramaStyle: Equatable {
-    /// Component-wise, with the photorealistic provider compared by type and attribution — the
-    /// closest an `any Tiles3DProvider` gets to equality. Two different providers of the same type
-    /// and attribution read as equal, which for reload-diffing errs on the side of not reloading.
+    /// Component-wise, with photorealistic sources compared by provider type and source identity.
     public static func == (lhs: DioramaStyle, rhs: DioramaStyle) -> Bool {
         guard lhs.elevation == rhs.elevation,
               lhs.elevationExaggeration == rhs.elevationExaggeration,
@@ -133,7 +141,7 @@ extension DioramaStyle: Equatable {
         case (.terrainChunk, .terrainChunk):
             return true
         case (.photorealistic(let lp, let ls), .photorealistic(let rp, let rs)):
-            return type(of: lp) == type(of: rp) && lp.attribution == rp.attribution && ls == rs
+            return type(of: lp) == type(of: rp) && lp.sourceID == rp.sourceID && ls == rs
         default:
             return false
         }

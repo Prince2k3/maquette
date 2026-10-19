@@ -44,6 +44,7 @@ private struct IOSDioramaGestures: ViewModifier {
                 }
                 .onEnded { _ in
                     dragTracker.reset()
+                    model.endInteraction()
                 }
         )
     }

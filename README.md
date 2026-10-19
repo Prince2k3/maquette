@@ -36,7 +36,8 @@ struct CanyonView: View {
                           coordinate: CLLocationCoordinate2D(latitude: 36.0667, longitude: -112.1170),
                           tint: .orange)
         }
-        .dioramaStyle(.standard(exaggeration: 1.6, chunk: .canyon, panRange: 0.8))
+        .dioramaStyle(.standard(exaggeration: 1.6, chunk: .canyon))
+        .dioramaLoadingPolicy(.prefetchMargin(0.8))
         .globeTransition()
     }
 }
@@ -49,6 +50,107 @@ binding), modifiers carry *style and observation* (`.dioramaStyle`, `.dioramaEff
 (`DioramaMarker`, `DioramaPolyline`, bare GeoJSON `Feature`s, or a whole decoded
 `FeatureCollection`). The region and style are live — hand the view different ones and the diorama
 relocates or rebuilds in place.
+
+For before/after examples and compatibility details, see
+[[migrating-to-the-swiftui-api|Migrating to the SwiftUI API]] in the DocC catalog
+(`Sources/Maquette/Maquette.docc`).
+
+## Compose and select content
+
+Use a `DioramaContent` body to build reusable content, and SwiftUI `ForEach` to draw your models.
+Selection accepts `Hashable & Sendable` values such as UUIDs or enums. A tag identifies the selected
+model; the collection ID keeps its rendered marker stable when its title or coordinate changes.
+
+```swift
+// places contains Identifiable values with UUID IDs and a coordinate property.
+@State private var selectedPlace: UUID?
+
+DioramaView(region: region, selection: $selectedPlace) {
+    ForEach(places) { place in
+        DioramaMarker(place.name, coordinate: place.coordinate)
+            .tint(.orange)
+            .tag(place.id)
+    }
+    DioramaPolyline(coordinates: trail)
+        .stroke(.blue, width: .physicalMeters(0.003))
+}
+```
+
+Existing String selection bindings continue to select untagged markers by annotation ID. Tapping
+an already selected marker clears selection; markers sharing a tag select together. Off-chunk or
+removed content leaves the application selection intact. Polylines are not selection targets.
+
+Content modifiers also support `.altitudeReference(.relativeToGround)`. Widths are measured in
+physical diorama meters. A modifier on a group supplies defaults; modifiers inside its children
+win. Existing initializer styling and custom content that implements `items` remain supported.
+
+## Control geographic navigation
+
+Use `initialRegion:` for an initial place, `region:` for live region inputs, or `groundPosition:`
+when your app needs to drive and observe geographic navigation. The ground binding owns the center
+and absolute radius; the separate `position:` binding controls the orbit camera.
+
+```swift
+@State private var ground = DioramaGroundPosition(region: canyonRegion)
+
+DioramaView(groundPosition: $ground)
+    .dioramaShape(.hexagonal)
+    .dioramaPhysicalSize(0.8)
+    .onDioramaNavigationChange(frequency: .onEnd) { context in
+        saveLastRegion(context.position.region)
+    }
+
+// Recenter at the current geographic scale:
+ground = DioramaGroundPosition(region: DioramaRegion(
+    center: destination, radius: ground.region.radius
+))
+```
+
+Ground requests rebuild at the requested region. Gestures write the applied center and radius back
+without triggering another load. `positionedByUser` identifies gesture read-back, and callbacks also
+report phase and origin. The camera in a navigation context is `nil` on visionOS. Globe steering is
+reported when the return commits and its chunk arrives.
+
+Panning now works with the default interaction modes. `.dioramaLoadingPolicy(.automatic)` provisions
+a margin; `.prefetchMargin(0.8)` tunes it and `.prefetchMargin(0)` keeps a fixed chunk. Existing style
+`panRange` arguments still work. Camera observers can use
+`.onDioramaCameraChange(frequency: .onEnd)` for settled updates; the original camera-only closure
+remains available.
+
+## Add diorama controls
+
+```swift
+DioramaView(initialRegion: region)
+    .dioramaControls(alignment: .topLeading) {
+        VStack {
+            DioramaCompass()
+            DioramaResetButton()
+        }
+        .buttonStyle(.bordered)
+    }
+```
+
+Each overlay controls its own diorama. Reset returns to the last app-requested geography and
+orbit while preserving appearance, content, and selection. The compass faces north in iOS/macOS
+orbit views; it hides in AR, visionOS volumes, globe presentation, and route-follow mode. Reset
+preserves AR and volume placement. Choose the controls' layout and button style in the builder.
+
+## Own the loading UI
+
+```swift
+DioramaView(initialRegion: region)
+    .dioramaLoadingOverlay { context in
+        if case .loading = context.state {
+            ProgressView("Preparing diorama")
+        } else if case .failed = context.state {
+            Button("Try again") { context.retry() }
+        }
+    }
+```
+
+The custom overlay replaces the default loading, error, and streaming UI. Use
+`.dioramaLoadingOverlayHidden()` when loading is displayed elsewhere. Required source attribution
+continues to display independently.
 
 ## Features
 

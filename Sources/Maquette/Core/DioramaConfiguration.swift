@@ -191,6 +191,9 @@ struct DioramaConfiguration: Sendable {
     /// Terrain chunks only.
     public var elevationSource: ElevationSource
 
+    /// Uses the requested geographic center/scale instead of stretching the fetched mosaic.
+    var usesGeographicAnchor = false
+
     /// Creates a diorama configuration.
     public init(
         center: CLLocationCoordinate2D,

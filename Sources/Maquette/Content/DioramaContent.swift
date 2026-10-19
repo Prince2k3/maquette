@@ -6,6 +6,12 @@ import SwiftUI
 
 /// Protocol for content that can be placed on a diorama.
 public protocol DioramaContent {
+    /// The content composed by this value. Existing items-only conformers use `Never`.
+    associatedtype Body: DioramaContent = Never
+
+    /// Declares reusable content using the same builder as a diorama view.
+    @DioramaContentBuilder var body: Body { get }
+
     /// The concrete content items this value produces.
     var items: [DioramaContentItem] { get }
 }
@@ -49,7 +55,12 @@ public struct DioramaAnnotation: DioramaContent, Sendable, Equatable, Identifiab
     /// declaring the same content twice produces the same identity rather than a fresh one per
     /// evaluation. Two literally identical anonymous features therefore collide, and harmlessly:
     /// they would render identically anyway.
-    public let id: String
+    public internal(set) var id: String
+    var selectionAnnotationID: String? = nil
+    var contentIdentity: DioramaContentIdentity?
+    var selectionTag: DioramaSelectionTag? = nil
+    var contentStyleOverrides: UInt8 = 0
+
     /// The feature to draw.
     public var feature: Feature
     /// How to draw it.
@@ -235,6 +246,12 @@ public struct DioramaContentGroup: DioramaContent, Sendable, Equatable {
     /// The group with nothing in it — what a `DioramaView` with no content closure shows.
     public static let empty = DioramaContentGroup(items: [])
 
+    /// Creates a group from a reusable content declaration.
+    public init(@DioramaContentBuilder content: () -> DioramaContentGroup) {
+        self = content()
+    }
+
+    /// Creates a group from already flattened renderer items.
     public init(items: [DioramaContentItem]) {
         self.items = items
     }
@@ -273,7 +290,9 @@ public struct DioramaContentBuilder {
     }
 
     public static func buildBlock(_ components: DioramaContentGroup...) -> DioramaContentGroup {
-        DioramaContentGroup(items: components.flatMap(\.items))
+        DioramaContentGroup(items: components.enumerated().flatMap { index, component in
+            component.items.map { $0.scoped(to: .statement(index)) }
+        })
     }
 
     public static func buildOptional(_ component: DioramaContentGroup?) -> DioramaContentGroup {
@@ -289,7 +308,9 @@ public struct DioramaContentBuilder {
     }
 
     public static func buildArray(_ components: [DioramaContentGroup]) -> DioramaContentGroup {
-        DioramaContentGroup(items: components.flatMap(\.items))
+        DioramaContentGroup(items: components.enumerated().flatMap { index, component in
+            component.items.map { $0.scoped(to: .iteration(index)) }
+        })
     }
 
     public static func buildLimitedAvailability(_ component: DioramaContentGroup) -> DioramaContentGroup {

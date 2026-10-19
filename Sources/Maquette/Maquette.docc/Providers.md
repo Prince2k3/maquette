@@ -50,3 +50,25 @@ tileset correctly refuses to refine. Roughly a kilometre is where facades read a
 
 ``Tiles3DProvider`` is three requirements: the root tileset's bytes, a tile's content bytes, and
 an attribution string. The library parses the wire format; a provider only fetches.
+
+
+## Identify custom photorealistic sources
+
+A custom `Tiles3DProvider` can supply a stable `sourceID` so rebuilding a style with the same source
+is inexpensive, while switching asset or revision reliably reloads:
+
+```swift
+var sourceID: Tiles3DSourceID? {
+    Tiles3DSourceID("my-terrain-asset", revision: "2026-10")
+}
+```
+
+Change the identity when the asset, access context, or data revision changes. Equal identities assert
+that two providers of the same type are interchangeable for fetching. `Tiles3DSourceID` retains a
+length-framed digest, and the built-in providers include credential and asset changes in that digest.
+Raw credentials are not exposed by the identity.
+
+The protocol requirement has a default of `nil`, preserving existing conformers. A legacy provider
+without an identity gets a stable identity for one constructed `DioramaStyle`; retain that style
+between body evaluations. Constructing a new style without an explicit identity conservatively
+reloads. Copying a style or reconstructing it from the current configuration preserves equality.

@@ -93,6 +93,12 @@ struct GlobeTransition: Sendable, Equatable {
     /// Orbit elevation the camera held when the transition began, so coming back returns to it.
     private var entryElevation: Float?
 
+    /// The orbit to restore when an application command interrupts a globe journey.
+    var departureCamera: (distance: Float, elevation: Float)? {
+        guard let entryDistance, let entryElevation else { return nil }
+        return (entryDistance, entryElevation)
+    }
+
     /// The leg being played, or nil when the scene is settled at one end or the other.
     private var leg: Leg?
 

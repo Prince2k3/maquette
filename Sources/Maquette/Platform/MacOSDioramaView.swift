@@ -36,6 +36,7 @@ private struct MacOSDioramaGestures: ViewModifier {
                     }
                     .onEnded { _ in
                         lastDragTranslation = .zero
+                        model.endInteraction(.drag)
                     }
             )
             .gesture(
@@ -46,6 +47,7 @@ private struct MacOSDioramaGestures: ViewModifier {
                     }
                     .onEnded { _ in
                         lastDragTranslation = .zero
+                        model.endInteraction(.drag)
                     }
             )
             // Trackpad pinch. Read as per-change ratios rather than absolute magnification, so the
@@ -62,6 +64,7 @@ private struct MacOSDioramaGestures: ViewModifier {
                     }
                     .onEnded { _ in
                         lastMagnification = nil
+                        model.endInteraction(.zoom)
                     }
             )
             // The scroll wheel and two-finger scroll. There is no pure-SwiftUI hook for scroll
@@ -70,7 +73,7 @@ private struct MacOSDioramaGestures: ViewModifier {
             // scene and forwards the deltas.
             .background(
                 ScrollWheelReader { deltaY in
-                    model.zoomInput(Float(deltaY) * Self.scrollZoomScale)
+                    model.zoomInput(Float(deltaY) * Self.scrollZoomScale, isWheel: true)
                 }
             )
     }

@@ -29,6 +29,7 @@ DioramaView(
 ### Essentials
 
 - <doc:GettingStarted>
+- <doc:migrating-to-the-swiftui-api>
 - ``DioramaView``
 - ``DioramaRegion``
 - ``DioramaShape``
@@ -38,13 +39,23 @@ DioramaView(
 
 - ``DioramaCamera``
 - ``DioramaCameraPosition``
+- ``DioramaGroundPosition``
+- ``DioramaNavigationContext``
+- ``DioramaCameraChangeContext``
+- ``DioramaUpdateFrequency``
 - ``DioramaInteractionModes``
+- ``DioramaCompass``
+- ``DioramaResetButton``
 - ``GlobeTransitionStyle``
 
 ### Content
 
 - ``DioramaContent``
 - ``DioramaContentBuilder``
+- ``DioramaContentGroup``
+- ``DioramaForEachContent``
+- ``DioramaStyledContent``
+- ``DioramaLineWidth``
 - ``DioramaMarker``
 - ``DioramaPolyline``
 - ``DioramaAnnotation``
@@ -58,6 +69,7 @@ DioramaView(
 - ``TerrainChunkStyle``
 - ``StrataPalette``
 - ``BuildingStyle``
+- ``DioramaLoadingPolicy``
 - ``DioramaEffect``
 - ``HologramStyle``
 - ``InkStyle``
@@ -70,6 +82,7 @@ DioramaView(
 - ``ImagerySource``
 - ``ElevationSource``
 - ``Tiles3DProvider``
+- ``Tiles3DSourceID``
 - ``GoogleTiles3DProvider``
 - ``CesiumIonTiles3DProvider``
 - ``Tiles3DStyle``
@@ -85,5 +98,6 @@ DioramaView(
 ### Loading state
 
 - ``DioramaLoadingState``
+- ``DioramaLoadingContext``
 - ``DioramaStreamingProgress``
 - ``DioramaError``

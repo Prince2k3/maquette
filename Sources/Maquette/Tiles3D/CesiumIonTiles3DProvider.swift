@@ -14,6 +14,9 @@ import Synchronization
 /// )
 /// ```
 public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
+    /// Identity of the ion asset and authorization context, stored without the raw token.
+    public let sourceID: Tiles3DSourceID?
+
     private let accessToken: String
     private let assetId: Int
     private let httpClient: any HTTPClient
@@ -63,6 +66,7 @@ public final class CesiumIonTiles3DProvider: Tiles3DProvider, Sendable {
     ///   - httpClient: HTTP client for network requests. Defaults to `URLSession.shared`.
     public init(accessToken: String, assetId: Int, httpClient: any HTTPClient = URLSession.shared) {
         self.accessToken = accessToken
+        self.sourceID = Tiles3DSourceID(components: ["cesium-ion", String(assetId), accessToken])
         self.assetId = assetId
         self.httpClient = httpClient
     }

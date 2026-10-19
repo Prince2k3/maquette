@@ -26,6 +26,9 @@ import Synchronization
 /// let provider = GoogleTiles3DProvider(apiKey: "your-google-key")
 /// ```
 public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
+    /// Identity of the Google dataset and authorization context, stored without the raw key.
+    public let sourceID: Tiles3DSourceID?
+
     /// The root tileset document. Content URIs resolve against it, so relative references keep
     /// the "/v1/3dtiles" prefix that a bare host would drop.
     private static let rootDocument = URL(string: "https://tile.googleapis.com/v1/3dtiles/root.json")!
@@ -64,6 +67,7 @@ public final class GoogleTiles3DProvider: Tiles3DProvider, Sendable {
         rootCache: RootTilesetCache = .shared
     ) {
         self.apiKey = apiKey
+        self.sourceID = Tiles3DSourceID(components: ["google-3dtiles", apiKey])
         self.httpClient = httpClient
         self.rootCacheLifetime = rootCacheLifetime
         self.rootCache = rootCache

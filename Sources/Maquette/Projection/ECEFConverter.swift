@@ -81,6 +81,28 @@ struct ECEFConverter: Sendable {
         ecefToLocal(ecef(for: coordinate))
     }
 
+    /// The near-side WGS84 coordinate at a horizontal point in the local frame.
+    /// Intersects the frame's vertical ray with the ellipsoid, rather than approximating it
+    /// with a sphere. Points beyond the local horizon have no near-side intersection.
+    func coordinate(atHorizontalPoint point: SIMD2<Double>) -> Coordinate? {
+        let rotation = ecefToENU.transpose
+        let start = originECEF + rotation * SIMD3(point.x, -point.y, 0)
+        let direction = rotation * SIMD3<Double>(0, 0, 1)
+        let a2 = Self.semiMajorAxis * Self.semiMajorAxis
+        let b2 = a2 * (1 - Self.eccentricitySquared)
+        let weights = SIMD3<Double>(1 / a2, 1 / a2, 1 / b2)
+        let a = simd_dot(direction * direction, weights)
+        let b = 2 * simd_dot(start * direction, weights)
+        let c = simd_dot(start * start, weights) - 1
+        let discriminant = b * b - 4 * a * c
+        guard discriminant >= 0 else { return nil }
+        let vertical = (-b + sqrt(discriminant)) / (2 * a)
+        let ecef = start + direction * vertical
+        let longitude = atan2(ecef.y, ecef.x)
+        let latitude = atan2(ecef.z, hypot(ecef.x, ecef.y) * (1 - Self.eccentricitySquared))
+        return Coordinate(longitude: longitude * 180 / .pi, latitude: latitude * 180 / .pi)
+    }
+
     /// Converts an ECEF position to local ENU coordinates (meters from diorama center).
     public func ecefToLocal(_ ecef: SIMD3<Double>) -> SIMD3<Float> {
         let delta = ecef - originECEF

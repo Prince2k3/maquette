@@ -22,6 +22,19 @@ final class GlobeHandoffConductor {
     var legStart: Date?
     var legSteps = 0
 
+    /// Retained so cancellation can be awaited by a caller coordinating another scene operation.
+    private(set) var relocationTask: Task<Void, Never>?
+    private var relocationRevision = 0
+
+    /// An application ground command takes ownership of the scene from a globe journey.
+    func cancelRelocation() {
+        relocationRevision += 1
+        relocationTask?.cancel()
+        relocationTask = nil
+        transition.reset()
+        lastTransitionDate = nil
+    }
+
     private let logger = Logger(maquette: "GlobeHandoff")
 
     /// Advances whichever leg of the handoff is playing, then reapplies the caller's framing.
@@ -96,6 +109,7 @@ final class GlobeHandoffConductor {
     func relocate(
         store: DioramaStore,
         content: DioramaContentGroup?,
+        latestContent: (() -> DioramaContentGroup?)? = nil,
         afterLoad: @escaping () -> Void,
         applyFrames: @escaping () -> Void
     ) {
@@ -119,9 +133,18 @@ final class GlobeHandoffConductor {
         transition.beginHold()
         lastTransitionDate = nil
         applyFrames()
-        Task {
+        relocationRevision += 1
+        let revision = relocationRevision
+        relocationTask?.cancel()
+        let storeRevision = store.beginNavigationRequest()
+        relocationTask = Task {
+            guard storeRevision == store.navigationRevision, !Task.isCancelled else { return }
+            let generation = store.loadGeneration
             await store.relocate(to: landing)
-            store.applyContent(content)
+            guard !Task.isCancelled, revision == relocationRevision,
+                  store.loadGeneration == generation + 1, storeRevision == store.navigationRevision else { return }
+            relocationTask = nil
+            if let latestContent { store.applyContent(latestContent()) } else { store.applyContent(content) }
             afterLoad()
             if case .failed = store.loadingState {
                 // Nothing to hand back to. Staying on the globe keeps the failure legible — and the

@@ -64,6 +64,16 @@ public struct DioramaCameraPosition: Sendable, Equatable {
 }
 
 extension View {
+    /// Observes resolved orbit movement continuously or after input and transitions settle.
+    /// This overload reports a context; the original overload continues to receive a camera.
+    /// A visionOS volume has no orbit camera and does not call either overload.
+    public func onDioramaCameraChange(
+        frequency: DioramaUpdateFrequency,
+        _ action: @escaping @MainActor (DioramaCameraChangeContext) -> Void
+    ) -> some View {
+        environment(\.dioramaCameraObservation, DioramaCameraObservationAction(frequency: frequency, action: action))
+    }
+
     /// Performs an action when a diorama in this hierarchy moves its orbit camera.
     ///
     /// Fires on user gestures and on programmatic moves alike, at the gesture's own cadence.
@@ -73,6 +83,26 @@ extension View {
     ) -> some View {
         environment(\.dioramaCameraChangeAction, DioramaCameraChangeAction(action: action))
     }
+}
+
+/// A resolved orbit-camera update and the phase and source of its movement.
+public struct DioramaCameraChangeContext: Sendable, Equatable {
+    /// The orbit camera after the change was applied.
+    public let camera: DioramaCamera
+    /// Whether camera movement is ongoing or has settled.
+    public let phase: DioramaNavigationContext.Phase
+    /// What initiated the camera movement.
+    public let origin: DioramaNavigationContext.Origin
+}
+
+struct DioramaCameraObservationAction {
+    let id = UUID()
+    let frequency: DioramaUpdateFrequency
+    let action: @MainActor (DioramaCameraChangeContext) -> Void
+}
+
+extension EnvironmentValues {
+    @Entry var dioramaCameraObservation: DioramaCameraObservationAction? = nil
 }
 
 /// Wrapper giving the camera-change closure the `Equatable` identity `@Entry` storage wants.

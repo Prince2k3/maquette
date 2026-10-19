@@ -20,6 +20,7 @@ struct VisionOSDioramaView: View {
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dioramaEffect) private var effect
     @Environment(\.globeTransitionStyle) private var globeStyle
+    @Environment(\.dioramaNavigationAction) private var navigationAction
     @Environment(\.dioramaLoadingChangeAction) private var loadingChangeAction
 
     private var enabledGestures: Set<DioramaGestureType> { inputs.interactionModes.gestureTypes }
@@ -41,17 +42,22 @@ struct VisionOSDioramaView: View {
                 ) {
                     model.reload()
                 }
+                .modifier(DioramaControlsOverlay(state: model.controlState))
                 .dioramaAttribution(model.store.tilesAttribution)
                 .task(id: globeStyle) {
                     guard let globeStyle else { return }
                     await model.adoptGlobeStyle(globeStyle)
                 }
                 .task {
+                    model.syncNavigation(binding: inputs.groundPosition, action: navigationAction, preservesGround: inputs.preservesGround, configuration: inputs.configuration)
                     model.enabledGestures = enabledGestures
                     model.selectionBinding = inputs.selection
                     model.store.setEffect(effect)
+                    let generation = model.store.loadGeneration
                     await model.store.load()
-                    model.store.applyContent(inputs.content)
+                    guard generation == model.store.loadGeneration, !Task.isCancelled else { return }
+                    model.store.applyContent(model.content)
+                    model.applySelection()
                 }
                 // No backdrop here: a volumetric window has the user's own room behind it, which is
                 // the point of the platform. `backgroundColor` is for the flat presentations.
@@ -62,14 +68,22 @@ struct VisionOSDioramaView: View {
                     model.enabledGestures = enabledGestures
                 }
                 .onChange(of: inputs.reloadKey) { _, key in
+                    model.syncNavigation(binding: inputs.groundPosition, action: navigationAction, preservesGround: inputs.preservesGround, configuration: inputs.configuration)
                     model.applyReloadKey(key)
+                }
+                .onChange(of: navigationAction?.id) { _, _ in
+                    model.navigation.action = navigationAction
                 }
                 .onChange(of: inputs.content) { _, content in
                     model.setContent(content)
                 }
-                .onChange(of: inputs.selection?.wrappedValue) { _, selected in
+                .onChange(of: inputs.groundPosition?.wrappedValue) { _, position in
+                    model.syncNavigation(binding: inputs.groundPosition, action: navigationAction, preservesGround: inputs.preservesGround, configuration: inputs.configuration)
+                    model.applyGroundPosition(position)
+                }
+                .onChange(of: inputs.selection?.wrappedValue) { _, _ in
                     model.selectionBinding = inputs.selection
-                    model.applySelection(selected)
+                    model.applySelection()
                 }
                 .onChange(of: model.store.loadingState) { _, state in
                     loadingChangeAction?.action(state)
@@ -120,6 +134,7 @@ struct VisionOSDioramaView: View {
                         }
                         .onEnded { _ in
                             lastMagnification = nil
+                            model.navigation.interactionEnded(store: model.store, source: .zoom)
                         }
                 )
         }
@@ -171,6 +186,7 @@ struct VisionOSDioramaView: View {
 @Observable
 final class VisionOSDioramaModel {
     let store: DioramaStore
+    let navigation = DioramaNavigationController()
     private(set) var content: DioramaContentGroup?
     /// The handoff's shared mechanics; this model supplies the volumetric framing response.
     let handoff = GlobeHandoffConductor()
@@ -179,7 +195,7 @@ final class VisionOSDioramaModel {
     var globeStyle: GlobeTransitionStyle?
     var routePreviewController: RoutePreviewController?
     /// The selection binding handed to `DioramaView`, written on marker taps.
-    var selectionBinding: Binding<DioramaAnnotation.ID?>?
+    var selectionBinding: DioramaSelection?
 
     /// The chunk's holder in the volume, carrying the fit from diorama metres to volume metres.
     ///
@@ -214,6 +230,7 @@ final class VisionOSDioramaModel {
     init(configuration: DioramaConfiguration, content: DioramaContentGroup?) {
         self.store = DioramaStore(configuration: configuration)
         self.content = content
+        navigation.configureHome(DioramaRegion(center: configuration.center, radius: configuration.radiusMeters), followsInput: true)
     }
 
     var transition: GlobeTransition {
@@ -226,21 +243,87 @@ final class VisionOSDioramaModel {
         Task {
             await store.load()
             store.applyContent(content)
+            applySelection()
         }
     }
 
     /// Adopts a changed region/style key; see ``DioramaLiveInputs/applyReloadKey(_:store:content:afterLoad:)``.
     func applyReloadKey(_ key: DioramaViewInputs.ReloadKey) {
-        DioramaLiveInputs.applyReloadKey(key, store: store, content: content) {
+        var key = key
+        if let requested = navigation.binding?.wrappedValue {
+            key.region = requested.region
+        } else if navigation.preservesGround {
+            key.region = store.visibleGroundRegion
+        }
+        DioramaLiveInputs.applyReloadKey(key, store: store, content: content,
+            usesGeographicAnchor: navigation.preservesGround,
+            beforeReload: { [weak self] in
+                self?.navigation.invalidateCommand()
+                self?.handoff.cancelRelocation()
+                self?.applyTransitionFraming()
+                self?.applyTransitionVisibility()
+            }, latestContent: { [weak self] in self?.content }) {
+            self.applySelection()
             // No camera to re-frame; the volume fit re-applies when the entity swaps in.
         }
+    }
+
+    func syncNavigation(binding: Binding<DioramaGroundPosition>?, action: DioramaNavigationAction?, preservesGround: Bool = false, configuration: DioramaConfiguration? = nil) {
+        if let configuration {
+            navigation.configureHome(
+                DioramaRegion(center: configuration.center, radius: configuration.radiusMeters),
+                followsInput: !preservesGround && binding == nil
+            )
+        }
+        navigation.configuration = configuration
+        navigation.preservesGround = preservesGround || binding != nil
+        navigation.binding = binding
+        navigation.action = action
+        navigation.isTransitioning = { [weak self] in self?.transition.isBusy ?? false }
+        navigation.observe(store)
+    }
+
+    func applyGroundPosition(_ position: DioramaGroundPosition?) {
+        let accepted = navigation.applyRequest(position, store: store, content: { [weak self] in self?.content }) { [weak self] in
+            self?.applySelection()
+        }
+        if accepted {
+            handoff.cancelRelocation()
+            applyTransitionFraming()
+            applyTransitionVisibility()
+        }
+    }
+
+    var controlState: DioramaControlState {
+        DioramaControlState(
+            canReset: navigation.homeRegion != nil && !navigation.isApplyingRequest
+                && (store.loadingState == .loaded || transition.isShowingGlobe),
+            heading: nil, canFaceNorth: false,
+            reset: { [weak self] in self?.resetFromControls() }, faceNorth: {}
+        )
+    }
+
+    func resetFromControls() {
+        guard controlState.canReset, let region = navigation.homeRegion else { return }
+        store.cancelPendingPan()
+        navigation.interactionEnded(store: store, source: .drag)
+        navigation.interactionEnded(store: store, source: .zoom)
+        lastDragTranslation = nil
+        handoff.cancelRelocation()
+        store.dioramaEntity?.orientation = .init(angle: 0, axis: SIMD3<Float>(0, 1, 0))
+        applyTransitionFraming()
+        applyTransitionVisibility()
+        _ = navigation.applyRequest(
+            DioramaGroundPosition(region: region), store: store,
+            content: { [weak self] in self?.content }, writesRequest: true
+        ) { [weak self] in self?.applySelection() }
     }
 
     /// Re-applies changed content against the substrate already in hand.
     func setContent(_ newContent: DioramaContentGroup) {
         content = newContent
         store.applyContent(newContent)
-        applySelection(selectionBinding?.wrappedValue)
+        applySelection()
     }
 
     /// A tap landed on an entity; walk up for a marker and toggle the selection.
@@ -249,8 +332,8 @@ final class VisionOSDioramaModel {
     }
 
     /// Reflects the selected identity onto the marker entities.
-    func applySelection(_ id: DioramaAnnotation.ID?) {
-        DioramaLiveInputs.applySelection(id, store: store)
+    func applySelection() {
+        DioramaLiveInputs.applySelection(selectionBinding, store: store)
     }
 
     func adoptGlobeStyle(_ style: GlobeTransitionStyle) async {
@@ -567,6 +650,7 @@ final class VisionOSDioramaModel {
             lastDragTranslation = sceneTranslation
             return
         }
+        navigation.interactionBegan()
         let previous = lastDragTranslation ?? .zero
         let delta = sceneTranslation - previous
         lastDragTranslation = sceneTranslation
@@ -605,6 +689,7 @@ final class VisionOSDioramaModel {
     }
 
     func endDrag() {
+        navigation.interactionEnded(store: store)
         lastDragTranslation = nil
     }
 
@@ -639,6 +724,7 @@ final class VisionOSDioramaModel {
     /// globe is the same length on every platform.
     func applyPinch(ratio: Float) {
         guard !transition.isBusy else { return }
+        navigation.interactionBegan(.zoom)
         let delta = log2(ratio) * Self.pinchOctaveScale
 
         if transition.isShowingGlobe {
@@ -688,7 +774,8 @@ final class VisionOSDioramaModel {
         guard absorption.consumed else { return }
         // Relocation before framing, same ordering as the orbit platforms; see the conductor.
         if absorption.committedReturn {
-            handoff.relocate(store: store, content: content) {
+            handoff.relocate(store: store, content: content, latestContent: { [weak self] in self?.content }) { [weak self] in
+                self?.applySelection()
                 // No camera to re-aim; the volume fit re-applies when the entity swaps in.
             } applyFrames: { [weak self] in
                 self?.applyTransitionFraming()

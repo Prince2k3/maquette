@@ -161,6 +161,8 @@ class DioramaEntity: Entity {
 
     /// What each overlay entity was last built from, keyed by its (suffixed) identifier — the
     /// evidence the reconciliation below diffs against.
+    var selection: DioramaSelection?
+
     private var appliedPins: [String: (annotation: DioramaAnnotation, coordinate: Coordinate)] = [:]
     private var appliedRibbons: [String: (annotation: DioramaAnnotation, coordinates: [Coordinate])] = [:]
 
@@ -282,8 +284,7 @@ class DioramaEntity: Entity {
             }
 
             if let existing = markerEntities[key],
-               appliedPins[key]?.annotation == annotation,
-               appliedPins[key]?.coordinate == coordinate {
+               appliedPins[key]?.annotation.style == annotation.style {
                 // Same pin, new ground: move it. Keeps the entity, its materials, and its
                 // selection state across every pan step.
                 existing.position = position
@@ -291,6 +292,11 @@ class DioramaEntity: Entity {
                 let marker = MarkerEntity(tint: annotation.style.tint, physicalSize: physicalSize)
                 addMarker(marker, identifier: key, position: position)
             }
+            let identity = DioramaMarkerIdentity(
+                annotationID: annotation.selectionAnnotationID ?? annotation.id, tag: annotation.selectionTag
+            )
+            markerEntities[key]?.components.set(identity)
+            markerEntities[key]?.setSelected(selection?.isSelected(identity) ?? false)
         }
 
         // Identities that vanished from the content take their entities with them.

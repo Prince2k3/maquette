@@ -9,11 +9,25 @@ struct DioramaLoadingOverlay: ViewModifier {
     /// Streaming state for presentations that keep arriving after they are displayable.
     let streamingProgress: DioramaStreamingProgress?
     let onRetry: (() -> Void)?
+    @Environment(\.dioramaLoadingPresentation) private var customPresentation
+    @Environment(\.dioramaLoadingOverlayHidden) private var isHidden
 
     func body(content: Content) -> some View {
         content
-            .overlay { primaryOverlay }
-            .overlay(alignment: .topTrailing) { streamingIndicator }
+            .overlay {
+                if !isHidden {
+                    if let customPresentation {
+                        customPresentation.content(DioramaLoadingContext(
+                            state: loadingState, streamingProgress: streamingProgress, retryAction: onRetry
+                        ))
+                    } else {
+                        primaryOverlay
+                    }
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if !isHidden, customPresentation == nil { streamingIndicator }
+            }
     }
 
     @ViewBuilder

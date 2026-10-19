@@ -103,6 +103,21 @@ final class DioramaStore {
         (dioramaEntity as? DioramaEntity)?.tiles3D?.streamingProgress
     }
 
+    /// Invalidates suspended loads before they can mutate a newer scene.
+    private(set) var loadGeneration = 0
+    private(set) var navigationRevision = 0
+    @discardableResult
+    func beginNavigationRequest() -> Int {
+        navigationRevision += 1
+        return navigationRevision
+    }
+    var groundDidChange: (@MainActor () -> Void)?
+    private var groundChangesSuspended = false
+    private func notifyGroundChange() {
+        if !groundChangesSuspended { groundDidChange?() }
+    }
+    var hasPendingPan: Bool { isFlushingPan || panTailTask != nil || panResampler.hasUnappliedMovement }
+
     private let tileCache = TileCache()
     private let logger = Logger(maquette: "DioramaStore")
 
@@ -115,6 +130,10 @@ final class DioramaStore {
     public func load() async {
         guard case .idle = loadingState else { return }
         loadingState = .loading
+        let generation = loadGeneration
+        defer {
+            if generation == loadGeneration, Task.isCancelled, loadingState == .loading { reset() }
+        }
 
         do {
             let rootEntity = DioramaEntity()
@@ -122,21 +141,25 @@ final class DioramaStore {
             // The two presentations are separate pipelines, not two sources for one.
             switch configuration.presentation {
             case .terrainChunk:
-                try await loadTerrainPipeline(into: rootEntity)
+                try await loadTerrainPipeline(into: rootEntity, generation: generation)
 
             case .photorealistic(let provider, let style):
-                try await loadPhotorealisticPipeline(provider: provider, style: style, into: rootEntity)
+                try await loadPhotorealisticPipeline(provider: provider, style: style, into: rootEntity, generation: generation)
             }
 
+            guard generation == loadGeneration, !Task.isCancelled else { return }
             dioramaEntity = rootEntity
             loadingState = .loaded
             rebuildEffect()
             logger.info("Diorama loaded successfully")
+            notifyGroundChange()
 
         } catch let error as DioramaError {
+            guard generation == loadGeneration, !Task.isCancelled else { return }
             loadingState = .failed(error)
             logger.error("Diorama loading failed: \(error)")
         } catch {
+            guard generation == loadGeneration, !Task.isCancelled else { return }
             loadingState = .failed(.networkFailure(message: error.localizedDescription))
             logger.error("Diorama loading failed: \(error)")
         }
@@ -144,6 +167,9 @@ final class DioramaStore {
 
     /// Resets the store to its initial state, discarding the loaded entity.
     public func reset() {
+        loadGeneration += 1
+        groundChangesSuspended = false
+        cancelPendingPan()
         tilesAttribution = nil
         rollTask?.cancel()
         rollTask = nil
@@ -194,15 +220,19 @@ final class DioramaStore {
                 rows: style.rows,
                 columns: style.columns
             )
-            globe = entity
-            dockGlobe()
-            // The effect may already be on — the globe fetch races the chunk's own load, and the
-            // effect is applied when the chunk lands. Whichever finishes second styles the world.
-            styleGlobeForEffect()
+            installGlobe(entity)
             logger.info("Globe ready at radius \(style.radius)")
         } catch {
             logger.error("Globe could not be loaded: \(error.localizedDescription)")
         }
+    }
+
+    /// Installs an assembled globe through the same docking and effect path as a fetched globe.
+    func installGlobe(_ entity: GlobeEntity) {
+        globe = entity
+        dockGlobe()
+        // Whichever finishes second—the chunk or the world—applies the current effect.
+        styleGlobeForEffect()
     }
 
     /// Puts the globe under the chunk's current centre.
@@ -339,8 +369,17 @@ final class DioramaStore {
         // still over both round trips, which is the pause between "pinched in" and "descending".
         // The coarse window's tiles go out now, alongside the fine load, so the awaited re-level
         // inside `restoreGroundScale` lands from a warm cache.
+        let generation = loadGeneration
+        groundChangesSuspended = true
+        defer {
+            if generation == loadGeneration {
+                groundChangesSuspended = false
+                notifyGroundChange()
+            }
+        }
         prewarmRestoredWindow(scale: departureScale)
         await load()
+        guard generation == loadGeneration, !Task.isCancelled else { return }
         await restoreGroundScale(departureScale)
     }
 
@@ -552,7 +591,7 @@ final class DioramaStore {
     // MARK: - Terrain Mesh Pipeline
 
     /// Loads terrain + satellite imagery and assembles the terrain entity.
-    private func loadTerrainPipeline(into rootEntity: DioramaEntity) async throws {
+    private func loadTerrainPipeline(into rootEntity: DioramaEntity, generation: Int) async throws {
         let center = Coordinate(configuration.center)
         // Zoom is chosen from the chunk's own radius so panning does not coarsen the detail;
         // a wider pan region simply means more tiles at the same zoom.
@@ -613,6 +652,7 @@ final class DioramaStore {
             }
             return results
         }
+        guard generation == loadGeneration, !Task.isCancelled else { throw CancellationError() }
         fetched.sort { $0.y == $1.y ? $0.x < $1.x : $0.y < $1.y }
 
         var terrainGrids: [(x: Int, y: Int, grid: ElevationGrid)] =
@@ -645,7 +685,10 @@ final class DioramaStore {
         let initialWindow = TerrainTileWindow.covering(
             terrainGrids.map { TileCoordinate(x: $0.x, y: $0.y) }
         ) ?? TerrainTileWindow(minX: 0, minY: 0, maxX: 0, maxY: 0)
-        let anchor = TerrainAnchor(
+        let anchor = configuration.usesGeographicAnchor ? TerrainAnchor(
+            centeredOn: center, zoom: zoom, extent: configuration.horizontalExtent,
+            radiusMeters: configuration.radiusMeters
+        ) : TerrainAnchor(
             mosaicMinTile: SIMD2(initialWindow.minX, initialWindow.minY),
             tilesWide: initialWindow.tilesWide,
             tilesTall: initialWindow.tilesTall,
@@ -1159,7 +1202,8 @@ final class DioramaStore {
     private func loadPhotorealisticPipeline(
         provider: any Tiles3DProvider,
         style: Tiles3DStyle,
-        into rootEntity: DioramaEntity
+        into rootEntity: DioramaEntity,
+        generation: Int
     ) async throws {
         let tiles3DEntity = try await Tiles3DEntity(
             provider: provider,
@@ -1170,11 +1214,13 @@ final class DioramaStore {
             style: style,
             panRange: configuration.panRange
         )
+        guard generation == loadGeneration, !Task.isCancelled else { throw CancellationError() }
         rootEntity.setTiles3D(tiles3DEntity)
         // Attribution surfaces through the store so the views can draw it: displaying the sources
         // credited by the tiles in view is a condition of the tile services' terms, not decoration.
         tiles3DEntity.onAttributionChange = { [weak self] text in
-            self?.tilesAttribution = text
+            guard let self, self.loadGeneration == generation else { return }
+            self.tilesAttribution = text
         }
         // The same two operations the entity itself applies — rotate into the local ENU frame about
         // the centre, then scale — so a coordinate lands in the frame the geometry arrived in.
@@ -1223,6 +1269,16 @@ final class DioramaStore {
 
     /// Lands the tail of a gesture once the touches stop arriving.
     private var panTailTask: Task<Void, Never>?
+    private var panRevision = 0
+
+    /// Drops pending gesture samples without invalidating the current scene or a loading task.
+    func cancelPendingPan() {
+        panRevision += 1
+        panTailTask?.cancel()
+        panTailTask = nil
+        panResampler = PanPathResampler()
+        isFlushingPan = false
+    }
 
     /// How long after the last touch the tail lands. Longer than a frame, so an ordinary gesture
     /// cancels it and only a gesture that has actually stopped ever pays for it.
@@ -1256,8 +1312,10 @@ final class DioramaStore {
 
         guard !isFlushingPan else { return }
         isFlushingPan = true
+        let generation = loadGeneration
+        let revision = panRevision
         Task { [weak self] in
-            guard let self else { return }
+            guard let self, self.loadGeneration == generation, self.panRevision == revision else { return }
             isFlushingPan = false
             flushPan()
         }
@@ -1384,6 +1442,7 @@ final class DioramaStore {
         recutBuildingsIfNeeded()
         refetchBuildingsIfNeeded()
         rollTerrainIfNeeded()
+        notifyGroundChange()
     }
 
     // MARK: - Rolling Fetch
@@ -1688,6 +1747,7 @@ final class DioramaStore {
         // grid's extremes.
         projection = TerrainProjection(heightField: zoomed, panOffset: offset)
         applyContent(appliedContent)
+        notifyGroundChange()
 
         buildings?.heightField = zoomed
         buildings?.blocksStale = true
@@ -1958,6 +2018,7 @@ final class DioramaStore {
 
     /// The content most recently applied, retained so panning can reposition it.
     private var appliedContent: DioramaContentGroup?
+    private var contentIdentityResolver = DioramaContentIdentityResolver()
 
     /// Materializes diorama content (markers, polylines) as 3D entities on the loaded diorama.
     ///
@@ -1967,7 +2028,9 @@ final class DioramaStore {
     /// - Parameter content: The content group to apply, or `nil` to skip.
     public func applyContent(_ content: DioramaContentGroup?) {
         appliedContent = content
-        guard let content, let rootEntity = dioramaEntity as? DioramaEntity else { return }
+        guard let content else { return }
+        let resolvedContent = contentIdentityResolver.resolve(content)
+        guard let rootEntity = dioramaEntity as? DioramaEntity else { return }
 
         let proxy = DioramaProxy(
             configuration: configuration,
@@ -1975,7 +2038,7 @@ final class DioramaStore {
         )
 
         rootEntity.applyContent(
-            content,
+            resolvedContent,
             using: proxy,
             physicalSize: configuration.physicalSize
         )

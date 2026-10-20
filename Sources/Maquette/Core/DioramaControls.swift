@@ -104,6 +104,8 @@ extension EnvironmentValues {
 /// accidentally inherit its actions.
 struct DioramaControlsOverlay: ViewModifier {
     let state: DioramaControlState
+    var cameraProxy: DioramaCameraProxy? = nil
+    var onInsetsChange: (@MainActor (EdgeInsets) -> Void)? = nil
     @Environment(\.dioramaControls) private var configuration
 
     func body(content: Content) -> some View {
@@ -111,8 +113,31 @@ struct DioramaControlsOverlay: ViewModifier {
             if let configuration {
                 configuration.content()
                     .environment(\.dioramaControlState, state)
+                    .environment(\.dioramaCamera, cameraProxy)
                     .padding(12)
+                    .background {
+                        GeometryReader { geometry in
+                            Color.clear.preference(key: DioramaControlsSize.self, value: geometry.size)
+                        }
+                    }
             }
         }
+        .onPreferenceChange(DioramaControlsSize.self) { size in
+            let alignment = configuration?.alignment ?? .topLeading
+            var insets = EdgeInsets()
+            if size.width > size.height * 2 {
+                if alignment.vertical == .bottom { insets.bottom = size.height }
+                else { insets.top = size.height }
+            } else {
+                if alignment.horizontal == .trailing { insets.trailing = size.width }
+                else { insets.leading = size.width }
+            }
+            onInsetsChange?(insets)
+        }
     }
+}
+
+private struct DioramaControlsSize: PreferenceKey {
+    static let defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
 }

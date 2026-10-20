@@ -11,6 +11,7 @@ final class DioramaCameraObservation {
     private var changeRevision = 0
     private var endedRevision = 0
     private var origin: DioramaNavigationContext.Origin = .programmatic
+    private var actionInProgress = false
     private var settleTask: Task<Void, Never>?
 
     func began(_ source: DioramaInteractionSource = .drag) {
@@ -20,18 +21,34 @@ final class DioramaCameraObservation {
 
     func ended(_ source: DioramaInteractionSource = .drag) {
         interactions.remove(source)
-        if !isInteracting { scheduleEnd() }
+        if !isInteracting && !actionInProgress { scheduleEnd() }
     }
 
-    func changed(_ camera: DioramaCamera, origin: DioramaNavigationContext.Origin) {
-        guard lastCamera != camera else { return }
+    func changed(_ camera: DioramaCamera, origin: DioramaNavigationContext.Origin, force: Bool = false) {
+        guard force || lastCamera != camera else { return }
         lastCamera = camera
         changeRevision += 1
         self.origin = origin
         if action?.frequency == .continuous {
             action?.action(DioramaCameraChangeContext(camera: camera, phase: .changing, origin: origin))
         }
-        if !isInteracting { scheduleEnd() }
+        if !isInteracting && !actionInProgress { scheduleEnd() }
+    }
+
+    /// An elapsed-time action owns its end; a quiet input interval is not completion.
+    func beganAction() {
+        settleTask?.cancel()
+        actionInProgress = true
+    }
+
+    func finishedAction(_ camera: DioramaCamera, cancelled: Bool = false) {
+        guard actionInProgress else { return }
+        actionInProgress = false
+        settleTask?.cancel()
+        lastCamera = camera
+        endedRevision = changeRevision
+        action?.action(DioramaCameraChangeContext(camera: camera,
+            phase: cancelled ? .cancelled : .ended, origin: origin))
     }
 
     private func scheduleEnd() {
@@ -42,7 +59,7 @@ final class DioramaCameraObservation {
             while !Task.isCancelled, self.isTransitioning?() == true {
                 try? await Task.sleep(for: .milliseconds(32))
             }
-            guard !Task.isCancelled, !self.isInteracting,
+            guard !Task.isCancelled, !self.isInteracting, !self.actionInProgress,
                   let camera = self.lastCamera, self.changeRevision != self.endedRevision else { return }
             self.endedRevision = self.changeRevision
             self.action?.action(DioramaCameraChangeContext(camera: camera, phase: .ended, origin: self.origin))

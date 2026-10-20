@@ -33,6 +33,12 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
     @Environment(\.dioramaCameraChangeAction) private var cameraChangeAction
     @Environment(\.dioramaLoadingChangeAction) private var loadingChangeAction
     @Environment(\.dioramaARPlacement) private var arPlacement
+    @Environment(\.dioramaCameraFitInsets) private var cameraFitInsets
+    @Environment(\.dioramaCameraLimits) private var cameraLimits
+    @Environment(\.dioramaCameraTransition) private var cameraTransition
+    @Environment(\.dioramaCameraActionHost) private var readerCameraHost
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
 
     #if os(iOS)
     @State private var arController = ARPlacementController()
@@ -55,10 +61,12 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
             realityContent
                 .onAppear {
                     model.viewSize = geometry.size
+                    model.cameraSafeAreaInsets = geometry.safeAreaInsets
                     model.updateEntityScale()
                 }
                 .onChange(of: geometry.size) { _, newSize in
                     model.viewSize = newSize
+                    model.cameraSafeAreaInsets = geometry.safeAreaInsets
                     model.updateEntityScale()
                 }
         }
@@ -71,7 +79,10 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
         ) {
             model.reload()
         }
-        .modifier(DioramaControlsOverlay(state: model.controlState))
+        .modifier(DioramaControlsOverlay(state: model.controlState, cameraProxy: DioramaCameraProxy(host: model.cameraHost), onInsetsChange: { insets in
+            model.cameraControlInsets = insets
+            if model.usesAutomaticCamera { model.frameAutomaticCamera() }
+        }))
         .dioramaAttribution(model.store.contentAttribution)
         .task(id: globeStyle) {
             guard let globeStyle else { return }
@@ -81,6 +92,12 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
             syncInputs()
             await model.initialLoad(effect: effect)
         }
+        .onDisappear { model.releaseCameraHost() }
+        .onChange(of: cameraFitInsets) { _, _ in syncCameraConfiguration() }
+        .onChange(of: cameraLimits) { _, _ in syncCameraConfiguration() }
+        .onChange(of: cameraTransition) { _, _ in syncCameraConfiguration() }
+        .onChange(of: reduceMotion) { _, _ in syncCameraConfiguration() }
+        .onChange(of: readerCameraHost.map(ObjectIdentifier.init)) { _, _ in model.bindCameraHost(readerCameraHost) }
         .onChange(of: effect) { _, newEffect in
             model.store.setEffect(newEffect)
         }
@@ -119,6 +136,7 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
             model.applySelection()
         }
         .onChange(of: model.store.loadingState) { _, state in
+            model.updateCameraCapabilities()
             loadingChangeAction?.action(state)
         }
         .onChange(of: arPlacement?.wrappedValue) { _, active in
@@ -136,6 +154,8 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
             #endif
         }
         .onChange(of: routePreviewController?.playbackState) { _, newState in
+            model.cancelCameraAction()
+            if model.arPlacementActive || model.transition.isShowingGlobe { return }
             RouteAnimationHelper.handlePlaybackStateChange(
                 newState,
                 cameraController: model.cameraController,
@@ -147,7 +167,15 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
 
     /// Pushes the view's inputs and environment into the model, which has no hierarchy to read
     /// them from.
+    private func syncCameraConfiguration() {
+        model.cameraFitInsets = cameraFitInsets
+        model.configureCamera(limits: cameraLimits, transition: cameraTransition, reduceMotion: reduceMotion)
+    }
+
     private func syncInputs() {
+        model.initialCamera = inputs.initialCamera
+        model.bindCameraHost(readerCameraHost)
+        syncCameraConfiguration()
         model.syncNavigation(binding: inputs.groundPosition, action: navigationAction, preservesGround: inputs.preservesGround, configuration: inputs.configuration)
         model.enabledGestures = inputs.interactionModes.gestureTypes
         model.displayScale = displayScale

@@ -16,7 +16,7 @@ modifiers carry style and observation, and a result builder carries content.
 ```swift
 DioramaView(
     region: DioramaRegion(center: canyon, radius: 6000),
-    position: $position
+    cameraPosition: $position
 ) {
     DioramaMarker("Yavapai Point", coordinate: overlook, tint: .orange)
 }
@@ -39,6 +39,15 @@ DioramaView(
 
 - ``DioramaCamera``
 - ``DioramaCameraPosition``
+- ``DioramaCameraFocus``
+- ``DioramaReader``
+- ``DioramaCameraProxy``
+- ``DioramaCameraLimits``
+- ``DioramaCameraTransition``
+- ``DioramaCameraFitTarget``
+- ``DioramaCameraCapabilities``
+- ``DioramaCameraRequestID``
+- ``DioramaCameraActionResult``
 - ``DioramaGroundPosition``
 - ``DioramaNavigationContext``
 - ``DioramaCameraChangeContext``

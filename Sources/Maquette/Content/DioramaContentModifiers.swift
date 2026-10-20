@@ -232,3 +232,30 @@ extension ForEach where Content == DioramaForEachContent, Data.Element: Identifi
         self.init(data, id: \.id, content: content)
     }
 }
+
+
+/// Content with an explicit feature identity, independent of its selection tag.
+public struct DioramaIdentifiedContent<Content: DioramaContent>: DioramaContent {
+    let content: Content
+    let identifier: String
+    /// Renderer items retaining the explicit public identity for camera fitting.
+    public var items: [DioramaContentItem] {
+        content.items.map { item in
+            guard case .annotation(var feature) = item else { return item }
+            feature.id = identifier
+            feature.selectionAnnotationID = nil
+            feature.contentIdentity?.annotationID = identifier
+            return .annotation(feature)
+        }
+    }
+}
+
+extension DioramaContent {
+    /// Sets the feature ID used for stable rendering and camera content-ID fits.
+    /// Apply this to one primitive; collection elements should retain their own unique IDs.
+    public func id(_ identifier: String) -> DioramaIdentifiedContent<Self> {
+        DioramaIdentifiedContent(content: self, identifier: identifier)
+    }
+}
+extension DioramaIdentifiedContent: DioramaStrokableContent where Content: DioramaStrokableContent {}
+extension DioramaIdentifiedContent: DioramaFillableContent where Content: DioramaFillableContent {}

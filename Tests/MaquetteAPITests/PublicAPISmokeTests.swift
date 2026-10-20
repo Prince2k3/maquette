@@ -24,7 +24,7 @@ struct PublicAPISmokeTests {
             shape: .hexagonal,
             physicalSize: 0.8,
             interactionModes: [.rotate, .zoom],
-            position: .constant(.automatic),
+            cameraPosition: .constant(.automatic),
             selection: .constant(nil)
         ) {
             DioramaMarker("Yavapai Point", coordinate: Self.canyon, tint: .orange, id: "yavapai")
@@ -68,7 +68,7 @@ struct PublicAPISmokeTests {
         #expect(region.radius > 0)
         #expect(DioramaShape.geoJSON(outline) != nil)
 
-        let camera = DioramaCamera(azimuth: .degrees(90), elevation: .degrees(30), distance: 1.4)
+        let camera = DioramaCamera(heading: .degrees(-(90)), pitch: .degrees(90 - (30)), distance: 1.4)
         let position = DioramaCameraPosition.camera(camera)
         #expect(position.camera == camera)
         #expect(!position.positionedByUser)

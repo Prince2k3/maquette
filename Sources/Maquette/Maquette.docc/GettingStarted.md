@@ -40,7 +40,7 @@ tiles roll in as the ground moves. The automatic loading policy provisions a pan
 `.globeTransition()` lets a zoom-out dissolve into a spinnable globe.
 
 ```swift
-DioramaView(region: region, position: $cameraPosition)
+DioramaView(region: region, cameraPosition: $cameraPosition)
     .dioramaStyle(.standard(chunk: .canyon))
     .dioramaLoadingPolicy(.prefetchMargin(0.8))
     .globeTransition()
@@ -48,7 +48,7 @@ DioramaView(region: region, position: $cameraPosition)
 
 ## Observe and drive
 
-- `position:` is the parallel of `MapCameraPosition` — set it to move the camera, read it back as
+- `cameraPosition:` is the parallel of `MapCameraPosition` — set it to move the camera, read it back as
   the user orbits (`positionedByUser` says which happened).
 - `selection:` receives a tapped marker's `.tag` value, or its annotation ID for an untagged String binding.
 - `onDioramaLoadingChange(_:)` reports load phases; the built-in overlay still shows the spinner
@@ -117,13 +117,13 @@ points or geographic meters. Route preview styling continues to use `RoutePrevie
 | `DioramaView(initialRegion:)` | Uses the initial region once; state redraws and later style changes preserve the navigated ground. |
 | `DioramaView(region:)` | Accepts live region inputs; center-only changes preserve ground zoom, and substrate changes rebuild. |
 | `DioramaView(groundPosition:)` | The binding owns geographic center and absolute radius, with gesture read-back on every platform. |
-| `position:` | Independently requests an orbit camera; visionOS volumes have no virtual camera. |
+| `cameraPosition:` | Independently requests an orbit camera; visionOS volumes have no virtual camera. |
 
 ```swift
 @State private var ground = DioramaGroundPosition(region: initialRegion)
 @State private var camera: DioramaCameraPosition = .automatic
 
-DioramaView(groundPosition: $ground, position: $camera)
+DioramaView(groundPosition: $ground, cameraPosition: $camera)
     .dioramaShape(.hexagonal)
     .dioramaPhysicalSize(0.8)
     .onDioramaNavigationChange(frequency: .onEnd) { context in
@@ -142,12 +142,62 @@ Newer requests supersede older fetches and their content callbacks. Controlled t
 anchor centered on the requested coordinate; legacy live-region terrain retains its mosaic mapping.
 Radius read-back is the configured nominal geographic radius multiplied by ground zoom.
 
-Continuous observers receive applied changes and an ended context. End observers wait until all
-active drag/pinch inputs, pending pan samples, and any globe transition have settled. Wheel input
-ends after a short period of inactivity. A gesture that returns to its previous endpoint still
-produces an end event. The existing `.onDioramaCameraChange { camera in ... }` overload remains
+Camera observers report `.changing`, then `.ended` or `.cancelled` for the actual gesture or
+programmatic action. `.onEnd` receives terminal contexts; it does not use a generic settle timer.
+Geographic navigation observers keep their own phase and origin semantics. A gesture that returns
+to its previous endpoint still produces an end event. The existing `.onDioramaCameraChange { camera in ... }` overload remains
 available. Geographic callbacks describe the chunk during a globe journey and report the new place
 after a committed return loads it.
+
+## Frame and drive the camera
+
+Use `initialCamera: .camera(...)` to seed an orbit once, or `cameraPosition: $camera` to drive it
+and receive gesture read-back. These are separate initializer overloads; choose one camera owner.
+`DioramaCamera.heading` is a SwiftUI `Angle` clockwise from north. `pitch` is zero overhead and
+90 degrees horizontal; `distance` is a `Float` in scene meters. The default focus is `.chunkCenter`.
+A `.coordinate(location, altitude: .clampToGround)` focus is resolved through the active projection
+and follows ground pan, zoom, and reload.
+
+For repeatable actions, scope a proxy to one diorama:
+
+```swift
+DioramaReader { proxy in
+    DioramaView(initialRegion: region, initialCamera: .camera(
+        DioramaCamera(heading: .degrees(20), pitch: .degrees(55), distance: 1.5)
+    ))
+    .dioramaControls {
+        Button("Fit terrain") {
+            proxy.fit(.chunk, padding: EdgeInsets(top: 24, leading: 24, bottom: 24, trailing: 24),
+                      transition: .easeInOut(duration: 0.6))
+        }
+        .disabled(!proxy.capabilities.canFit)
+    }
+}
+```
+
+`DioramaReader` and its proxy are main-actor scoped; each reader hosts one diorama. Custom controls
+inside `.dioramaControls` can instead read the optional `@Environment(\.dioramaCamera)` proxy.
+`setCamera`, `fit`, and `reset` are actions: repeating an equal request still runs it. `cancel()`
+stops the active action at its current pose. Check `capabilities.canOrbit` and `canFit` before
+presenting actions; virtual-camera actions are unavailable in AR and visionOS volumes.
+
+A successful submission returns `.accepted(id)`, a receipt rather than a completion. Observe
+`activeRequest`, `lastResult`, or `result(for: id)` for `.completed(id, camera)`, `.cancelled(id)`,
+`.requiresGroundNavigation(id)`, `.constrainedFit(id)`, or `.invalidTarget(id)`. Invalid input returns
+`.invalidRequest`; an unavailable host returns `.unavailable`.
+
+Fit `.chunk`, `.bounds(geographicBounds)`, or `.contentIDs(["trail"])`. Give content stable string IDs
+with `.id("trail")` or a feature/primitive constructor's `id:`; IDs survive styling modifiers.
+Fits account for relief and cut walls, viewport aspect, safe areas, and scoped controls. Their
+`padding` adds screen points to `.dioramaCameraFitInsets(...)`. A fit never navigates the ground
+implicitly; handle `.requiresGroundNavigation` by issuing a separate ground request.
+
+Use `.dioramaCameraLimits(...)` to share distance, pitch, and focus constraints across gestures,
+bindings, and proxy actions. `DioramaCameraLimits(distance:pitchDegrees:focusPolicy:)` is failable;
+pitch limits are degrees in `0...90`, and focus policy is `.insideChunk` or `.unrestricted`.
+`.dioramaCameraTransition(.easeInOut(duration: 0.6))` configures declarative camera transitions;
+proxy actions accept their own transition. Motion uses elapsed time, smooth easing, and the shortest
+heading arc. Reduce Motion applies requests immediately.
 
 ## Configure prefetch separately
 

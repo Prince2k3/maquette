@@ -1,5 +1,7 @@
 import CoreLocation
 import Foundation
+import simd
+import RealityKit
 import SwiftUI
 import Testing
 @testable import Maquette
@@ -122,12 +124,250 @@ struct DioramaControlsTests {
         return model
     }
 
+    @Test("Camera actions advance by elapsed time and finish exactly once")
+    func timedCameraActions() async throws {
+        let model = await loadedModel(ControlsTilesProvider())
+        let start = Date(timeIntervalSinceReferenceDate: 100)
+        model.cameraClock = { start }
+        model.applyCameraPosition(.camera(DioramaCamera(heading: .degrees(359), pitch: .degrees(30), distance: 1)))
+        var events: [DioramaCameraChangeContext] = []
+        model.cameraObservation.action = DioramaCameraObservationAction(frequency: .continuous) { events.append($0) }
+        let proxy = DioramaCameraProxy(host: model.cameraHost)
+        guard case .accepted(let id) = proxy.setCamera(DioramaCamera(heading: .degrees(1), pitch: .zero, distance: 2),
+            transition: .easeInOut(duration: 2)) else { Issue.record("Expected camera action"); return }
+        #expect(model.cameraMotion != nil)
+        model.advanceAnimation(at: start.addingTimeInterval(0.5))
+        #expect(abs(model.resolvedCamera.heading.degrees - 359.3125) < 0.001)
+        #expect(events.allSatisfy { $0.phase == .changing })
+        model.advanceAnimation(at: start.addingTimeInterval(2))
+        #expect(model.cameraMotion == nil)
+        #expect(abs(model.resolvedCamera.pitch.degrees) < 0.001)
+        #expect(model.resolvedCamera.distance == 2)
+        #expect(events.filter { $0.phase == .ended }.count == 1)
+        #expect(proxy.result(for: id) == .completed(id, model.resolvedCamera))
+        model.advanceAnimation(at: start.addingTimeInterval(5))
+        #expect(events.filter { $0.phase == .ended }.count == 1)
+    }
+
+    @Test("Gesture cancellation and newer commands retain the actual current camera")
+    func cameraCancellationAndLatestRequest() async throws {
+        let model = await loadedModel(ControlsTilesProvider())
+        let start = Date(timeIntervalSinceReferenceDate: 100)
+        model.cameraClock = { start }
+        let proxy = DioramaCameraProxy(host: model.cameraHost)
+        guard case .accepted(let first) = proxy.setCamera(.init(heading: .degrees(100), pitch: .degrees(20), distance: 2), transition: .easeInOut(duration: 4)) else { Issue.record("Expected action"); return }
+        model.advanceAnimation(at: start.addingTimeInterval(1))
+        let partial = model.resolvedCamera
+        model.secondaryDrag(dx: 0, dy: 0)
+        #expect(proxy.result(for: first) == .cancelled(first))
+        #expect(model.resolvedCamera.heading == partial.heading)
+        #expect(model.resolvedCamera.distance == partial.distance)
+        model.endInteraction()
+        guard case .accepted(let second) = proxy.setCamera(.init(heading: .degrees(50), distance: 2), transition: .easeInOut(duration: 4)) else { Issue.record("Expected action"); return }
+        guard case .accepted(let third) = proxy.setCamera(.init(heading: .degrees(90), distance: 1)) else { Issue.record("Expected action"); return }
+        model.advanceAnimation(at: start.addingTimeInterval(10))
+        #expect(proxy.result(for: second) == .cancelled(second))
+        #expect(proxy.result(for: third) == .completed(third, model.resolvedCamera))
+        #expect(abs(model.resolvedCamera.heading.degrees - 90) < 0.001)
+    }
+
+    @Test("Camera limits, Reduce Motion, and tracking capabilities share one path")
+    func cameraConstraintsAndCapabilities() async throws {
+        let model = await loadedModel(ControlsTilesProvider())
+        model.configureCamera(limits: DioramaCameraLimits(distance: 0.7...1, pitchDegrees: 0...30)!, transition: .immediate, reduceMotion: true)
+        let proxy = DioramaCameraProxy(host: model.cameraHost)
+        guard case .accepted(let id) = proxy.setCamera(.init(pitch: .degrees(80), distance: 10), transition: .easeInOut(duration: 20)) else { Issue.record("Expected action"); return }
+        #expect(model.cameraMotion == nil)
+        #expect(abs(model.resolvedCamera.pitch.degrees - 30) < 0.001)
+        #expect(model.resolvedCamera.distance == 1)
+        #expect(proxy.result(for: id) == .completed(id, model.resolvedCamera))
+        model.arPlacementActive = true
+        #expect(!proxy.capabilities.canOrbit)
+        #expect(proxy.setCamera(.init()) == .unavailable)
+        let before = model.resolvedCamera
+        model.applyCameraPosition(.camera(.init(heading: .degrees(90))))
+        #expect(model.resolvedCamera == before)
+    }
+
+    @Test("Fits report outside ground and missing IDs without reloading terrain")
+    func cameraFitResultsAndContentIDs() async throws {
+        let provider = ControlsTilesProvider()
+        let model = await loadedModel(provider)
+        let proxy = DioramaCameraProxy(host: model.cameraHost)
+        let generation = model.store.loadGeneration
+        guard case .accepted(let outside) = proxy.fit(.bounds(.init(west: -113, south: 37, east: -112.9, north: 37.1))) else { Issue.record("Expected fit"); return }
+        await model.cameraFitTask?.value
+        #expect(proxy.result(for: outside) == .requiresGroundNavigation(outside))
+        guard case .accepted(let missing) = proxy.fit(.contentIDs(["missing"])) else { Issue.record("Expected fit"); return }
+        await model.cameraFitTask?.value
+        #expect(proxy.result(for: missing) == .invalidTarget(missing))
+        model.setContent(DioramaContentGroup { DioramaMarker("Fit", coordinate: Self.home.center, id: "fit") })
+        guard case .accepted(let fit) = proxy.fit(.contentIDs(["fit"])) else { Issue.record("Expected fit"); return }
+        await model.cameraFitTask?.value
+        #expect(proxy.result(for: fit) == .completed(fit, model.resolvedCamera))
+        #expect(model.store.loadGeneration == generation)
+        #expect(await provider.requestCount() == 1)
+    }
+
+    @Test("A programmatic camera settles a locked globe and releases route ownership")
+    func cameraOwnershipArbitration() async {
+        let model = await loadedModel(ControlsTilesProvider())
+        model.cameraController.enterRouteFollowMode(routePoints: [.zero, .init(0.1, 0.1, 0.1)], initialDirection: .init(1, 0))
+        model.transition.style = GlobeTransitionStyle()
+        _ = model.transition.absorb(zoomDelta: -1, cameraDistance: 1, cameraElevation: 0.5, chunkHasRoom: false)
+        #expect(model.isInteractionLocked)
+        model.updateCameraCapabilities()
+        _ = DioramaCameraProxy(host: model.cameraHost).setCamera(.init(heading: .degrees(45), distance: 1))
+        #expect(!model.isInteractionLocked)
+        #expect(!model.transition.isShowingGlobe)
+        #expect(model.cameraController.followMode == .orbit)
+        #expect(abs(model.resolvedCamera.heading.degrees - 45) < 0.001)
+    }
+
+    @Test("Observer reentrancy cannot finish a newer timed camera action")
+    func cameraObserverLatestRequestWins() async {
+        let model = await loadedModel(ControlsTilesProvider())
+        let start = Date(timeIntervalSinceReferenceDate: 100)
+        model.cameraClock = { start }
+        let proxy = DioramaCameraProxy(host: model.cameraHost)
+        var newer: DioramaCameraRequestID?
+        var submitted = false
+        model.cameraObservation.action = DioramaCameraObservationAction(frequency: .continuous) { context in
+            if !submitted, context.phase == .changing, abs(context.camera.heading.degrees - 90) < 0.001 {
+                submitted = true
+                if case .accepted(let id) = proxy.setCamera(.init(heading: .degrees(180), distance: 2), transition: .easeInOut(duration: 2)) { newer = id }
+            }
+        }
+        defer { model.cameraObservation.action = nil }
+        guard case .accepted(let old) = proxy.setCamera(.init(heading: .degrees(90), distance: 1), transition: .easeInOut(duration: 1)) else { Issue.record("Expected action"); return }
+        model.advanceAnimation(at: start.addingTimeInterval(1))
+        #expect(proxy.result(for: old) == .cancelled(old))
+        #expect(model.cameraMotion?.request == newer)
+        model.advanceAnimation(at: start.addingTimeInterval(2))
+        if let newer { #expect(proxy.result(for: newer) == .completed(newer, model.resolvedCamera)) }
+        else { Issue.record("Observer did not submit its action") }
+    }
+
+    @Test("Timed startup focus resolves after loading and stays geographic on pan and reload")
+    func cameraFocusTracksLiveProjection() async throws {
+        let provider = ControlsTilesProvider()
+        let model = OrbitDioramaModel(configuration: configuration(provider), content: nil)
+        let start = Date(timeIntervalSinceReferenceDate: 100)
+        model.cameraClock = { start }
+        model.syncNavigation(binding: nil, action: nil)
+        model.configureCamera(limits: .default, transition: .easeInOut(duration: 10), reduceMotion: false)
+        let coordinate = Coordinate(latitude: 36.001, longitude: -112, altitude: 100)
+        model.initialCamera = .camera(.init(distance: 1, focus: .coordinate(coordinate, altitude: .absolute)))
+        let load = Task { await model.initialLoad(effect: .none) }
+        await provider.waitForRequests(1)
+        await provider.succeed(0)
+        await load.value
+        let expected = try #require(model.store.projection?.position(for: coordinate, altitude: .absolute))
+        #expect(model.cameraMotion?.to.target == expected)
+        model.advanceAnimation(at: start.addingTimeInterval(10))
+        #expect(simd_distance(model.cameraController.target, expected) < 0.00001)
+        model.store.setPanOffset(.init(0.05, 0))
+        let panned = try #require(model.store.projection?.position(for: coordinate, altitude: .absolute))
+        #expect(simd_distance(model.cameraController.target, panned) < 0.00001)
+        var changed = model.store.configuration
+        changed.radiusMeters = 500
+        let reload = Task { await model.store.reload(configuration: changed) }
+        await provider.waitForRequests(2)
+        await provider.succeed(1)
+        await reload.value
+        let reloaded = try #require(model.store.projection?.position(for: coordinate, altitude: .absolute))
+        #expect(simd_distance(model.cameraController.target, reloaded) < 0.00001)
+    }
+
+    @Test("Known off-ground markers request navigation instead of becoming missing targets")
+    func offGroundMarkerFitRetainsSourceIdentity() async {
+        let model = await loadedModel(ControlsTilesProvider())
+        model.setContent(DioramaContentGroup { DioramaMarker("Outside", coordinate: Coordinate(latitude: 37, longitude: -112), id: "outside") })
+        let proxy = DioramaCameraProxy(host: model.cameraHost)
+        guard case .accepted(let id) = proxy.fit(.contentIDs(["outside"])) else { Issue.record("Expected fit"); return }
+        await model.cameraFitTask?.value
+        #expect(proxy.result(for: id) == .requiresGroundNavigation(id))
+    }
+
+    @Test("AR entry rejects camera commands submitted by cancellation observers")
+    func arCancellationObserverCannotReclaimCamera() async {
+        let model = await loadedModel(ControlsTilesProvider())
+        let proxy = DioramaCameraProxy(host: model.cameraHost)
+        var attempted: DioramaCameraActionResult?
+        model.cameraObservation.action = DioramaCameraObservationAction(frequency: .continuous) { context in
+            if context.phase == .cancelled {
+                attempted = proxy.setCamera(.init(distance: 3), transition: .easeInOut(duration: 2))
+            }
+        }
+        defer { model.cameraObservation.action = nil }
+        _ = proxy.setCamera(.init(distance: 2), transition: .easeInOut(duration: 2))
+        model.arPlacementActive = true
+        #expect(attempted == .unavailable)
+        #expect(model.cameraMotion == nil)
+    }
+
+    @Test("Chunk fitting includes relief, walls, safe areas, and scoped control insets")
+    func cameraFitIncludesEntireSolidAndInsets() async throws {
+        let model = await loadedModel(ControlsTilesProvider())
+        let root = try #require(model.store.dioramaEntity as? DioramaEntity)
+        let (fixture, _) = try OverlayRenderFixture.make()
+        root.setTerrain(try #require(fixture.terrain))
+        model.viewSize = .init(width: 400, height: 800)
+        model.cameraSafeAreaInsets = .init(top: 20, leading: 0, bottom: 30, trailing: 0)
+        model.cameraControlInsets = .init(top: 0, leading: 60, bottom: 0, trailing: 0)
+        model.cameraFitInsets = .init(top: 0, leading: 0, bottom: 0, trailing: 40)
+        model.configureCamera(limits: DioramaCameraLimits(distance: 0.1...20)!, transition: .immediate, reduceMotion: false)
+        let proxy = DioramaCameraProxy(host: model.cameraHost)
+        guard case .accepted(let id) = proxy.fit(.chunk, padding: .init(top: 10, leading: 10, bottom: 10, trailing: 10)) else { Issue.record("Expected fit"); return }
+        await model.cameraFitTask?.value
+        #expect(proxy.result(for: id) == .completed(id, model.resolvedCamera))
+        for buffer in [root.terrain?.surfaceBuffers, root.terrain?.wallBuffers, root.terrain?.bottomBuffers].compactMap({ $0 }) {
+            for p in buffer.positions {
+                let screen = try #require(DioramaCameraGeometry.projectedPoint(p, pose: model.cameraPose, viewport: model.viewSize))
+                #expect(screen.x >= 70 - 0.05 && screen.x <= 350 + 0.05)
+                #expect(screen.y >= 30 - 0.05 && screen.y <= 760 + 0.05)
+            }
+        }
+    }
+
+    @Test("Initial camera ownership is consumed once across view reappearance")
+    func initialCameraDoesNotResetOnReappearance() async {
+        let provider = ControlsTilesProvider()
+        let model = await loadedModel(provider)
+        model.applyCameraPosition(.camera(.init(heading: .degrees(110), distance: 2)))
+        model.publishCameraPosition()
+        let before = model.resolvedCamera
+        model.initialCamera = .camera(.init(heading: .degrees(20), distance: 1))
+        await model.initialLoad(effect: .none)
+        #expect(model.resolvedCamera == before)
+        #expect(await provider.requestCount() == 1)
+    }
+
+    @Test("Looping playback does not retain camera ownership after a gesture")
+    func loopingRouteReleasesCameraObservation() async {
+        let model = await loadedModel(ControlsTilesProvider())
+        let controller = RoutePreviewController(loops: true)
+        model.routePreviewController = controller
+        controller.play()
+        model.syncNavigation(binding: nil, action: nil)
+        model.cameraController.enterRouteFollowMode(routePoints: [.zero, .init(0.1, 0, 0.1)], initialDirection: .init(1, 0))
+        var bound = DioramaCameraPosition.automatic
+        model.positionBinding = Binding(get: { bound }, set: { bound = $0 })
+        model.secondaryDrag(dx: 10, dy: 0)
+        model.endInteraction()
+        #expect(model.cameraController.followMode == .orbit)
+        #expect(model.cameraObservation.isTransitioning?() == false)
+        #expect(bound.positionedByUser)
+        model.advanceAnimation(at: Date())
+        #expect(bound.positionedByUser)
+    }
+
     @Test("A scoped compass changes only its host and publishes a programmatic camera")
     func compassTargetsHost() async {
         let provider = ControlsTilesProvider()
         let model = await loadedModel(provider)
         let other = OrbitDioramaModel(configuration: configuration(ControlsTilesProvider()), content: nil)
-        let homeCamera = DioramaCamera(azimuth: .degrees(65), elevation: .degrees(35), distance: 1.4)
+        let homeCamera = DioramaCamera(heading: .degrees(-(65)), pitch: .degrees(90 - (35)), distance: 1.4)
         model.applyCameraPosition(.camera(homeCamera))
         var bound = DioramaCameraPosition.camera(homeCamera)
         model.positionBinding = Binding(get: { bound }, set: { bound = $0 })
@@ -137,8 +377,8 @@ struct DioramaControlsTests {
         let otherBefore = other.resolvedCamera
         let generation = model.store.loadGeneration
         model.controlState.faceNorth()
-        #expect(model.resolvedCamera.azimuth == .zero)
-        #expect(model.resolvedCamera.elevation == before.elevation)
+        #expect(model.resolvedCamera.heading == .zero)
+        #expect(model.resolvedCamera.pitch == before.pitch)
         #expect(model.resolvedCamera.distance == before.distance)
         #expect(other.resolvedCamera == otherBefore)
         #expect(!bound.positionedByUser)
@@ -158,8 +398,8 @@ struct DioramaControlsTests {
         await provider.waitForRequests(2)
         await provider.succeed(1)
         await completion.wait()
-        #expect(abs(model.resolvedCamera.azimuth.degrees - 65) < 0.001)
-        #expect(model.resolvedCamera.elevation == before.elevation)
+        #expect(abs(model.resolvedCamera.heading.degrees - 295) < 0.001)
+        #expect(model.resolvedCamera.pitch == before.pitch)
         #expect(model.resolvedCamera.distance == before.distance)
         #expect(!bound.positionedByUser)
     }

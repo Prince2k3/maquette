@@ -1,21 +1,32 @@
 import Foundation
 import SwiftUI
 
-/// A resolved orbit camera: where it stands around the diorama. The parallel of MapKit's
-/// `MapCamera`.
-public struct DioramaCamera: Sendable, Equatable {
-    /// The orbit angle around the diorama's vertical axis.
-    public var azimuth: Angle
-    /// The tilt above the horizon. Zero looks at the chunk edge-on; 90° looks straight down.
-    public var elevation: Angle
-    /// Distance from the orbit target, in scene meters.
-    public var distance: Float
+/// The geographic point the orbit camera looks at.
+public enum DioramaCameraFocus: Sendable, Equatable {
+    /// The center of the current chunk.
+    case chunkCenter
+    /// A geographic location resolved through the active terrain projection.
+    case coordinate(Coordinate, altitude: AltitudeReference)
+}
 
-    /// Creates a camera.
-    public init(azimuth: Angle = .zero, elevation: Angle = .degrees(26), distance: Float = 1.2) {
-        self.azimuth = azimuth
-        self.elevation = elevation
+/// A resolved orbit camera, independent of the geographic ground region.
+public struct DioramaCamera: Sendable, Equatable {
+    /// Clockwise from geographic north along the viewing direction.
+    public var heading: Angle
+    /// Angle from straight down: zero is overhead and 90 degrees is horizontal.
+    public var pitch: Angle
+    /// Distance from the focus in scene meters.
+    public var distance: Float
+    /// The target, reprojected when the ground changes.
+    public var focus: DioramaCameraFocus
+
+    /// Creates an orbit camera. Invalid values are rejected when requested by the host.
+    public init(heading: Angle = .zero, pitch: Angle = .degrees(64), distance: Float = 1.2,
+                focus: DioramaCameraFocus = .chunkCenter) {
+        self.heading = heading
+        self.pitch = pitch
         self.distance = distance
+        self.focus = focus
     }
 }
 
@@ -49,8 +60,8 @@ public struct DioramaCameraPosition: Sendable, Equatable {
         DioramaCameraPosition(request: .camera(camera), positionedByUser: false)
     }
 
-    /// The resolved camera, populated once the scene is live. `nil` under ``automatic`` until the
-    /// first gesture writes back, and always `nil` on visionOS.
+    /// The requested or resolved camera. Automatic framing writes a resolved value when loaded.
+    /// A visionOS volume leaves application values untouched and does not resolve a virtual camera.
     public var camera: DioramaCamera? {
         if case .camera(let camera) = request { return camera }
         return nil
@@ -87,10 +98,17 @@ extension View {
 
 /// A resolved orbit-camera update and the phase and source of its movement.
 public struct DioramaCameraChangeContext: Sendable, Equatable {
+    /// Actual camera movement lifecycle, including cancellation at the current pose.
+    public enum Phase: Sendable {
+        case changing
+        case ended
+        case cancelled
+    }
+
     /// The orbit camera after the change was applied.
     public let camera: DioramaCamera
     /// Whether camera movement is ongoing or has settled.
-    public let phase: DioramaNavigationContext.Phase
+    public let phase: Phase
     /// What initiated the camera movement.
     public let origin: DioramaNavigationContext.Origin
 }

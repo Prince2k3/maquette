@@ -5,7 +5,7 @@
 title: Migrating to the SwiftUI API
 tags: [maquette, migration, swiftui]
 created: 2026-10-18
-updated: 2026-10-18
+updated: 2026-10-20
 status: active
 type: permanent
 ---
@@ -25,7 +25,7 @@ Vault context: [[README]] and [[mapkit-swiftui-api-plan]]. For package documenta
 |---|---|---|
 | `Map(initialPosition:)` | `DioramaView(initialRegion:)` | Initial geography; subsequent navigation belongs to the diorama. |
 | `Map(position:)` | `DioramaView(groundPosition:)` | App-controlled geographic center and absolute radius. |
-| `MapCameraPosition` | `DioramaCameraPosition` with `position:` | Orbit around the physical chunk; geography is a separate ground binding. |
+| `MapCameraPosition` | `DioramaCameraPosition` with `cameraPosition:` | Orbit around the physical chunk; geography is a separate ground binding. |
 | `Marker`, `MapPolyline`, `MapContent` | `DioramaMarker`, `DioramaPolyline`, `DioramaContent` | Content in a builder, including reusable `body` declarations. |
 | `ForEach` and `.tag` | `ForEach` and `.tag` | Stable collection identity and typed selection have separate jobs. |
 | `.mapStyle` | `.dioramaStyle` | Changes the substrate and can reload it. |
@@ -108,7 +108,7 @@ Never`; migrate them when composition makes their implementation clearer.
 
 ## Choose who owns geography
 
-`position:` continues to mean orbit-camera position. It does not recenter the terrain. Select the
+Rename the old `position:` camera argument to `cameraPosition:`. It still means orbit-camera position. It does not recenter the terrain. Select the
 initializer that matches your geographic ownership:
 
 | Initializer | Ownership and subsequent changes |
@@ -123,7 +123,7 @@ For app-controlled recentering, replace a changing `region:` input with a ground
 @State private var ground = DioramaGroundPosition(region: canyonRegion)
 @State private var orbit: DioramaCameraPosition = .automatic
 
-DioramaView(groundPosition: $ground, position: $orbit)
+DioramaView(groundPosition: $ground, cameraPosition: $orbit)
     .onDioramaNavigationChange(frequency: .onEnd) { context in
         saveRegion(context.position.region)
     }
@@ -163,7 +163,38 @@ restyle the chunk already loaded. Effect changes still perform rendering work, b
 a new substrate. Content changes are applied in place; buildings visibility can toggle without
 refetching the substrate.
 
-## Observe settled camera movement
+## Migrate camera values and actions
+
+Replace camera azimuth/elevation values with `heading` and `pitch`, both SwiftUI `Angle` values.
+The equivalent pose is `heading = -oldAzimuth` and `pitch = .radians(.pi / 2 - oldElevation)`.
+Heading is clockwise from north; pitch measures from overhead (0 degrees) toward horizontal
+(90 degrees). Distance remains scene meters, distinct from geographic radius.
+
+Choose `initialCamera:` for a startup camera or `cameraPosition:` for controlled state; they cannot
+be supplied together. The controlled binding retains gesture read-back. Camera focus defaults to
+`.chunkCenter`; `.coordinate(coordinate, altitude: .clampToGround)` follows the current projection
+as the ground changes.
+
+Use ``DioramaReader`` for scoped imperative commands, or read `@Environment(\.dioramaCamera)` inside
+`.dioramaControls`. Each reader owns one host. Proxy commands run repeatedly even for equal values;
+`setCamera`, `fit`, `reset`, and `cancel` therefore suit buttons and repeated app actions. An
+`.accepted(id)` result is a receipt: inspect `result(for:)` or `lastResult` for completion,
+cancellation, invalid targets, constrained fits, or a required ground navigation. A camera fit
+never changes ground geography implicitly.
+
+Fits support `.chunk`, `.bounds(...)`, and `.contentIDs(["trail"])`. Attach stable string fit IDs
+with `.id("trail")` or the content constructor's `id:`. Styling modifiers preserve them. Fitting
+uses actual relief and walls, aspect, safe areas, scoped control occlusion, and point padding.
+Configure shared gesture/programmatic constraints with `.dioramaCameraLimits(...)`; its failable
+value initializer accepts scene-meter distance ranges, pitch degrees, and `.insideChunk` or
+`.unrestricted` focus policy. `.dioramaCameraFitInsets(...)` supplies persistent point insets.
+
+Use `.dioramaCameraTransition(.easeInOut(duration: 0.6))` for declarative transitions and the proxy's
+`transition:` argument for actions. Transitions use elapsed time and the shortest heading arc;
+Reduce Motion makes them immediate. Check proxy capabilities: orbit and fit actions are unavailable
+in AR and visionOS volumes. Ground navigation retains its existing behavior.
+
+## Observe camera action boundaries
 
 The original callback continues to receive a camera:
 
@@ -182,8 +213,10 @@ Supply a frequency to receive the richer context:
 }
 ```
 
-`.continuous` reports applied changes while moving and an ended update; `.onEnd` waits for input,
-pending pan samples, and transitions to settle. Use geographic navigation observation when you
+Camera context has its own `.changing`, `.ended`, and `.cancelled` phases. `.continuous` reports
+applied poses and a terminal update; `.onEnd` reports completion or cancellation of the actual
+gesture or programmatic action, rather than waiting on a generic settle timer. Origins retain
+their existing meaning. Use geographic navigation observation when you
 need center and radius. A visionOS volume has no orbit camera: camera bindings are accepted as
 no-ops, camera callbacks do not fire, and navigation contexts have `camera == nil`.
 
@@ -277,8 +310,9 @@ These are checks to perform before release, not a claim of completed device veri
 
 - Compile representative consumer examples with plain `import Maquette`, including old items-only
   conformers, String selection, typed tags, `ForEach`, and both camera callback forms.
-- Run semantic tests for identity, modifier precedence, provider reload equality, and geographic
-  requests versus gesture read-back.
+- Run semantic tests for identity, modifier precedence, provider reload equality, geographic
+  requests versus gesture read-back, camera geometry, fitting, constraints, cancellation,
+  supersession, transition timing, and Reduce Motion.
 - On iOS/iPadOS, verify drag, multi-touch orbit, pinch, selection taps, and globe return with the
   new bindings; verify AR placement and return from AR on a supported physical device.
 - On macOS, verify mouse drag, option-drag, trackpad pinch, and scroll zoom.
@@ -286,7 +320,9 @@ These are checks to perform before release, not a claim of completed device veri
   callbacks. The user moves physically around the volume.
 - Verify custom loading/retry/hiding with success and failure, while source attribution remains
   visible. Check automatic pan and explicit zero-margin compatibility separately.
-- Put two dioramas on screen and verify controls affect only their own host. Check compass
+- Put two dioramas on screen and verify reader proxies and controls affect only their own host.
+  Verify fits across aspect ratios, safe areas, control occlusion, relief, and content IDs. Check
+  repeated equal camera actions, mid-transition cancellation, and projection changes. Check compass
   visibility in AR, volumes, globe, and route-follow mode; verify reset home behavior after app
   requests, gestures, globe return, and route playback.
 

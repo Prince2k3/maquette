@@ -206,7 +206,7 @@ struct DioramaNavigationTests {
         await load(store, provider: provider)
         let controller = DioramaNavigationController()
         let completion = NavigationCompletion()
-        let camera = DioramaCamera(azimuth: .degrees(25), elevation: .degrees(45), distance: 1.5)
+        let camera = DioramaCamera(heading: .degrees(-(25)), pitch: .degrees(90 - (45)), distance: 1.5)
         controller.camera = { camera }
         var contexts: [DioramaNavigationContext] = []
         controller.action = DioramaNavigationAction(frequency: .continuous, action: {
@@ -268,8 +268,8 @@ struct DioramaNavigationTests {
             contexts.append($0)
             completion.finish()
         })
-        let first = DioramaCamera(azimuth: .degrees(10), elevation: .degrees(45), distance: 1.5)
-        let final = DioramaCamera(azimuth: .degrees(20), elevation: .degrees(45), distance: 1.5)
+        let first = DioramaCamera(heading: .degrees(-(10)), pitch: .degrees(90 - (45)), distance: 1.5)
+        let final = DioramaCamera(heading: .degrees(-(20)), pitch: .degrees(90 - (45)), distance: 1.5)
         observation.began()
         observation.changed(first, origin: .userInteraction)
         observation.changed(final, origin: .userInteraction)
@@ -295,7 +295,7 @@ struct DioramaNavigationTests {
             contexts.append($0)
             if $0.phase == .ended { completion.finish() }
         })
-        let camera = DioramaCamera(azimuth: .degrees(10), elevation: .degrees(45), distance: 1.5)
+        let camera = DioramaCamera(heading: .degrees(-(10)), pitch: .degrees(90 - (45)), distance: 1.5)
         observation.changed(camera, origin: .programmatic)
         observation.changed(camera, origin: .programmatic)
         #expect(contexts.count == 1)
@@ -367,8 +367,8 @@ struct DioramaNavigationTests {
             if contexts.count == 1 { firstCompletion.finish() }
             if contexts.count == 2 { secondCompletion.finish() }
         })
-        let start = DioramaCamera(azimuth: .degrees(10), elevation: .degrees(45), distance: 1.5)
-        let away = DioramaCamera(azimuth: .degrees(20), elevation: .degrees(45), distance: 1.5)
+        let start = DioramaCamera(heading: .degrees(-(10)), pitch: .degrees(90 - (45)), distance: 1.5)
+        let away = DioramaCamera(heading: .degrees(-(20)), pitch: .degrees(90 - (45)), distance: 1.5)
         observation.began()
         observation.changed(start, origin: .userInteraction)
         observation.ended()

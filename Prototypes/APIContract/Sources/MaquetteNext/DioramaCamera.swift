@@ -20,10 +20,9 @@ public struct DioramaCamera: Sendable, Equatable {
         self.heading = heading; self.pitch = pitch; self.distance = distance; self.focus = focus
     }
 
-    /// The existing orbit azimuth points from target to camera, opposite the viewing bearing.
-    public init(legacy camera: Maquette.DioramaCamera) {
-        self.init(heading: .radians(-camera.azimuth.radians),
-                  pitch: .degrees(90 - camera.elevation.degrees), distance: camera.distance)
+    /// Copies the shipping heading/pitch vocabulary into this independent contract prototype.
+    public init(current camera: Maquette.DioramaCamera) {
+        self.init(heading: camera.heading, pitch: camera.pitch, distance: camera.distance)
     }
 }
 

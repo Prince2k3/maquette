@@ -27,26 +27,26 @@ struct CameraContractTests {
 
     @Test func legacyAnglesPreserveViewingDirection() {
         for azimuth in [0.0, 90, 180, 270] {
-            let legacy = Maquette.DioramaCamera(azimuth: .degrees(azimuth), elevation: .degrees(26), distance: 2)
-            let camera = MaquetteNext.DioramaCamera(legacy: legacy)
+            let legacy = Maquette.DioramaCamera(heading: .degrees(-azimuth), pitch: .degrees(64), distance: 2)
+            let camera = MaquetteNext.DioramaCamera(current: legacy)
             #expect(abs(camera.pitch.degrees - 64) < 0.0001)
             // Existing forward is (-sin(azimuth), -cos(azimuth)) in east/south axes.
-            #expect(abs(sin(camera.heading.radians) + sin(legacy.azimuth.radians)) < 0.0001)
-            #expect(abs(-cos(camera.heading.radians) + cos(legacy.azimuth.radians)) < 0.0001)
+            #expect(abs(sin(camera.heading.radians) + sin(azimuth * .pi / 180)) < 0.0001)
+            #expect(abs(-cos(camera.heading.radians) + cos(azimuth * .pi / 180)) < 0.0001)
             #expect(camera.distance == 2)
         }
     }
 
     @Test func limitsRejectInvalidInputsAndPermitOverhead() {
-        #expect(DioramaCameraLimits(distance: 0.3...3, pitchDegrees: 0...80) != nil)
-        #expect(DioramaCameraLimits(distance: 0...3) == nil)
-        #expect(DioramaCameraLimits(distance: 1...Float.infinity) == nil)
-        #expect(DioramaCameraLimits(distance: 1...3, pitchDegrees: -1...80) == nil)
-        #expect(DioramaCameraLimits(distance: 1...3, pitchDegrees: 0...91) == nil)
+        #expect(MaquetteNext.DioramaCameraLimits(distance: 0.3...3, pitchDegrees: 0...80) != nil)
+        #expect(MaquetteNext.DioramaCameraLimits(distance: 0...3) == nil)
+        #expect(MaquetteNext.DioramaCameraLimits(distance: 1...Float.infinity) == nil)
+        #expect(MaquetteNext.DioramaCameraLimits(distance: 1...3, pitchDegrees: -1...80) == nil)
+        #expect(MaquetteNext.DioramaCameraLimits(distance: 1...3, pitchDegrees: 0...91) == nil)
     }
 
     @Test func disconnectedProxyDoesNotPretendRenderingSucceeded() {
-        let proxy = DioramaCameraProxy(host: CameraActionHost())
+        let proxy = MaquetteNext.DioramaCameraProxy(host: CameraActionHost())
         #expect(proxy.fit(.chunk) == .unavailable)
         #expect(proxy.setCamera(.init()) == .unavailable)
         #expect(proxy.reset() == .unavailable)
@@ -55,11 +55,11 @@ struct CameraContractTests {
     @Test func repeatedEqualActionsExecuteAndSupersededCompletionCannotFinishNewRequest() throws {
         let host = CameraActionHost()
         host.capabilities = .orbit
-        var commands: [DioramaCameraRequestID] = []
-        var cancelled: [DioramaCameraRequestID] = []
+        var commands: [MaquetteNext.DioramaCameraRequestID] = []
+        var cancelled: [MaquetteNext.DioramaCameraRequestID] = []
         host.receive = { id, _ in commands.append(id) }
         host.cancel = { cancelled.append($0) }
-        let proxy = DioramaCameraProxy(host: host)
+        let proxy = MaquetteNext.DioramaCameraProxy(host: host)
         guard case .accepted(let first) = proxy.fit(.chunk),
               case .accepted(let second) = proxy.fit(.chunk) else { Issue.record("Host refused fit"); return }
         #expect(first != second)
@@ -78,18 +78,18 @@ struct CameraContractTests {
         let a = CameraActionHost(), b = CameraActionHost()
         a.capabilities = .orbit
         a.receive = { _, _ in }
-        #expect(DioramaCameraProxy(host: b).fit(.chunk) == .unavailable)
-        _ = DioramaCameraProxy(host: a).fit(.chunk)
-        DioramaCameraProxy(host: b).cancel()
+        #expect(MaquetteNext.DioramaCameraProxy(host: b).fit(.chunk) == .unavailable)
+        _ = MaquetteNext.DioramaCameraProxy(host: a).fit(.chunk)
+        MaquetteNext.DioramaCameraProxy(host: b).cancel()
         #expect(a.activeRequest != nil)
         a.capabilities = .unavailable
-        #expect(DioramaCameraProxy(host: a).setCamera(.init()) == .unavailable)
+        #expect(MaquetteNext.DioramaCameraProxy(host: a).setCamera(.init()) == .unavailable)
     }
 
     @Test func invalidActionsDoNotInterruptCurrentAction() {
         let host = CameraActionHost()
         host.capabilities = .orbit; host.receive = { _, _ in }
-        let proxy = DioramaCameraProxy(host: host)
+        let proxy = MaquetteNext.DioramaCameraProxy(host: host)
         _ = proxy.fit(.chunk)
         let active = host.activeRequest
         #expect(proxy.fit(.chunk, transition: .easeInOut(duration: -.infinity)) == .invalidRequest)

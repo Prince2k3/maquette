@@ -33,7 +33,7 @@ struct CanyonView: View {
                 center: CLLocationCoordinate2D(latitude: 36.0544, longitude: -112.1401),
                 radius: 6000
             ),
-            position: $position,
+            cameraPosition: $position,
             selection: $selected
         ) {
             DioramaMarker("Yavapai Point",
@@ -126,7 +126,7 @@ rebuild overlay buffers. This does not establish a per-frame overlay performance
 
 Use `initialRegion:` for an initial place, `region:` for live region inputs, or `groundPosition:`
 when your app needs to drive and observe geographic navigation. The ground binding owns the center
-and absolute radius; the separate `position:` binding controls the orbit camera.
+and absolute radius; the separate `cameraPosition:` binding controls the orbit camera.
 
 ```swift
 @State private var ground = DioramaGroundPosition(region: canyonRegion)
@@ -152,8 +152,58 @@ reported when the return commits and its chunk arrives.
 Panning now works with the default interaction modes. `.dioramaLoadingPolicy(.automatic)` provisions
 a margin; `.prefetchMargin(0.8)` tunes it and `.prefetchMargin(0)` keeps a fixed chunk. Existing style
 `panRange` arguments still work. Camera observers can use
-`.onDioramaCameraChange(frequency: .onEnd)` for settled updates; the original camera-only closure
+`.onDioramaCameraChange(frequency: .onEnd)` for terminal updates; the original camera-only closure
 remains available.
+
+## Frame and drive the camera
+
+Use `initialCamera: .camera(...)` to seed an orbit once, or `cameraPosition: $camera` to drive it
+and receive gesture read-back. These are separate initializer overloads; choose one camera owner.
+`DioramaCamera.heading` is a SwiftUI `Angle` clockwise from north. `pitch` is zero overhead and
+90 degrees horizontal; `distance` is a `Float` in scene meters. The default focus is `.chunkCenter`.
+A `.coordinate(location, altitude: .clampToGround)` focus is resolved through the active projection
+and follows ground pan, zoom, and reload.
+
+For repeatable actions, scope a proxy to one diorama:
+
+```swift
+DioramaReader { proxy in
+    DioramaView(initialRegion: region, initialCamera: .camera(
+        DioramaCamera(heading: .degrees(20), pitch: .degrees(55), distance: 1.5)
+    ))
+    .dioramaControls {
+        Button("Fit terrain") {
+            proxy.fit(.chunk, padding: EdgeInsets(top: 24, leading: 24, bottom: 24, trailing: 24),
+                      transition: .easeInOut(duration: 0.6))
+        }
+        .disabled(!proxy.capabilities.canFit)
+    }
+}
+```
+
+`DioramaReader` and its proxy are main-actor scoped; each reader hosts one diorama. Custom controls
+inside `.dioramaControls` can instead read the optional `@Environment(\.dioramaCamera)` proxy.
+`setCamera`, `fit`, and `reset` are actions: repeating an equal request still runs it. `cancel()`
+stops the active action at its current pose. Check `capabilities.canOrbit` and `canFit` before
+presenting actions; virtual-camera actions are unavailable in AR and visionOS volumes.
+
+A successful submission returns `.accepted(id)`, a receipt rather than a completion. Observe
+`activeRequest`, `lastResult`, or `result(for: id)` for `.completed(id, camera)`, `.cancelled(id)`,
+`.requiresGroundNavigation(id)`, `.constrainedFit(id)`, or `.invalidTarget(id)`. Invalid input returns
+`.invalidRequest`; an unavailable host returns `.unavailable`.
+
+Fit `.chunk`, `.bounds(geographicBounds)`, or `.contentIDs(["trail"])`. Give content stable string IDs
+with `.id("trail")` or a feature/primitive constructor's `id:`; IDs survive styling modifiers.
+Fits account for relief and cut walls, viewport aspect, safe areas, and scoped controls. Their
+`padding` adds screen points to `.dioramaCameraFitInsets(...)`. A fit never navigates the ground
+implicitly; handle `.requiresGroundNavigation` by issuing a separate ground request.
+
+Use `.dioramaCameraLimits(...)` to share distance, pitch, and focus constraints across gestures,
+bindings, and proxy actions. `DioramaCameraLimits(distance:pitchDegrees:focusPolicy:)` is failable;
+pitch limits are degrees in `0...90`, and focus policy is `.insideChunk` or `.unrestricted`.
+`.dioramaCameraTransition(.easeInOut(duration: 0.6))` configures declarative camera transitions;
+proxy actions accept their own transition. Motion uses elapsed time, smooth easing, and the shortest
+heading arc. Reduce Motion applies requests immediately.
 
 ## Add diorama controls
 

@@ -21,6 +21,26 @@ final class OrbitDioramaModel {
     /// The handoff's shared mechanics; the model supplies the orbit-camera framing response.
     let handoff = GlobeHandoffConductor()
     private(set) var content: DioramaContentGroup?
+    let ownCameraHost = CameraActionHost()
+    var readerCameraHost: CameraActionHost?
+    var cameraHost: CameraActionHost { readerCameraHost ?? ownCameraHost }
+    var cameraLimits: DioramaCameraLimits = .default
+    var cameraTransition: DioramaCameraTransition = .immediate
+    var reduceMotion = false
+    var cameraFocus: DioramaCameraFocus = .chunkCenter
+    var usesAutomaticCamera = true
+    var initialCamera: DioramaCameraPosition = .automatic
+    private var consumedInitialCamera = false
+    var cameraMotion: OrbitCameraMotion?
+    var cameraFitTask: Task<Void, Never>?
+    var cameraRecoveryTask: Task<Void, Never>?
+    var cameraRecoveryRevision = 0
+    var cameraActionRevision = 0
+    var cameraSafeAreaInsets = EdgeInsets()
+    var cameraControlInsets = EdgeInsets()
+    var cameraFitInsets = EdgeInsets()
+    @ObservationIgnored var cameraClock: () -> Date = Date.init
+
 
     /// The transition, read and written through the conductor that owns it.
     var transition: GlobeTransition {
@@ -47,8 +67,8 @@ final class OrbitDioramaModel {
     /// ``applyCameraPosition(_:)``, and without remembering what was last written the write-back
     /// would re-apply itself. Single-direction sync — apply on change in, publish on gesture out.
     var positionBinding: Binding<DioramaCameraPosition>?
-    private var lastAppliedPosition: DioramaCameraPosition?
-    private var homeCamera: DioramaCamera?
+    var lastAppliedPosition: DioramaCameraPosition?
+    var homeCamera: DioramaCamera?
 
     /// The selection binding handed to `DioramaView`, written on marker taps.
     var selectionBinding: DioramaSelection?
@@ -66,7 +86,8 @@ final class OrbitDioramaModel {
     init(configuration: DioramaConfiguration, content: DioramaContentGroup?) {
         self.store = DioramaStore(configuration: configuration)
         self.content = content
-        self.homeCamera = resolvedCamera
+        bindCameraHost(nil)
+        configureCamera(limits: .default, transition: .immediate, reduceMotion: false)
         navigation.configureHome(DioramaRegion(center: configuration.center, radius: configuration.radiusMeters), followsInput: true)
     }
 
@@ -74,7 +95,11 @@ final class OrbitDioramaModel {
 
     /// The initial load: camera request, effect, terrain, content, framing.
     func initialLoad(effect: DioramaEffect) async {
-        applyCameraPosition(positionBinding?.wrappedValue)
+        if let position = positionBinding?.wrappedValue { applyCameraPosition(position) }
+        else if !consumedInitialCamera {
+            consumedInitialCamera = true
+            applyCameraPosition(initialCamera)
+        }
         chunkElevationLimits = cameraController.minElevation...cameraController.maxElevation
         store.setEffect(effect)
         let generation = store.loadGeneration
@@ -95,6 +120,8 @@ final class OrbitDioramaModel {
         DioramaLiveInputs.applyReloadKey(key, store: store, content: content,
             usesGeographicAnchor: navigation.preservesGround,
             beforeReload: { [weak self] in
+                self?.cancelCameraAction()
+                self?.cancelCameraRecovery()
                 self?.navigation.invalidateCommand()
                 self?.cancelHandoffForNavigation()
             }, latestContent: { [weak self] in self?.content }) { [weak self] in
@@ -123,28 +150,39 @@ final class OrbitDioramaModel {
         navigation.camera = { [weak self] in self?.resolvedCamera }
         navigation.isTransitioning = { [weak self] in self?.transition.isBusy ?? false }
         navigation.observe(store)
-        cameraObservation.isTransitioning = { [weak self] in self?.transition.isBusy ?? false }
+        cameraObservation.isTransitioning = { [weak self] in
+            guard let self else { return false }
+            return self.transition.isBusy || self.cameraMotion != nil
+                || (self.cameraController.followMode == .following
+                    && (self.routePreviewController?.playbackState == .playing || self.cameraController.routeFollowPhase == .exiting))
+        }
+        let navigationChange = store.groundDidChange
+        store.groundDidChange = { [weak self] in
+            navigationChange?()
+            self?.refreshCameraFocus()
+        }
     }
 
     var resolvedCamera: DioramaCamera {
-        DioramaCamera(azimuth: .radians(Double(cameraController.azimuth)),
-                      elevation: .radians(Double(cameraController.elevation)), distance: cameraController.distance)
+        DioramaCamera(heading: .degrees(DioramaCameraGeometry.normalizedHeading(-Double(cameraController.azimuth) * 180 / .pi)),
+                      pitch: .degrees(min(90, max(0, 90 - Double(cameraController.elevation) * 180 / .pi))),
+                      distance: cameraController.distance, focus: cameraFocus)
     }
 
     func applyGroundPosition(_ position: DioramaGroundPosition?) {
         let accepted = navigation.applyRequest(position, store: store, content: { [weak self] in self?.content }) { [weak self] in
             self?.frameLoadedChunk()
         }
-        if accepted { cancelHandoffForNavigation() }
+        if accepted { cancelCameraRecovery(); cancelCameraAction(); cancelHandoffForNavigation() }
     }
 
-    private func cancelHandoffForNavigation() {
+    func cancelHandoffForNavigation() {
         let departure = transition.isShowingGlobe || transition.isBusy ? transition.departureCamera : nil
         handoff.cancelRelocation()
         if let departure {
             let requested = positionBinding?.wrappedValue.camera
             cameraController.distance = requested?.distance ?? departure.distance
-            cameraController.elevation = requested.map { Float($0.elevation.radians) } ?? departure.elevation
+            cameraController.elevation = requested.map { Float(.pi / 2 - $0.pitch.radians) } ?? departure.elevation
         }
         applyTransitionFraming()
         applyTransitionVisibility()
@@ -164,7 +202,7 @@ final class OrbitDioramaModel {
             && cameraController.followMode == .orbit
         return DioramaControlState(
             canReset: canResetFromControls,
-            heading: hasOrbit ? resolvedCamera.azimuth : nil,
+            heading: hasOrbit ? resolvedCamera.heading : nil,
             canFaceNorth: hasOrbit && store.loadingState == .loaded && !navigation.isApplyingRequest,
             reset: { [weak self] in self?.resetFromControls() },
             faceNorth: { [weak self] in self?.faceNorthFromControls() }
@@ -192,7 +230,7 @@ final class OrbitDioramaModel {
     func faceNorthFromControls() {
         guard controlState.canFaceNorth else { return }
         var camera = resolvedCamera
-        camera.azimuth = .zero
+        camera.heading = .zero
         setControlCamera(camera)
     }
 
@@ -209,44 +247,36 @@ final class OrbitDioramaModel {
     /// Applies an incoming camera request, once per distinct value.
     func applyCameraPosition(_ position: DioramaCameraPosition?, setsHome: Bool = true, force: Bool = false) {
         guard let position, force || position != lastAppliedPosition else { return }
+        if let camera = position.camera, !camera.isValid { return }
         lastAppliedPosition = position
+        guard !arPlacementActive else { return }
+        let revision = cameraActionRevision
+        cancelCameraAction()
+        guard cameraActionRevision == revision + 1 else { return }
+        settleCameraOwnership()
         switch position.request {
         case .automatic:
+            usesAutomaticCamera = true
+            if setsHome { homeCamera = nil }
             frameLoadedChunk()
         case .camera(let camera):
-            cameraController.azimuth = Float(camera.azimuth.radians)
-            cameraController.elevation = min(
-                max(Float(camera.elevation.radians), cameraController.minElevation),
-                cameraController.maxElevation
-            )
-            cameraController.distance = min(
-                max(camera.distance, cameraController.minDistance),
-                cameraController.maxDistance
-            )
+            usesAutomaticCamera = false
+            guard let pose = cameraPose(for: camera, permitsPendingProjection: true) else {
+                writeCameraReadback(user: false)
+                return
+            }
+            if setsHome, !position.positionedByUser { homeCamera = camera }
+            moveCamera(to: pose, focus: camera.focus, transition: cameraTransition, request: nil)
         }
-        if setsHome, !position.positionedByUser { homeCamera = resolvedCamera }
-        cameraChangeAction?.action(resolvedCamera)
-        cameraObservation.changed(resolvedCamera, origin: .programmatic)
     }
 
-    /// Publishes the camera a gesture just moved: to the binding, and to the observation hook.
-    ///
-    /// Called from gesture intents only — programmatic moves (the transition's framing, a route
-    /// follow) are not the user positioning the camera, and `positionedByUser` should mean what
-    /// it says.
+    /// Publishes gesture read-back without treating it as a fresh application request.
     func publishCameraPosition() {
-        let camera = DioramaCamera(
-            azimuth: .radians(Double(cameraController.azimuth)),
-            elevation: .radians(Double(cameraController.elevation)),
-            distance: cameraController.distance
-        )
-        cameraChangeAction?.action(camera)
-        cameraObservation.changed(camera, origin: .userInteraction)
-        guard let positionBinding else { return }
-        let position = DioramaCameraPosition.userPositioned(camera)
-        // Remembered as applied before writing, so the binding's own onChange does not re-apply it.
-        lastAppliedPosition = position
-        positionBinding.wrappedValue = position
+        usesAutomaticCamera = false
+        constrainCamera()
+        writeCameraReadback(user: true)
+        cameraChangeAction?.action(resolvedCamera)
+        cameraObservation.changed(resolvedCamera, origin: .userInteraction)
     }
 
     // MARK: - Selection
@@ -263,6 +293,8 @@ final class OrbitDioramaModel {
 
     /// The overlay's retry: tear down and load again.
     func reload() {
+        cancelCameraRecovery()
+        cancelCameraAction()
         store.reset()
         Task {
             await store.load()
@@ -291,7 +323,9 @@ final class OrbitDioramaModel {
         guard !transition.isShowingGlobe else { return }
         // This is also the transition's framing at progress 0, and the two disagreeing is a jump
         // on the first step.
-        cameraController.target.y = chunkCenterY * entityScale
+        if usesAutomaticCamera { frameAutomaticCamera() }
+        else { refreshCameraFocus() }
+        updateCameraCapabilities()
     }
 
     /// Pulls the orbit's furthest distance in to the chunk, so zooming out reaches the world.
@@ -300,11 +334,12 @@ final class OrbitDioramaModel {
     /// ground zoom, so a fixed diorama never leaves and narrowing its range would take zoom away
     /// from a camera that has nowhere else to go.
     func applyOrbitLimit() {
-        guard globeStyle != nil, store.canZoomGround else { return }
-        let extent = store.configuration.horizontalExtent
-        cameraController.maxDistance = transition.orbitLimit(
-            chunkExtent: max(extent.x, extent.y) * entityScale
-        )
+        guard globeStyle != nil, store.canZoomGround else {
+            cameraController.maxDistance = cameraLimits.distance.upperBound
+            return
+        }
+        // Globe travel has its own framing range; ordinary orbit retains caller constraints.
+        cameraController.maxDistance = cameraLimits.distance.upperBound
     }
 
     /// Suppresses the loading spinner while the globe is carrying the scene.
@@ -318,7 +353,17 @@ final class OrbitDioramaModel {
     }
 
     /// Whether the diorama is currently parented to a real-world plane anchor (iOS AR placement).
-    var arPlacementActive = false
+    var arPlacementActive = false {
+        didSet {
+            updateCameraCapabilities()
+            if arPlacementActive {
+                cancelCameraAction()
+                cameraController.stopFollowingAtCurrentPose()
+            }
+            updateCameraCapabilities()
+            if !arPlacementActive { applyCameraPosition(positionBinding?.wrappedValue, setsHome: false, force: true) }
+        }
+    }
 
     /// Scale applied to the diorama entity. Always 1: perspective projection owns window size.
     ///
@@ -341,6 +386,7 @@ final class OrbitDioramaModel {
         // it is defined in diorama meters and the chunk it has to line up with is scaled.
         store.globe?.scale = SIMD3<Float>(repeating: entityScale)
         applyOrbitLimit()
+        if usesAutomaticCamera, !transition.isShowingGlobe { frameAutomaticCamera() }
         // A resize while settled on the globe changes the view's aspect, and with it the distance
         // that fits the whole world in frame — nothing else re-frames there, because the timeline
         // is paused and no leg is running.
@@ -355,23 +401,33 @@ final class OrbitDioramaModel {
     var needsAnimation: Bool {
         routePreviewController?.playbackState == .playing
             || cameraController.routeFollowPhase == .exiting
-            || transition.isAnimating
+            || transition.isAnimating || cameraMotion != nil
     }
 
     func advanceAnimation(at date: Date) {
-        defer {
-            let origin: DioramaNavigationContext.Origin = (routePreviewController?.playbackState == .playing || cameraController.routeFollowPhase == .exiting) ? .programmatic : .userInteraction
-            cameraObservation.changed(resolvedCamera, origin: origin)
-        }
+        let globeOwned = transition.isShowingGlobe || transition.isBusy
         advanceTransition(at: date)
-        guard let controller = routePreviewController else { return }
-        RouteAnimationHelper.advanceAnimation(
-            at: date,
-            controller: controller,
-            routeEntity: store.routePreviewEntity,
-            cameraController: cameraController,
-            lastAnimationDate: &lastAnimationDate
-        )
+        if globeOwned {
+            cameraObservation.changed(resolvedCamera, origin: .userInteraction)
+            cameraChangeAction?.action(resolvedCamera)
+            writeCameraReadback(user: false)
+        }
+        if cameraMotion != nil {
+            advanceCameraMotion(at: date)
+        } else if !arPlacementActive, !transition.isShowingGlobe, let controller = routePreviewController {
+            let previousPose = cameraPose
+            RouteAnimationHelper.advanceAnimation(at: date, controller: controller,
+                routeEntity: store.routePreviewEntity, cameraController: cameraController,
+                lastAnimationDate: &lastAnimationDate)
+            constrainCamera()
+            if cameraPose != previousPose {
+                cameraFocus = geographicFocus(for: cameraController.target) ?? .chunkCenter
+                writeCameraReadback(user: false)
+                cameraObservation.changed(resolvedCamera, origin: .programmatic)
+                cameraChangeAction?.action(resolvedCamera)
+            }
+        }
+        updateCameraCapabilities()
     }
 
     /// Advances whichever leg of the handoff is playing. The clock discipline lives in the
@@ -407,6 +463,7 @@ final class OrbitDioramaModel {
     /// a fixed diorama still responds the way it always has.
     func primaryDrag(dx: Float, dy: Float, at time: TimeInterval? = nil) {
         guard !isInteractionLocked else { return }
+        interruptCameraForGesture()
         navigation.interactionBegan()
         cameraObservation.began()
         // The globe has no ground to slide, so the drag spins it.
@@ -426,7 +483,7 @@ final class OrbitDioramaModel {
                 ),
                 at: time
             )
-        } else if enabledGestures.contains(.rotate) {
+        } else if !arPlacementActive, enabledGestures.contains(.rotate) {
             cameraController.rotate(deltaX: dx, deltaY: dy)
             publishCameraPosition()
         }
@@ -437,7 +494,8 @@ final class OrbitDioramaModel {
     /// This is iOS's two-finger drag and macOS's option-drag — the input whose meaning is "turn",
     /// where the primary drag's is "move".
     func secondaryDrag(dx: Float, dy: Float) {
-        guard !isInteractionLocked else { return }
+        guard !isInteractionLocked, !arPlacementActive else { return }
+        interruptCameraForGesture()
         navigation.interactionBegan()
         cameraObservation.began()
         if transition.isShowingGlobe {
@@ -457,6 +515,7 @@ final class OrbitDioramaModel {
             if transition.isShowingGlobe { applyTransitionFraming() }
             return
         }
+        interruptCameraForGesture()
         if isWheel {
             navigation.wheelInput()
         } else {
@@ -541,6 +600,7 @@ final class OrbitDioramaModel {
             return
         }
         guard store.canZoomGround else {
+            guard !arPlacementActive else { return }
             cameraController.zoom(delta: delta)
             publishCameraPosition()
             return
@@ -587,6 +647,10 @@ final class OrbitDioramaModel {
             beginRelocation()
         }
         applyTransitionFraming()
+        cameraObservation.changed(resolvedCamera, origin: .userInteraction)
+        cameraChangeAction?.action(resolvedCamera)
+        writeCameraReadback(user: false)
+        updateCameraCapabilities()
     }
 
     /// Moves the orbit camera to the framing the transition's progress asks for.
@@ -614,6 +678,7 @@ final class OrbitDioramaModel {
         // rotation of the whole world — so it may only move while nothing is looking. Progress 0 is
         // the one moment the globe is fully gone.
         if transition.progress <= 0 {
+            if case .coordinate = cameraFocus, !usesAutomaticCamera { refreshCameraFocus() }
             store.dockGlobe()
         }
     }

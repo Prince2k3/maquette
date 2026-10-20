@@ -73,15 +73,8 @@ final class CameraController {
 
         // Look-at: compute rotation from camera position to target
         let forward = simd_normalize(target - position)
-        let worldUp = SIMD3<Float>(0, 1, 0)
-        var right = simd_cross(forward, worldUp)
-        let rightLen = simd_length(right)
-        if rightLen < 1e-6 {
-            // Camera is looking straight up or down; pick an arbitrary right vector
-            right = SIMD3<Float>(1, 0, 0)
-        } else {
-            right /= rightLen
-        }
+        // Analytic horizontal right preserves heading at the overhead singularity.
+        let right = SIMD3<Float>(cos(azimuth), 0, -sin(azimuth))
         let up = simd_cross(right, forward)
 
         let rotationMatrix = simd_float3x3(columns: (right, up, -forward))
@@ -346,6 +339,13 @@ final class CameraController {
         savedAzimuth = nil
         followRoutePoints = []
         repositionCooldown = 0
+    }
+
+    /// Releases route ownership while retaining the actual currently rendered pose.
+    func stopFollowingAtCurrentPose() {
+        let pose = (azimuth, elevation, distance, target)
+        exitFollowMode()
+        (azimuth, elevation, distance, target) = pose
     }
 
     // MARK: - Per-Frame Update

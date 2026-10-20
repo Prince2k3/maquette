@@ -21,11 +21,11 @@ struct DioramaNavigationAPITests {
     func controlledGroundConstruction() {
         let region = DioramaRegion(center: Coordinate(latitude: 36, longitude: -112), radius: 6_000)
         let markerID = UUID()
-        let camera = DioramaCamera(azimuth: .degrees(90), elevation: .degrees(30), distance: 1.4)
+        let camera = DioramaCamera(heading: .degrees(-(90)), pitch: .degrees(90 - (30)), distance: 1.4)
         _ = DioramaView(
             groundPosition: .constant(DioramaGroundPosition(region: region)),
             shape: .hexagonal, physicalSize: 0.8, interactionModes: .all,
-            position: .constant(.camera(camera)), selection: Binding<UUID?>.constant(markerID)
+            cameraPosition: .constant(.camera(camera)), selection: Binding<UUID?>.constant(markerID)
         ) {
             DioramaMarker("Overlook", coordinate: region.center).tag(markerID)
         }
@@ -38,7 +38,7 @@ struct DioramaNavigationAPITests {
         .onDioramaCameraChange(frequency: .continuous) { context in
             let _: DioramaCameraChangeContext = context
             let _: DioramaCamera = context.camera
-            let _: DioramaNavigationContext.Phase = context.phase
+            let _: DioramaCameraChangeContext.Phase = context.phase
             let _: DioramaNavigationContext.Origin = context.origin
         }
         .onDioramaCameraChange(frequency: .onEnd) { _ in }

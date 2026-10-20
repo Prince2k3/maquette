@@ -45,13 +45,19 @@ style margin. Panning stays inside the loaded ground while more tiles arrive; th
 does not impose a permanent geographic limit. With pan disabled or a zero-margin policy, an orbit
 view uses plain drag to rotate instead. Zooming out far enough enters the globe transition.
 
-The controls overlay provides a compass and reset button. Reset restores the last preset-requested
+The controls overlay provides a compass, reset, Fit terrain, overhead-view, and camera-cancel
+buttons. Custom controls read the host-scoped `dioramaCamera` environment proxy. Fit terrain uses
+point padding and a 0.6-second transition; overhead preserves the current focus, heading, and
+distance while setting pitch to zero. Cancel stops an active camera action at its current pose.
+Orbit and fit controls disable when the host lacks those capabilities, including AR and visionOS.
+Reduce Motion makes transitions immediate. These examples do not establish device validation. Reset restores the last preset-requested
 ground and orbit. The compass faces north without changing tilt or distance; it is hidden in AR,
 visionOS, globe presentation, and camera route-follow mode. AR placement requires physical hardware.
 
 The demo binds `DioramaGroundPosition` independently from `DioramaCameraPosition`: gestures update
 the current geographic region, while preset changes issue an absolute ground request and a separate
-orbit request. Marker selection uses an application enum through `.tag`, independently of the pin's
+orbit request through `cameraPosition:`. Camera headings are clockwise from north; pitch is zero
+overhead and 90 degrees horizontal, and distance uses scene meters. Marker selection uses an application enum through `.tag`, independently of the pin's
 rendering ID. Existing presets retain their style-specific pan margins through the automatic loading
 policy.
 
@@ -67,3 +73,9 @@ It measures terrain resampling and LowLevelMesh buffer writes over ten steps of 
 65,000-vertex chunk. It requires a working RealityKit graphics context and is skipped in ordinary
 test runs. These CPU timings exclude tile fetching, effect passes, SwiftUI updates, and rendering;
 they are not full frame times or an automated performance threshold.
+
+
+The Camera preset starts with terrain relief, canyon walls, and an oblique view so the chunk's
+three-dimensional shape is visible. North is cyan, east orange, south pink, and west green.
+Choose View from overhead and Face north to check cardinal orientation: cyan appears at the top.
+Face east (heading 90) moves orange to the top and cyan to the left while preserving the pitch.

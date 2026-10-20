@@ -17,7 +17,7 @@ struct DemoPreset: Identifiable {
     /// different substrate, which is why it sits beside the style rather than inside it.
     var effect: DioramaEffect = .none
     /// Where the orbit camera starts for this preset.
-    var camera = DioramaCamera(azimuth: .zero, elevation: .radians(0.45), distance: 1.3)
+    var camera = DioramaCamera(heading: .zero, pitch: .radians(.pi / 2 - 0.45), distance: 1.3)
 }
 
 enum DemoPresets {
@@ -57,7 +57,7 @@ enum DemoPresets {
             // A ribbon eleven kilometres long and four wide, so the standard framing crops the
             // ends off it. Pull back until the whole outline is in the frame, and look down
             // further than the other presets — the silhouette is what this one is about.
-            camera: DioramaCamera(elevation: .radians(0.95), distance: 1.55)
+            camera: DioramaCamera(pitch: .radians(.pi / 2 - (0.95)), distance: 1.55)
         )
     }()
 
@@ -72,6 +72,16 @@ enum DemoPresets {
             caption: "Circular chunk, canyon strata walls",
             region: DioramaRegion(center: grandCanyon, radius: 6000),
             style: .standard(exaggeration: 1.6, chunk: .canyon)
+        ),
+
+        DemoPreset(
+            id: "camera",
+            title: "Camera",
+            caption: "3D camera controls · North cyan · East orange · South pink · West green",
+            region: DioramaRegion(center: grandCanyon, radius: 1000),
+            shape: .rectangular(width: 0.8, depth: 0.8),
+            style: .standard(exaggeration: 1.6, chunk: .canyon),
+            camera: DioramaCamera(heading: .zero, pitch: .degrees(50), distance: 1.6)
         ),
 
         DemoPreset(
@@ -102,7 +112,7 @@ enum DemoPresets {
                 )
             ),
             // Wider than the other presets, so pull back to keep it in frame.
-            camera: DioramaCamera(elevation: .radians(0.45), distance: 1.7)
+            camera: DioramaCamera(pitch: .radians(.pi / 2 - (0.45)), distance: 1.7)
         ),
 
         DemoPreset(
@@ -169,7 +179,7 @@ enum DemoPresets {
                 provider: GoogleTiles3DProvider(apiKey: Secrets.googleMapsAPIKey),
                 style: .detailed
             ),
-            camera: DioramaCamera(elevation: .radians(0.28), distance: 1.7)
+            camera: DioramaCamera(pitch: .radians(.pi / 2 - (0.28)), distance: 1.7)
         ),
 
         // Fetches a region 80% wider than the chunk, so the first drag is served without a fetch.
@@ -374,9 +384,15 @@ struct ContentView: View {
             groundPosition: $groundPosition,
             shape: preset.shape,
             physicalSize: preset.physicalSize,
-            position: $position,
+            cameraPosition: $position,
             selection: $selectedAnnotation
         ) {
+            if preset.id == "camera" {
+                DioramaMarker("North", coordinate: Turf.destination(from: preset.region.center, meters: 600, bearing: 0), tint: .cyan)
+                DioramaMarker("East", coordinate: Turf.destination(from: preset.region.center, meters: 600, bearing: 90), tint: .orange)
+                DioramaMarker("South", coordinate: Turf.destination(from: preset.region.center, meters: 600, bearing: 180), tint: .pink)
+                DioramaMarker("West", coordinate: Turf.destination(from: preset.region.center, meters: 600, bearing: 270), tint: .green)
+            }
             // The Canyon preset carries a marker so selection has something to select.
             if preset.id == "canyon" {
                 DioramaMarker(
@@ -408,6 +424,7 @@ struct ContentView: View {
             VStack {
                 DioramaCompass()
                 DioramaResetButton()
+                CameraExampleControls(camera: position.camera ?? preset.camera)
             }
             .buttonStyle(.bordered)
             .labelStyle(.iconOnly)
@@ -561,4 +578,50 @@ struct ContentView: View {
         .accessibilityIdentifier("preset-\(id)")
     }
     #endif
+}
+
+
+/// The environment proxy targets only the diorama hosting this controls overlay.
+private struct CameraExampleControls: View {
+    @Environment(\.dioramaCamera) private var cameraProxy
+    let camera: DioramaCamera
+
+    var body: some View {
+        Button {
+            cameraProxy?.fit(.chunk, padding: EdgeInsets(top: 24, leading: 24, bottom: 24, trailing: 24),
+                             transition: .easeInOut(duration: 0.6))
+        } label: {
+            Label("Fit terrain", systemImage: "arrow.up.left.and.arrow.down.right")
+        }
+        .disabled(cameraProxy?.capabilities.canFit != true)
+        .accessibilityIdentifier("camera-fit-terrain")
+
+        Button {
+            var overhead = camera
+            overhead.pitch = .zero
+            cameraProxy?.setCamera(overhead, transition: .easeInOut(duration: 0.6))
+        } label: {
+            Label("View from overhead", systemImage: "arrow.down.to.line")
+        }
+        .disabled(cameraProxy?.capabilities.canOrbit != true)
+        .accessibilityIdentifier("camera-overhead")
+
+        Button {
+            var east = camera
+            east.heading = .degrees(90)
+            cameraProxy?.setCamera(east, transition: .easeInOut(duration: 0.6))
+        } label: {
+            Label("Face east", systemImage: "arrow.right")
+        }
+        .disabled(cameraProxy?.capabilities.canOrbit != true)
+        .accessibilityIdentifier("camera-face-east")
+
+        Button {
+            cameraProxy?.cancel()
+        } label: {
+            Label("Cancel camera movement", systemImage: "stop.circle")
+        }
+        .disabled(cameraProxy?.activeRequest == nil)
+        .accessibilityIdentifier("camera-cancel")
+    }
 }

@@ -32,7 +32,7 @@ struct SwiftUIContentAPITests {
         _ = DioramaView(region: region)
         _ = DioramaView(region: region) { TrailContent(coordinates: [coordinate, coordinate]) }
         _ = DioramaView(region: region) { Feature.point(coordinate) }
-        _ = DioramaView(region: region, position: .constant(.camera(DioramaCamera())))
+        _ = DioramaView(region: region, cameraPosition: .constant(.camera(DioramaCamera())))
         // MapKit and Maquette vocabulary can coexist in a consumer module.
         _ = MapCameraPosition.automatic
     }

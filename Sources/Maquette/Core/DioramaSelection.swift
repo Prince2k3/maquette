@@ -40,7 +40,7 @@ struct DioramaSelection {
 
     func tag(for identity: DioramaMarkerIdentity) -> DioramaSelectionTag? {
         if let tag = identity.tag { return accepts(tag) ? tag : nil }
-        return usesAnnotationIDs ? DioramaSelectionTag(identity.annotationID) : nil
+        return usesAnnotationIDs && identity.allowsLegacyID ? DioramaSelectionTag(identity.annotationID) : nil
     }
 
     /// Untagged or differently typed content does not clear another item's selection.
@@ -59,14 +59,15 @@ struct DioramaSelection {
 struct DioramaMarkerIdentity: Component {
     let annotationID: String
     let tag: DioramaSelectionTag?
+    var allowsLegacyID = true
 }
 
 extension DioramaContent {
-    /// Associates a marker with a value in the diorama's selection binding.
+    /// Associates content with a value in the diorama's selection binding.
     ///
     /// The value's type must match the binding's type. Tags are independent of rendering identity;
     /// use collection IDs or explicit annotation IDs to preserve identity when geometry changes.
-    /// Multiple markers can share a tag and are then selected together. Polylines are not tappable.
+    /// Multiple features can share a tag and are then selected together. Geographic shapes require a tag.
     /// - Complexity: O(*n*), where *n* is the number of content items.
     public func tag<Value: Hashable & Sendable>(_ value: Value) -> DioramaStyledContent<Self> {
         DioramaStyledContent(content: self, selectionTag: DioramaSelectionTag(value))

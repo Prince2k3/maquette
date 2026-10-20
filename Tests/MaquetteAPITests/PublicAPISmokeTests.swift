@@ -30,7 +30,7 @@ struct PublicAPISmokeTests {
             DioramaMarker("Yavapai Point", coordinate: Self.canyon, tint: .orange, id: "yavapai")
             DioramaPolyline(coordinates: [Self.canyon, Self.canyon], tint: .blue)
             if true {
-                DioramaAnnotation(Feature.point(Coordinate(Self.canyon)))
+                DioramaFeature(Feature.point(Coordinate(Self.canyon)))
             }
             for index in 0..<2 {
                 DioramaMarker("Pin \(index)", coordinate: Self.canyon)

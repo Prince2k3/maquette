@@ -88,9 +88,11 @@ enum DioramaLiveInputs {
     }
 
     /// Reflects the current selection onto every rendered part of each marker feature.
-    static func applySelection(_ selection: DioramaSelection?, store: DioramaStore) {
+    static func applySelection(_ selection: DioramaSelection?, store: DioramaStore, spatial: Bool? = nil) {
         guard let root = store.dioramaEntity as? DioramaEntity else { return }
         root.selection = selection
+        if let spatial { root.overlayRenderer.spatialHitTesting = spatial }
+        root.overlayRenderer.updateSelection()
         for marker in root.markerEntities.values {
             let selected = marker.components[DioramaMarkerIdentity.self].map {
                 selection?.isSelected($0) ?? false

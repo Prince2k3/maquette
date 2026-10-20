@@ -52,6 +52,7 @@ final class OrbitDioramaModel {
 
     /// The selection binding handed to `DioramaView`, written on marker taps.
     var selectionBinding: DioramaSelection?
+    @ObservationIgnored var screenTap: ((CGPoint) -> Void)?
 
     /// Observation hooks from the environment.
     var cameraChangeAction: DioramaCameraChangeAction?

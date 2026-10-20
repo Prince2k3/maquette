@@ -27,7 +27,7 @@ import Testing
         var coordinate: Coordinate
     }
 
-    private func annotations(_ content: some DioramaContent) -> [DioramaAnnotation] {
+    private func annotations(_ content: some DioramaContent) -> [DioramaFeature] {
         content.items.compactMap { item in
             guard case .annotation(let annotation) = item else { return nil }
             return annotation
@@ -62,6 +62,21 @@ import Testing
         #expect(result[1].style.altitude == .absolute)
         #expect(result[2].style.tint == .pink)
         #expect(result[2].style.lineWidth == 0.009)
+    }
+
+    @Test func independentFillAndStrokeKeepLocalPrecedence() throws {
+        let polygon = DioramaPolygon(Polygon([origin, .init(latitude: 36.01, longitude: -112), .init(latitude: 36, longitude: -111.99)]), id: "area")
+        let content = polygon.fill(.green)
+            .stroke(.orange, width: .physicalMeters(0.001))
+            .fill(.mint)
+            .stroke(.purple, width: .geographicMeters(12))
+            .opacity(0.5).opacity(0.8)
+        let value = try #require(annotations(content).first)
+        #expect(value.style.fill == .mint)
+        #expect(value.style.stroke == .purple)
+        #expect(value.style.strokeStyle.width == .geographicMeters(12))
+        #expect(value.style.opacity == 0.8)
+        #expect(value.id == "area")
     }
 
     @Test func selectionTagPreservesModifierPriority() throws {

@@ -312,7 +312,7 @@ struct ContentView: View {
     /// The orbit camera, seeded from the preset and thereafter the user's.
     @State private var position: DioramaCameraPosition = .automatic
 
-    private enum Place: Hashable, Sendable { case yavapaiPoint }
+    private enum Place: Hashable, Sendable { case yavapaiPoint, surveyArea, observationRadius }
 
     /// Application selection is independent of the marker's rendering identity.
     @State private var selectedAnnotation: Place?
@@ -386,6 +386,19 @@ struct ContentView: View {
                 )
                 .tint(.orange)
                 .tag(Place.yavapaiPoint)
+                DioramaPolygon(Polygon([
+                    Coordinate(latitude: 36.045, longitude: -112.16),
+                    Coordinate(latitude: 36.065, longitude: -112.16),
+                    Coordinate(latitude: 36.065, longitude: -112.13),
+                    Coordinate(latitude: 36.045, longitude: -112.13)
+                ]), id: "survey-area")
+                .fill(selectedAnnotation == .surveyArea ? .orange.opacity(0.45) : .orange.opacity(0.15))
+                .stroke(.orange, style: DioramaStrokeStyle(width: .geographicMeters(25), lineJoin: .round))
+                .tag(Place.surveyArea)
+                DioramaCircle(center: Coordinate(latitude: 36.0667, longitude: -112.1170), radius: 500, id: "observation-radius")
+                    .fill(.blue.opacity(selectedAnnotation == .observationRadius ? 0.45 : 0.15))
+                    .stroke(.blue, style: DioramaStrokeStyle(width: .geographicMeters(20), dash: [80, 40]))
+                    .tag(Place.observationRadius)
             }
         }
         .dioramaStyle(style)

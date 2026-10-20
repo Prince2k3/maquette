@@ -33,6 +33,7 @@ class TerrainEntity: Entity {
 
     /// Retained geometry, and the terrain it samples when the chunk can pan.
     private var geometry: TerrainSolidGenerator.Geometry?
+    private(set) var surfaceRevision = 0
     private var heightField: TerrainHeightField?
     /// Directly-writable meshes, used in place of regenerating resources on every pan.
     private var surfaceMesh: ChunkSurfaceMesh?
@@ -112,6 +113,7 @@ class TerrainEntity: Entity {
     /// convention `TerrainSolidGenerator.resample` relies on. An effect that moves the top surface has
     /// to move these with it or the wall stands proud of the surface it is supposed to meet.
     var wallBuffers: TerrainSolidGenerator.Buffers? { geometry?.walls }
+    var bottomBuffers: TerrainSolidGenerator.Buffers? { geometry?.bottom }
 
     /// The vertical span the wall texture's coordinates are normalized against.
     var wallHeight: Float { geometry?.resampling.wallHeight ?? 0 }
@@ -137,6 +139,7 @@ class TerrainEntity: Entity {
 
         self.geometry = geometry
         self.panOffset = offset
+        surfaceRevision &+= 1
     }
 
     /// Swaps in freshly-rolled ground beneath the chunk.
@@ -182,6 +185,7 @@ class TerrainEntity: Entity {
         surfaceMesh?.update(from: geometry.top)
         wallMesh?.update(from: geometry.walls)
         self.geometry = geometry
+        surfaceRevision &+= 1
     }
 
     /// Creates a terrain entity from a mesh and a pre-built material.

@@ -25,7 +25,7 @@ import SwiftUI
 
 struct CanyonView: View {
     @State private var position: DioramaCameraPosition = .automatic
-    @State private var selected: DioramaAnnotation.ID?
+    @State private var selected: DioramaFeature.ID?
 
     var body: some View {
         DioramaView(
@@ -82,11 +82,45 @@ DioramaView(region: region, selection: $selectedPlace) {
 
 Existing String selection bindings continue to select untagged markers by annotation ID. Tapping
 an already selected marker clears selection; markers sharing a tag select together. Off-chunk or
-removed content leaves the application selection intact. Polylines are not selection targets.
+removed content leaves the application selection intact. Tagged polylines, polygons, circles, and image overlays also participate in typed selection. Polygon holes and clipped-away geometry do not select. iOS/iPadOS/macOS line picking uses an independent 8-point tolerance; visionOS uses a wider spatial target. Shape selection writes the binding; use that value to choose a selected fill or stroke.
 
-Content modifiers also support `.altitudeReference(.relativeToGround)`. Widths are measured in
-physical diorama meters. A modifier on a group supplies defaults; modifiers inside its children
+Content modifiers also support `.altitudeReference(.relativeToGround)`. Widths use explicit `.physicalMeters` or `.geographicMeters` units. A modifier on a group supplies defaults; modifiers inside its children
 win. Existing initializer styling and custom content that implements `items` remain supported.
+
+## Geographic overlays
+
+```swift
+DioramaView(region: region, selection: $selectedPlace) {
+    DioramaPolygon(parkPolygon, id: "park") // Polygon supports exterior + holes
+        .fill(.green.opacity(0.2))
+        .stroke(.green, style: DioramaStrokeStyle(
+            width: .geographicMeters(12), lineCap: .round, lineJoin: .round,
+            dash: [80, 40]
+        ))
+        .tag(parkID)
+    DioramaCircle(center: center, radius: 500) // geographic meters
+        .fill(.blue.opacity(0.2))
+        .stroke(.blue, width: .physicalMeters(0.003))
+    DioramaImageOverlay(image: surveyImage, bounds: surveyBounds)
+        .opacity(0.6)
+}
+```
+
+Create `surveyImage` with `DioramaImageResource(id:revision:image:attribution:)` from a decoded
+`CGImage`. Increment its revision when its pixels change. Images are north-up, retain their original
+UV extent when clipped, and add their credit alongside the terrain provider's credit. Opacity edits
+reuse the texture. Dash lengths and phase use the stroke width's unit system.
+
+GeoJSON polygons and `DioramaFeature(feature)` use the same holes-aware rendering path. The old
+GeoJSON wrapper names `DioramaAnnotation` and `AnnotationStyle` are now `DioramaFeature` and
+`DioramaFeatureStyle`; custom SwiftUI annotation labels are planned separately.
+
+These overlays conform to raster terrain triangles. Ground-relative placement over photorealistic
+3D Tiles is unavailable: unsupported overlays are omitted with a diagnostic instead of appearing on
+a false flat surface. Absolute-altitude placement remains available. Geometry updates are asynchronous
+and pending shapes are hidden until ready. Fill, color, opacity, selection, and image revision changes
+update existing resources without fetching terrain; shape, altitude, and stroke geometry changes
+rebuild overlay buffers. This does not establish a per-frame overlay performance guarantee.
 
 ## Control geographic navigation
 

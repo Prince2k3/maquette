@@ -72,7 +72,7 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
             model.reload()
         }
         .modifier(DioramaControlsOverlay(state: model.controlState))
-        .dioramaAttribution(model.store.tilesAttribution)
+        .dioramaAttribution(model.store.contentAttribution)
         .task(id: globeStyle) {
             guard let globeStyle else { return }
             await model.adoptGlobeStyle(globeStyle)
@@ -171,6 +171,7 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
 
     private func realityView() -> some View {
         RealityView { content in
+            installPicking(content)
             content.add(DioramaSceneRig.makeOrbitCamera())
             content.add(DioramaSceneRig.makeSunLight())
             content.add(DioramaSceneRig.makeFillLight())
@@ -179,6 +180,7 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
                 content.add(entity)
             }
         } update: { content in
+            installPicking(content)
             if let camera = content.entities.first(where: { $0.name == "OrbitCamera" }) {
                 camera.transform = model.cameraController.cameraTransform
             }
@@ -246,17 +248,26 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
                 )
             }
         }
-        // Marker selection. Simultaneous with the platform's drag gestures so a tap that never
-        // becomes a drag still lands; only entities carrying collision + input-target components
-        // — the markers — can be hit, so terrain drags are unaffected.
+        // Use the actual viewport projection so thin lines have a point-sized tap tolerance.
         .simultaneousGesture(
-            SpatialTapGesture()
-                .targetedToAnyEntity()
-                .onEnded { value in
-                    model.handleTap(on: value.entity)
-                }
+            SpatialTapGesture().onEnded { value in model.screenTap?(value.location) }
         )
         .modifier(makeGestures(model))
     }
+
+    private func installPicking(_ context: RealityViewCameraContent) {
+        model.screenTap = { [weak model] point in
+            guard let model, let root = model.store.dioramaEntity as? DioramaEntity,
+                  let sceneRay = context.ray(through: point, in: .local, to: .scene) else { return }
+            let origin = root.convert(position: sceneRay.origin, from: nil)
+            let end = root.convert(position: sceneRay.origin + sceneRay.direction, from: nil)
+            guard let identity = root.overlayRenderer.hitTest(at: point, project: {
+                context.project(point: root.convert(position: $0, to: nil), to: .local)
+            }, ray: OverlayRay(origin: origin, direction: end - origin)) else { return }
+            model.selectionBinding?.toggle(identity)
+            model.applySelection()
+        }
+    }
+
 }
 #endif

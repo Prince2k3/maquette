@@ -49,20 +49,20 @@ struct DioramaContentBuilderTests {
         // GeoJSON carries identity, and content re-applied after a pan has to replace the entity it
         // made last time rather than adding a second one beside it.
         let feature = Feature.point(Coordinate(Self.a), id: .string("summit"))
-        #expect(DioramaAnnotation(feature).id == "summit")
-        #expect(DioramaAnnotation(feature, id: "override").id == "override")
+        #expect(DioramaFeature(feature).id == "summit")
+        #expect(DioramaFeature(feature, id: "override").id == "override")
 
         let numbered = Feature.point(Coordinate(Self.a), id: .number(42))
-        #expect(DioramaAnnotation(numbered).id == "42.0")
+        #expect(DioramaFeature(numbered).id == "42.0")
 
         // No identity in the data gets a *stable* digest, so declaring the same content twice
         // produces the same identity — which is what lets a re-applied group diff as unchanged
         // instead of tearing every entity down. The old rule was a fresh UUID per init.
         let anonymous = Feature.point(Coordinate(Self.a))
-        #expect(!DioramaAnnotation(anonymous).id.isEmpty)
-        #expect(DioramaAnnotation(anonymous).id == DioramaAnnotation(anonymous).id)
+        #expect(!DioramaFeature(anonymous).id.isEmpty)
+        #expect(DioramaFeature(anonymous).id == DioramaFeature(anonymous).id)
         let other = Feature.point(Coordinate(Self.b))
-        #expect(DioramaAnnotation(anonymous).id != DioramaAnnotation(other).id)
+        #expect(DioramaFeature(anonymous).id != DioramaFeature(other).id)
     }
 
     @Test("A decoded feature collection is content on its own")

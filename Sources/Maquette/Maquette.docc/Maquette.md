@@ -58,8 +58,13 @@ DioramaView(
 - ``DioramaLineWidth``
 - ``DioramaMarker``
 - ``DioramaPolyline``
-- ``DioramaAnnotation``
-- ``AnnotationStyle``
+- ``DioramaPolygon``
+- ``DioramaCircle``
+- ``DioramaImageOverlay``
+- ``DioramaImageResource``
+- ``DioramaStrokeStyle``
+- ``DioramaFeature``
+- ``DioramaFeatureStyle``
 - ``AltitudeReference``
 - ``DioramaRoutePreview``
 - ``RoutePreviewController``

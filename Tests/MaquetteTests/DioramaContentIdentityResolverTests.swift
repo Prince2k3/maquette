@@ -18,7 +18,7 @@ struct DioramaContentIdentityResolverTests {
         }
     }
 
-    private func annotations(_ group: DioramaContentGroup) -> [DioramaAnnotation] {
+    private func annotations(_ group: DioramaContentGroup) -> [DioramaFeature] {
         group.items.compactMap {
             guard case .annotation(let annotation) = $0 else { return nil }
             return annotation

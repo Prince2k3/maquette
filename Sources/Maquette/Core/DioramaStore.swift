@@ -2020,6 +2020,16 @@ final class DioramaStore {
     private var appliedContent: DioramaContentGroup?
     private var contentIdentityResolver = DioramaContentIdentityResolver()
 
+    /// Image credits supplement the terrain provider's required attribution.
+    var contentAttribution: String? {
+        var credits = tilesAttribution.map { [$0] } ?? []
+        for item in appliedContent?.items ?? [] {
+            if case .annotation(let feature) = item, case .image(let image, _) = feature.overlay,
+               let credit = image.attribution, !credit.isEmpty, !credits.contains(credit) { credits.append(credit) }
+        }
+        return credits.isEmpty ? nil : credits.joined(separator: " · ")
+    }
+
     /// Materializes diorama content (markers, polylines) as 3D entities on the loaded diorama.
     ///
     /// Call this after `load()` completes. Each marker becomes a `MarkerEntity` positioned at the
@@ -2028,7 +2038,12 @@ final class DioramaStore {
     /// - Parameter content: The content group to apply, or `nil` to skip.
     public func applyContent(_ content: DioramaContentGroup?) {
         appliedContent = content
-        guard let content else { return }
+        guard let content else {
+            (dioramaEntity as? DioramaEntity)?.clearOverlays()
+            routePreviewEntity = nil
+            contentIdentityResolver = DioramaContentIdentityResolver()
+            return
+        }
         let resolvedContent = contentIdentityResolver.resolve(content)
         guard let rootEntity = dioramaEntity as? DioramaEntity else { return }
 

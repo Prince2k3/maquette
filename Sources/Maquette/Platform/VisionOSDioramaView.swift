@@ -43,7 +43,7 @@ struct VisionOSDioramaView: View {
                     model.reload()
                 }
                 .modifier(DioramaControlsOverlay(state: model.controlState))
-                .dioramaAttribution(model.store.tilesAttribution)
+                .dioramaAttribution(model.store.contentAttribution)
                 .task(id: globeStyle) {
                     guard let globeStyle else { return }
                     await model.adoptGlobeStyle(globeStyle)
@@ -333,7 +333,7 @@ final class VisionOSDioramaModel {
 
     /// Reflects the selected identity onto the marker entities.
     func applySelection() {
-        DioramaLiveInputs.applySelection(selectionBinding, store: store)
+        DioramaLiveInputs.applySelection(selectionBinding, store: store, spatial: true)
     }
 
     func adoptGlobeStyle(_ style: GlobeTransitionStyle) async {

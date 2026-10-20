@@ -5,6 +5,7 @@ import simd
 enum OverlayGeometryError: Error, Equatable, Sendable {
     case nonFiniteInput, degenerateRing, selfIntersection, invalidHole
     case invalidSurface, invalidWidth, invalidRadius, invalidProjection, budgetExceeded
+    case unsupportedSurface
 }
 
 struct OverlayGeometryLimits: Sendable {
@@ -18,6 +19,7 @@ struct OverlayWork: Sendable {
     let limits: OverlayGeometryLimits
     private var remaining: Int
     init(_ limits: OverlayGeometryLimits) throws {
+        try Task.checkCancellation()
         guard limits.maxInputVertices > 0, limits.maxTriangles > 0,
               limits.maxOperations > 0, limits.maxCircleSegments >= 4 else {
             throw OverlayGeometryError.budgetExceeded
@@ -26,6 +28,7 @@ struct OverlayWork: Sendable {
         remaining = limits.maxOperations
     }
     mutating func spend(_ count: Int = 1) throws {
+        if remaining & 1023 == 0 { try Task.checkCancellation() }
         guard count >= 0, count <= remaining else { throw OverlayGeometryError.budgetExceeded }
         remaining -= count
     }

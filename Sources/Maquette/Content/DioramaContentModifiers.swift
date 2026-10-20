@@ -9,6 +9,11 @@ extension DioramaContent {
         DioramaStyledContent(content: self, tint: color)
     }
 
+    /// Applies overall content opacity, clamped to zero through one.
+    public func opacity(_ value: Double) -> DioramaStyledContent<Self> {
+        DioramaStyledContent(content: self, opacity: value)
+    }
+
     /// Supplies an altitude interpretation to annotations without a more local modifier.
     public func altitudeReference(_ reference: AltitudeReference) -> DioramaStyledContent<Self> {
         DioramaStyledContent(content: self, altitude: reference)
@@ -29,10 +34,8 @@ extension Never: DioramaContent {
 public enum DioramaLineWidth: Sendable, Equatable {
     /// Width in physical metres of the rendered diorama, independent of geographic scale.
     case physicalMeters(Float)
-
-    var meters: Float {
-        switch self { case .physicalMeters(let value): value }
-    }
+    /// Width in geographic meters; converted locally through the active projection.
+    case geographicMeters(Double)
 }
 
 /// Content with inherited annotation styling. Local child modifiers take precedence.
@@ -43,17 +46,24 @@ public struct DioramaStyledContent<Content: DioramaContent>: DioramaContent {
     let content: Content
     var tintValue: Color?
     var altitudeValue: AltitudeReference?
-    var widthValue: Float?
+    var strokeStyleValue: DioramaStrokeStyle?
+    var fillValue: Color?
+    var strokeValue: Color?
+    var opacityValue: Double?
     var selectionTagValue: DioramaSelectionTag?
 
     init(
         content: Content, tint: Color? = nil, altitude: AltitudeReference? = nil,
-        width: Float? = nil, selectionTag: DioramaSelectionTag? = nil
+        stroke: Color? = nil, strokeStyle: DioramaStrokeStyle? = nil, fill: Color? = nil,
+        opacity: Double? = nil, selectionTag: DioramaSelectionTag? = nil
     ) {
         self.content = content
         tintValue = tint
         altitudeValue = altitude
-        widthValue = width
+        strokeStyleValue = strokeStyle
+        fillValue = fill
+        strokeValue = stroke
+        opacityValue = opacity
         selectionTagValue = selectionTag
     }
 
@@ -69,9 +79,21 @@ public struct DioramaStyledContent<Content: DioramaContent>: DioramaContent {
                 annotation.style.altitude = altitudeValue
                 annotation.contentStyleOverrides |= 2
             }
-            if let widthValue, annotation.contentStyleOverrides & 4 == 0 {
-                annotation.style.lineWidth = widthValue
+            if let strokeStyleValue, annotation.contentStyleOverrides & 4 == 0 {
+                annotation.style.strokeStyle = strokeStyleValue
                 annotation.contentStyleOverrides |= 4
+            }
+            if let fillValue, annotation.contentStyleOverrides & 8 == 0 {
+                annotation.style.fill = fillValue
+                annotation.contentStyleOverrides |= 8
+            }
+            if let strokeValue, annotation.contentStyleOverrides & 16 == 0 {
+                annotation.style.stroke = strokeValue
+                annotation.contentStyleOverrides |= 16
+            }
+            if let opacityValue, annotation.contentStyleOverrides & 32 == 0 {
+                annotation.style.opacity = opacityValue
+                annotation.contentStyleOverrides |= 32
             }
             if let selectionTagValue, annotation.selectionTag == nil {
                 annotation.selectionTag = selectionTagValue
@@ -87,6 +109,9 @@ public struct DioramaStyledContent<Content: DioramaContent>: DioramaContent {
         return copy
     }
 
+    /// Applies overall content opacity, clamped to zero through one.
+    public func opacity(_ value: Double) -> Self { var copy = self; copy.opacityValue = value; return copy }
+
     /// Replaces the tint on this modifier layer.
     public func tint(_ color: Color) -> Self {
         var copy = self
@@ -98,23 +123,6 @@ public struct DioramaStyledContent<Content: DioramaContent>: DioramaContent {
     public func altitudeReference(_ reference: AltitudeReference) -> Self {
         var copy = self
         copy.altitudeValue = reference
-        return copy
-    }
-}
-
-extension DioramaPolyline {
-    /// Colors the ribbon and sets its width in explicit diorama units.
-    public func stroke(_ color: Color, width: DioramaLineWidth) -> DioramaStyledContent<Self> {
-        DioramaStyledContent(content: self, tint: color, width: width.meters)
-    }
-}
-
-extension DioramaStyledContent where Content == DioramaPolyline {
-    /// Replaces the ribbon's color and width on this modifier layer.
-    public func stroke(_ color: Color, width: DioramaLineWidth) -> Self {
-        var copy = self
-        copy.tintValue = color
-        copy.widthValue = width.meters
         return copy
     }
 }

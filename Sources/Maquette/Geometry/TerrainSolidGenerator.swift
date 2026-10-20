@@ -153,7 +153,7 @@ enum TerrainSolidGenerator {
     // MARK: - Geometry Accumulation
 
     /// A mesh under construction.
-    struct Buffers {
+    struct Buffers: Sendable {
         var positions: [SIMD3<Float>] = []
         var normals: [SIMD3<Float>] = []
         var uvs: [SIMD2<Float>] = []

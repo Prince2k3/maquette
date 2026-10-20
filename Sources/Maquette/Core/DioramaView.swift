@@ -74,7 +74,7 @@ public struct DioramaView: View {
         physicalSize: Float = 0.8,
         interactionModes: DioramaInteractionModes = .all,
         position: Binding<DioramaCameraPosition>? = nil,
-        selection: Binding<DioramaAnnotation.ID?>? = nil,
+        selection: Binding<DioramaFeature.ID?>? = nil,
         @DioramaContentBuilder content: () -> DioramaContentGroup = { .empty }
     ) {
         self.region = region
@@ -116,7 +116,7 @@ public struct DioramaView: View {
         physicalSize: Float = 0.8,
         interactionModes: DioramaInteractionModes = .all,
         position: Binding<DioramaCameraPosition>? = nil,
-        selection: Binding<DioramaAnnotation.ID?>? = nil,
+        selection: Binding<DioramaFeature.ID?>? = nil,
         @DioramaContentBuilder content: () -> DioramaContentGroup = { .empty }
     ) {
         self.init(region: initialRegion, shape: shape, physicalSize: physicalSize,
@@ -150,7 +150,7 @@ public struct DioramaView: View {
         physicalSize: Float = 0.8,
         interactionModes: DioramaInteractionModes = .all,
         position: Binding<DioramaCameraPosition>? = nil,
-        selection: Binding<DioramaAnnotation.ID?>? = nil,
+        selection: Binding<DioramaFeature.ID?>? = nil,
         @DioramaContentBuilder content: () -> DioramaContentGroup = { .empty }
     ) {
         self.init(region: groundPosition.wrappedValue.region, shape: shape, physicalSize: physicalSize,

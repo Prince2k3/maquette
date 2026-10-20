@@ -40,7 +40,10 @@ class DioramaEntity: Entity {
     public private(set) var markerEntities: [String: MarkerEntity] = [:]
 
     /// Polyline entities keyed by identifier.
-    public private(set) var polylineEntities: [String: ModelEntity] = [:]
+    var polylineEntities: [String: ModelEntity] {
+        overlayRenderer.records.filter { $0.value.input.shape.isLine }.mapValues(\.entity)
+    }
+    lazy var overlayRenderer = DioramaOverlayRenderer(root: self)
 
     /// The route preview entity, if active.
     public private(set) var routePreview: RoutePreviewEntity?
@@ -111,18 +114,6 @@ class DioramaEntity: Entity {
         addChild(marker)
     }
 
-    /// Adds a polyline entity.
-    ///
-    /// - Parameters:
-    ///   - polyline: The model entity representing the polyline ribbon mesh.
-    ///   - identifier: Unique identifier for this polyline.
-    public func addPolyline(_ polyline: ModelEntity, identifier: String) {
-        polylineEntities[identifier]?.removeFromParent()
-        polyline.name = "Polyline_\(identifier)"
-        polylineEntities[identifier] = polyline
-        addChild(polyline)
-    }
-
     /// Removes all marker and polyline overlay entities.
     public func clearOverlays() {
         for (_, marker) in markerEntities {
@@ -130,13 +121,9 @@ class DioramaEntity: Entity {
         }
         markerEntities.removeAll()
 
-        for (_, polyline) in polylineEntities {
-            polyline.removeFromParent()
-        }
-        polylineEntities.removeAll()
+        overlayRenderer.clear()
 
         appliedPins.removeAll()
-        appliedRibbons.removeAll()
         clearRoutePreview()
     }
 
@@ -163,13 +150,12 @@ class DioramaEntity: Entity {
     /// evidence the reconciliation below diffs against.
     var selection: DioramaSelection?
 
-    private var appliedPins: [String: (annotation: DioramaAnnotation, coordinate: Coordinate)] = [:]
-    private var appliedRibbons: [String: (annotation: DioramaAnnotation, coordinates: [Coordinate])] = [:]
+    private var appliedPins: [String: (annotation: DioramaFeature, coordinate: Coordinate)] = [:]
 
     /// One leaf drawing operation, flattened out of a feature's (possibly multi-) geometry.
     private enum OverlayPlan {
-        case pin(key: String, coordinate: Coordinate, annotation: DioramaAnnotation)
-        case ribbon(key: String, coordinates: [Coordinate], annotation: DioramaAnnotation)
+        case pin(key: String, coordinate: Coordinate, annotation: DioramaFeature)
+        case overlay(DioramaOverlayInput)
     }
 
     /// Materializes diorama content as 3D entities.
@@ -203,6 +189,14 @@ class DioramaEntity: Entity {
         for item in content.items {
             switch item {
             case .annotation(let annotation):
+                if case .circle(let center, let radius) = annotation.overlay {
+                    plans.append(.overlay(.init(id: annotation.id, shape: .circle(center, radius), annotation: annotation)))
+                    continue
+                }
+                if case .image(_, let bounds) = annotation.overlay {
+                    plans.append(.overlay(.init(id: annotation.id, shape: .image(bounds), annotation: annotation)))
+                    continue
+                }
                 plan(
                     annotation.feature.geometry,
                     annotation: annotation,
@@ -215,7 +209,9 @@ class DioramaEntity: Entity {
         }
 
         reconcilePins(plans, using: proxy, physicalSize: physicalSize)
-        reconcileRibbons(plans, using: proxy, yOffset: polylineYOffset)
+        overlayRenderer.apply(plans.compactMap {
+            if case .overlay(let input) = $0 { return input }; return nil
+        }, proxy: proxy, physicalSize: physicalSize)
         applyRoutePreview(routePreviewItem, using: proxy, physicalSize: physicalSize, yOffset: polylineYOffset)
     }
 
@@ -226,7 +222,7 @@ class DioramaEntity: Entity {
     /// silently overwrite each other in `markerEntities`.
     private func plan(
         _ geometry: Geometry?,
-        annotation: DioramaAnnotation,
+        annotation: DioramaFeature,
         identifier: String,
         into plans: inout [OverlayPlan]
     ) {
@@ -245,21 +241,19 @@ class DioramaEntity: Entity {
             }
 
         case .lineString(let line):
-            plans.append(.ribbon(key: identifier, coordinates: line.coordinates, annotation: annotation))
+            plans.append(.overlay(.init(id: identifier, shape: .line(line.coordinates), annotation: annotation)))
 
         case .multiLineString(let multiLine):
             for (index, line) in multiLine.lineStrings.enumerated() {
-                plans.append(.ribbon(key: "\(identifier)#\(index)", coordinates: line.coordinates, annotation: annotation))
+                plans.append(.overlay(.init(id: "\(identifier)#\(index)", shape: .line(line.coordinates), annotation: annotation)))
             }
 
-        case .polygon, .multiPolygon:
-            // Deliberately not drawn yet rather than approximated by its outline: a filled region
-            // is a different rendering problem — it has to be clipped to the chunk and draped on
-            // the surface — and tracing the ring instead would look like a feature rather than a
-            // gap. Logged so a caller whose polygons vanish can tell which of the two this is.
-            Self.logger.debug(
-                "Skipped annotation \(identifier, privacy: .public): polygons are not drawn yet"
-            )
+        case .polygon(let polygon):
+            plans.append(.overlay(.init(id: identifier, shape: .polygon(polygon), annotation: annotation)))
+        case .multiPolygon(let polygons):
+            for (index, polygon) in polygons.polygons.enumerated() {
+                plans.append(.overlay(.init(id: "\(identifier)#\(index)", shape: .polygon(polygon), annotation: annotation)))
+            }
 
         case .geometryCollection(let geometries):
             for (index, child) in geometries.enumerated() {
@@ -269,7 +263,7 @@ class DioramaEntity: Entity {
     }
 
     private func reconcilePins(_ plans: [OverlayPlan], using proxy: DioramaProxy, physicalSize: Float) {
-        var nextApplied: [String: (annotation: DioramaAnnotation, coordinate: Coordinate)] = [:]
+        var nextApplied: [String: (annotation: DioramaFeature, coordinate: Coordinate)] = [:]
 
         for plan in plans {
             guard case .pin(let key, let coordinate, let annotation) = plan else { continue }
@@ -296,6 +290,9 @@ class DioramaEntity: Entity {
                 annotationID: annotation.selectionAnnotationID ?? annotation.id, tag: annotation.selectionTag
             )
             markerEntities[key]?.components.set(identity)
+            let opacity = annotation.style.opacity
+            markerEntities[key]?.isEnabled = opacity.isFinite && opacity > 0
+            markerEntities[key]?.components.set(OpacityComponent(opacity: opacity.isFinite ? Float(max(0, min(1, opacity))) : 0))
             markerEntities[key]?.setSelected(selection?.isSelected(identity) ?? false)
         }
 
@@ -305,52 +302,6 @@ class DioramaEntity: Entity {
             markerEntities[key] = nil
         }
         appliedPins = nextApplied
-    }
-
-    private func reconcileRibbons(_ plans: [OverlayPlan], using proxy: DioramaProxy, yOffset: Float) {
-        var nextApplied: [String: (annotation: DioramaAnnotation, coordinates: [Coordinate])] = [:]
-
-        for plan in plans {
-            guard case .ribbon(let key, let coordinates, let annotation) = plan else { continue }
-            nextApplied[key] = (annotation, coordinates)
-
-            // Vertices the diorama has no ground for are dropped, which welds the ribbon across the
-            // gap rather than breaking it in two. That is right for a line that clips the outline's
-            // corner; a line that leaves the chunk and returns wants splitting instead, and needs
-            // the clip that polygons are waiting on.
-            let points: [SIMD3<Float>] = coordinates.compactMap {
-                proxy.position(for: $0, altitude: annotation.style.altitude)
-            }
-            guard points.count >= 2 else {
-                polylineEntities[key]?.removeFromParent()
-                polylineEntities[key] = nil
-                continue
-            }
-
-            guard let mesh = try? PolylineMeshGenerator.generateMesh(
-                from: points,
-                width: annotation.style.lineWidth,
-                yOffset: yOffset
-            ) else { continue }
-
-            if let existing = polylineEntities[key],
-               appliedRibbons[key]?.annotation == annotation,
-               appliedRibbons[key]?.coordinates == coordinates,
-               let materials = existing.model?.materials {
-                // Same line, new ground: the mesh has to follow the terrain heights, but the
-                // entity and its material carry over.
-                existing.model = ModelComponent(mesh: mesh, materials: materials)
-            } else {
-                let material = DioramaMaterials.unlitMaterial(color: annotation.style.tint)
-                addPolyline(ModelEntity(mesh: mesh, materials: [material]), identifier: key)
-            }
-        }
-
-        for (key, polyline) in polylineEntities where nextApplied[key] == nil {
-            polyline.removeFromParent()
-            polylineEntities[key] = nil
-        }
-        appliedRibbons = nextApplied
     }
 
     private func applyRoutePreview(

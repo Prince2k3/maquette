@@ -23,7 +23,7 @@ public protocol DioramaContent {
 /// whichever of the two it happened to resemble, and anything else had nowhere to go. An annotation
 /// is now a ``Feature`` plus a style, so what gets drawn is a property of the data.
 public enum DioramaContentItem: Sendable, Equatable {
-    case annotation(DioramaAnnotation)
+    case annotation(DioramaFeature)
     case routePreview(DioramaRoutePreview)
 }
 
@@ -37,17 +37,17 @@ public enum DioramaContentItem: Sendable, Equatable {
 ///
 /// The feature is the same value that came out of the data, unmodified — a point becomes a pin, a
 /// line becomes a ribbon, and a multi-geometry becomes one of each part. The style says how it
-/// looks and, through ``AnnotationStyle/altitude``, what any altitude on its positions means.
+/// looks and, through ``DioramaFeatureStyle/altitude``, what any altitude on its positions means.
 ///
 /// ```swift
 /// let collection = try JSONDecoder().decode(FeatureCollection.self, from: data)
 /// DioramaView(region: region) {
 ///     for feature in collection.features {
-///         DioramaAnnotation(feature)
+///         DioramaFeature(feature)
 ///     }
 /// }
 /// ```
-public struct DioramaAnnotation: DioramaContent, Sendable, Equatable, Identifiable {
+public struct DioramaFeature: DioramaContent, Sendable, Equatable, Identifiable {
     /// Identity for the entity this becomes, so re-applying content replaces rather than duplicates.
     ///
     /// Taken from the feature's own `id` when it has one — GeoJSON carries identity and a caller's
@@ -59,12 +59,13 @@ public struct DioramaAnnotation: DioramaContent, Sendable, Equatable, Identifiab
     var selectionAnnotationID: String? = nil
     var contentIdentity: DioramaContentIdentity?
     var selectionTag: DioramaSelectionTag? = nil
-    var contentStyleOverrides: UInt8 = 0
+    var contentStyleOverrides: UInt16 = 0
+    var overlay: DioramaOverlayPayload?
 
     /// The feature to draw.
     public var feature: Feature
     /// How to draw it.
-    public var style: AnnotationStyle
+    public var style: DioramaFeatureStyle
 
     /// Creates an annotation from a feature.
     ///
@@ -72,7 +73,7 @@ public struct DioramaAnnotation: DioramaContent, Sendable, Equatable, Identifiab
     ///   - feature: The geometry and properties to draw.
     ///   - style: How it is drawn. Defaults to a red pin and a blue ribbon.
     ///   - id: Identity for the resulting entity. Defaults to the feature's own, or a digest.
-    public init(_ feature: Feature, style: AnnotationStyle = AnnotationStyle(), id: String? = nil) {
+    public init(_ feature: Feature, style: DioramaFeatureStyle = DioramaFeatureStyle(), id: String? = nil) {
         self.feature = feature
         self.style = style
         self.id = id ?? Self.identifier(for: feature)
@@ -120,7 +121,7 @@ public struct DioramaAnnotation: DioramaContent, Sendable, Equatable, Identifiab
 /// ```
 public struct DioramaMarker: DioramaContent, Sendable, Equatable {
     /// The annotation this marker reduces to.
-    public var annotation: DioramaAnnotation
+    public var annotation: DioramaFeature
 
     /// Creates a marker.
     ///
@@ -138,9 +139,9 @@ public struct DioramaMarker: DioramaContent, Sendable, Equatable {
         id: String? = nil
     ) {
         let properties: [String: JSONValue] = title.isEmpty ? [:] : ["title": .string(title)]
-        self.annotation = DioramaAnnotation(
+        self.annotation = DioramaFeature(
             Feature.point(coordinate, id: id.map { .string($0) }, properties: properties),
-            style: AnnotationStyle(tint: tint, altitude: altitude),
+            style: DioramaFeatureStyle(tint: tint, altitude: altitude),
             id: id
         )
     }
@@ -166,7 +167,7 @@ public struct DioramaMarker: DioramaContent, Sendable, Equatable {
 /// that leaves the chunk and comes back.
 public struct DioramaPolyline: DioramaContent, Sendable, Equatable {
     /// The annotation this polyline reduces to.
-    public var annotation: DioramaAnnotation
+    public var annotation: DioramaFeature
 
     /// Creates a polyline.
     ///
@@ -183,9 +184,9 @@ public struct DioramaPolyline: DioramaContent, Sendable, Equatable {
         altitude: AltitudeReference = .clampToGround,
         id: String? = nil
     ) {
-        self.annotation = DioramaAnnotation(
+        self.annotation = DioramaFeature(
             Feature.line(coordinates, id: id.map { .string($0) }),
-            style: AnnotationStyle(tint: tint, lineWidth: lineWidth, altitude: altitude),
+            style: DioramaFeatureStyle(tint: tint, lineWidth: lineWidth, altitude: altitude),
             id: id
         )
     }
@@ -218,11 +219,24 @@ public struct DioramaPolyline: DioramaContent, Sendable, Equatable {
 /// points and lines under a single visual treatment, and splitting the style by shape would make the
 /// caller sort its own data before styling it. Fields that do not apply to a geometry are simply
 /// unused — `lineWidth` means nothing to a pin.
-public struct AnnotationStyle: Sendable, Equatable {
+public struct DioramaFeatureStyle: Sendable, Equatable {
     /// Colour of the pin, or of the ribbon.
     public var tint: Color
     /// Width of a ribbon, in diorama metres.
-    public var lineWidth: Float
+    public var lineWidth: Float {
+        get { if case .physicalMeters(let value) = strokeStyle.width { value } else { 0 } }
+        set { strokeStyle.width = .physicalMeters(newValue) }
+    }
+    /// Independent area fill and outline. A nil stroke uses the tint on lines and no outline on areas.
+    /// Area fill color, independent of the outline.
+    public var fill: Color = .blue.opacity(0.2)
+    /// Optional area outline color. Lines fall back to tint.
+    public var stroke: Color?
+    /// Width, endpoint, join, and dash settings.
+    public var strokeStyle: DioramaStrokeStyle
+    /// Multiplies the fill/stroke/image alpha without changing their colors.
+    /// Overall content opacity.
+    public var opacity: Double = 1
     /// What an altitude carried on the feature's positions means.
     public var altitude: AltitudeReference
 
@@ -232,7 +246,7 @@ public struct AnnotationStyle: Sendable, Equatable {
         altitude: AltitudeReference = .clampToGround
     ) {
         self.tint = tint
-        self.lineWidth = lineWidth
+        self.strokeStyle = DioramaStrokeStyle(width: .physicalMeters(lineWidth))
         self.altitude = altitude
     }
 }
@@ -262,7 +276,7 @@ extension FeatureCollection: DioramaContent {
     ///
     /// The whole point of speaking GeoJSON: a decoded document is content, with nothing in between.
     public var items: [DioramaContentItem] {
-        features.map { .annotation(DioramaAnnotation($0)) }
+        features.map { .annotation(DioramaFeature($0)) }
     }
 }
 
@@ -286,7 +300,7 @@ public struct DioramaContentBuilder {
 
     /// A bare ``Feature`` is content on its own, drawn with the default style.
     public static func buildExpression(_ feature: Feature) -> DioramaContentGroup {
-        DioramaContentGroup(items: [.annotation(DioramaAnnotation(feature))])
+        DioramaContentGroup(items: [.annotation(DioramaFeature(feature))])
     }
 
     public static func buildBlock(_ components: DioramaContentGroup...) -> DioramaContentGroup {

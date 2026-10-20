@@ -292,3 +292,22 @@ These are checks to perform before release, not a claim of completed device veri
 
 Minimum targets remain iOS/iPadOS 18, macOS 15, and visionOS 2. AR placement is iOS/iPadOS only.
 watchOS lacks RealityKit; tvOS is not a supported interaction platform.
+
+
+## Geographic overlay migration
+
+The GeoJSON wrapper is now ``DioramaFeature`` and its style is ``DioramaFeatureStyle``.
+Replace `DioramaAnnotation(feature)` with `DioramaFeature(feature)` and `AnnotationStyle(...)`
+with `DioramaFeatureStyle(...)`. The old spellings are removed before 1.0. Custom SwiftUI labels
+are a separate upcoming API.
+
+``DioramaPolygon`` supports holes and multipolygons; ``DioramaCircle`` takes a geographic radius.
+Use `.fill(...)` and `.stroke(..., style:)` independently, including on `DioramaFeature`.
+``DioramaStrokeStyle`` defines caps, joins, miter limits, dash lengths, and phase. Widths and dash
+lengths use either physical chunk meters or geographic meters. Shape selection requires `.tag(...)`
+matching the binding's type; untagged marker String-ID compatibility remains available.
+
+``DioramaImageOverlay`` takes a north-up ``GeographicBounds`` and an immutable decoded
+``DioramaImageResource``. Keep its ID/revision stable for unchanged pixels, and change the revision
+when pixels change. Its attribution supplements the terrain attribution. Ground-conforming overlays
+currently require raster terrain; unsupported photorealistic placement is omitted with a diagnostic.

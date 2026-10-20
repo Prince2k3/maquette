@@ -2,6 +2,7 @@
 import CoreLocation
 import Foundation
 import Testing
+import simd
 @testable import Maquette
 
 /// The shared platform-view model, now testable precisely because it left the view structs.
@@ -167,6 +168,104 @@ struct OrbitDioramaModelTests {
         if case .idle = model.overlayState {
         } else {
             Issue.record("Expected the store's idle state to pass through, got \(model.overlayState)")
+        }
+    }
+}
+
+@Suite("Orbit camera pan mapping")
+struct OrbitCameraPanMappingTests {
+
+    @Test("Dragging moves the ground with the finger")
+    @MainActor
+    func dragMovesGroundWithFinger() {
+        let camera = CameraController(elevation: 0.5, distance: 1.0)
+        camera.azimuth = 0
+
+        // At azimuth 0 the camera looks down -Z, so screen right is +X.
+        let right = camera.terrainPanDelta(
+            dragDeltaX: 10, dragDeltaY: 0, viewHeight: 800, entityScale: 1
+        )
+        // Terrain is sampled at position + offset, so moving ground right lowers the offset.
+        #expect(right.x < 0, "Dragging right should slide the ground right")
+        #expect(abs(right.y) < 1e-6)
+
+        let down = camera.terrainPanDelta(
+            dragDeltaX: 0, dragDeltaY: 10, viewHeight: 800, entityScale: 1
+        )
+        #expect(down.y < 0, "Dragging down should slide the ground toward the viewer")
+    }
+
+    @Test("Pan direction follows the camera around the chunk")
+    @MainActor
+    func panFollowsCameraRotation() {
+        let camera = CameraController(elevation: 0.5, distance: 1.0)
+        camera.azimuth = .pi / 2
+
+        let delta = camera.terrainPanDelta(
+            dragDeltaX: 10, dragDeltaY: 0, viewHeight: 800, entityScale: 1
+        )
+        // A quarter turn swaps which world axis "screen right" corresponds to.
+        #expect(abs(delta.x) < 1e-6)
+        #expect(delta.y > 0)
+    }
+
+    @Test("Zooming in makes panning finer")
+    @MainActor
+    func panScalesWithZoom() {
+        let near = CameraController(elevation: 0.5, distance: 0.5)
+        let far = CameraController(elevation: 0.5, distance: 2.0)
+
+        let nearDelta = near.terrainPanDelta(dragDeltaX: 10, dragDeltaY: 0, viewHeight: 800, entityScale: 1)
+        let farDelta = far.terrainPanDelta(dragDeltaX: 10, dragDeltaY: 0, viewHeight: 800, entityScale: 1)
+
+        #expect(abs(nearDelta.x) < abs(farDelta.x),
+                "The same drag should cover less ground when zoomed in")
+    }
+}
+
+/// Which way a drag points once the camera has been turned.
+///
+/// The transition drives the tilt to overhead and leaves the azimuth where the chunk was left, so a
+/// non-zero azimuth on the globe is the ordinary case rather than the exotic one: anyone who turned
+/// the chunk before pinching out arrives with north somewhere other than up the screen.
+@Suite("Screen axes on the ground")
+@MainActor
+struct GroundDragTests {
+    private func camera(azimuth: Float) -> CameraController {
+        let controller = CameraController()
+        controller.azimuth = azimuth
+        return controller
+    }
+
+    @Test("Facing north, right is east and down is south")
+    func theDefaultFraming() {
+        let ground = camera(azimuth: 0).groundDrag(deltaX: 1, deltaY: 0)
+        #expect(abs(ground.x - 1) < 1e-6)
+        #expect(abs(ground.y) < 1e-6)
+
+        let down = camera(azimuth: 0).groundDrag(deltaX: 0, deltaY: 1)
+        #expect(abs(down.x) < 1e-6)
+        #expect(abs(down.y - 1) < 1e-6)
+    }
+
+    /// A quarter turn puts the diorama's north up the *side* of the screen, so a horizontal drag is
+    /// entirely a change of latitude. Read as though north were still up, the same drag would have
+    /// changed longitude — a right angle's worth of wrong, and on a globe it looks like nothing at
+    /// all until the chunk comes back somewhere else.
+    @Test("A quarter turn swaps which axis a drag moves")
+    func aQuarterTurn() {
+        let ground = camera(azimuth: .pi / 2).groundDrag(deltaX: 1, deltaY: 0)
+        #expect(abs(ground.x) < 1e-6)
+        #expect(abs(ground.y + 1) < 1e-6)   // −Z: the ground moves north
+    }
+
+    /// Whatever the azimuth, a drag moves the ground by its own length — the camera turns the
+    /// direction and must never scale it.
+    @Test("Turning the camera never changes how far a drag reaches")
+    func lengthIsPreserved() {
+        for step in 0...12 {
+            let ground = camera(azimuth: Float(step) * .pi / 6).groundDrag(deltaX: 3, deltaY: -4)
+            #expect(abs(simd_length(ground) - 5) < 1e-5)
         }
     }
 }

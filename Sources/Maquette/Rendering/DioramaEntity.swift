@@ -44,6 +44,17 @@ class DioramaEntity: Entity {
         overlayRenderer.records.filter { $0.value.input.shape.isLine }.mapValues(\.entity)
     }
     lazy var overlayRenderer = DioramaOverlayRenderer(root: self)
+    private var pendingPanPlacement: (() -> Void)?
+    var panPresentationCompletion: ((Bool) -> Void)?
+
+    /// Return the completion so callers drain queued input only after reconciliation is finished.
+    func finishPanPresentation(applyPlacement: Bool = true) -> ((Bool) -> Void)? {
+        terrain?.commitPanPresentation()
+        let placement = pendingPanPlacement, completion = panPresentationCompletion
+        pendingPanPlacement = nil; panPresentationCompletion = nil
+        if applyPlacement { placement?() }
+        return completion
+    }
 
     /// The route preview entity, if active.
     public private(set) var routePreview: RoutePreviewEntity?
@@ -210,11 +221,20 @@ class DioramaEntity: Entity {
             }
         }
 
-        reconcilePins(plans, using: proxy, physicalSize: physicalSize)
-        overlayRenderer.apply(plans.compactMap {
-            if case .overlay(let input) = $0 { return input }; return nil
-        }, proxy: proxy, physicalSize: physicalSize)
-        applyRoutePreview(routePreviewItem, using: proxy, physicalSize: physicalSize, yOffset: polylineYOffset)
+        let overlays = plans.compactMap { plan -> DioramaOverlayInput? in
+            if case .overlay(let input) = plan { return input }; return nil
+        }
+        let place: () -> Void = { [weak self] in
+            self?.reconcilePins(plans, using: proxy, physicalSize: physicalSize)
+            self?.applyRoutePreview(routePreviewItem, using: proxy, physicalSize: physicalSize, yOffset: polylineYOffset)
+        }
+        if terrain?.isPanPresentationDeferred == true, !overlays.isEmpty {
+            pendingPanPlacement = place
+        } else {
+            pendingPanPlacement = nil
+            place()
+        }
+        overlayRenderer.apply(overlays, proxy: proxy, physicalSize: physicalSize)
     }
 
     /// Flattens one geometry into leaf plans, recursing into the multi- and collection forms.

@@ -60,6 +60,11 @@ mean cannot establish a 16 ms target. Nominal-input checks also print the observ
 2026-10-21. `Fixtures/overlay-profile-2026-10-21.json` preserves the numeric results. Those
 observations do not establish a cross-platform 60 fps pass.
 
+[[map-overlay-pan-visibility-fix]] records the subsequent pan/terrain-roll fix and repeat captures.
+`Fixtures/overlay-profile-pan-fix-2026-10-21.json` preserves these follow-up measurements.
+The driver also samples agreement with the presented terrain revision and counts coherent pan
+presentations separately from input iterations and layer FPS.
+
 The opt-in driver in `Platform/DioramaProfileTour.swift` is compiled out unless
 `MAQUETTE_PROFILING` is defined. It also requires the runtime environment variable
 `MAQUETTE_PROFILE=1`. It waits for initial content, warms up for eight seconds, then drives ten

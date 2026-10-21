@@ -63,6 +63,16 @@ import SwiftUI
     private var geometryJobs: [(key: Key, task: Task<[DioramaOverlayLayer], Error>)] = []
     private(set) var geometryTaskCount = 0
     var activeGeometryJobCount: Int { geometryJobs.count }
+    // Hold one complete terrain/overlay frame while detached workers prepare its replacement.
+    private(set) var panPresentationCount = 0
+    #if MAQUETTE_PROFILING
+    private var loggedPanInvalidations = 0
+    #endif
+    private var panKeys: [String: Key]?
+    private var panResults: [String: Result<[DioramaOverlayLayer], OverlayGeometryError>] = [:]
+    var canDeferPanPresentation: Bool {
+        records.values.contains { $0.entity.isEnabled && $0.appliedKey != nil }
+    }
     private let sortGroup = ModelSortGroup(depthPass: .postPass)
     private static let logger = Logger(maquette: "DioramaOverlayRenderer")
     var spatialHitTesting = false
@@ -78,6 +88,8 @@ import SwiftUI
         rasterBaseTask?.cancel(); rasterBaseTask = nil
         for job in geometryJobs { job.task.cancel() }
         geometryJobs.removeAll()
+        panKeys = nil; panResults.removeAll()
+        root?.finishPanPresentation(applyPlacement: false)?(false)
     }
     func apply(_ inputs: [DioramaOverlayInput], proxy: DioramaProxy, physicalSize: Float) {
         guard let root else { return }
@@ -88,6 +100,15 @@ import SwiftUI
             anchor: (proxy.projection as? TerrainProjection)?.anchor, center: Coordinate(proxy.configuration.center),
             pan: proxy.projection.panOffset, boundary: proxy.configuration.boundary.vertices,
             datum: proxy.projection.y(forElevation: 0), scale: proxy.projection.y(forElevation: 1), physicalSize: physicalSize)
+        var previous = context
+        previous?.pan = current.pan; previous?.revision = current.revision
+        let wasDeferred = root.terrain?.isPanPresentationDeferred == true
+        let coherentPan = wasDeferred && previous == current
+        var supersededCompletion: ((Bool) -> Void)?
+        if !coherentPan {
+            panKeys = nil; panResults.removeAll()
+            supersededCompletion = root.finishPanPresentation(applyPlacement: false)
+        }
         if current != context || surfaceTask == nil {
             let sameTerrain = current.terrain != nil && current.terrain == context?.terrain
             surfaceTask?.cancel(); context = current
@@ -114,6 +135,15 @@ import SwiftUI
         let keys = inputs.map { input in
             Key(context: current, shape: input.shape, altitude: input.annotation.style.altitude,
                 stroke: input.shape.isLine || input.annotation.style.stroke != nil ? input.annotation.style.strokeStyle : nil)
+        }
+        if coherentPan {
+            var requested: [String: Key] = [:]
+            for (input, key) in zip(inputs, keys) { requested[input.id] = key }
+            if panKeys != requested {
+                let previousKeys = panKeys
+                panResults = panResults.filter { requested[$0.key] == previousKeys?[$0.key] }
+                panKeys = requested
+            }
         }
         geometryJobs.removeAll { job in
             guard !keys.contains(job.key) else { return false }
@@ -144,7 +174,30 @@ import SwiftUI
             }
             record.task?.cancel(); record.collisionTask?.cancel(); record.collisionTask = nil
             record.collisionRequest = UUID(); record.collisionKey = nil
-            record.key = key; record.entity.isEnabled = false
+            let keepsPresentedMesh = coherentPan && record.appliedKey.map {
+                $0.shape == key.shape && $0.altitude == key.altitude && $0.stroke == key.stroke
+            } == true
+            record.key = key
+            if !keepsPresentedMesh {
+                #if MAQUETTE_PROFILING
+                if record.entity.isEnabled, let applied = record.appliedKey, loggedPanInvalidations < 4 {
+                    loggedPanInvalidations += 1
+                    let changes = [("terrain", applied.context.terrain != current.terrain),
+                        ("anchor", applied.context.anchor != current.anchor),
+                        ("center", applied.context.center != current.center),
+                        ("boundary", applied.context.boundary != current.boundary),
+                        ("datum", applied.context.datum != current.datum),
+                        ("scale", applied.context.scale != current.scale),
+                        ("shape", applied.shape != key.shape),
+                        ("style", applied.altitude != key.altitude || applied.stroke != key.stroke),
+                        ("size", applied.context.physicalSize != current.physicalSize),
+                        ("surfaceID", applied.context.surfaceID != current.surfaceID)]
+                        .filter { $0.1 }.map { $0.0 }.joined(separator: ",")
+                    Self.logger.notice("PROFILE invalidation coherentPan=\(coherentPan) wasDeferred=\(wasDeferred) previousMatches=\(previous == current) terrainPanMatches=\(root.terrain?.panOffset == current.pan) fields=\(changes, privacy: .public)")
+                }
+                #endif
+                record.entity.isEnabled = false
+            }
             record.entity.components.remove(CollisionComponent.self)
             let shape = input.shape, prepared = surfaceTask!
             // Opacity belongs to each record's material, never its shared geometry job.
@@ -173,32 +226,66 @@ import SwiftUI
                     guard !Task.isCancelled, let self, let record, self.records[input.id] === record, record.key == key else { return }
                     let completionStart = ContinuousClock.now
                     defer { self.reconciliationDuration += completionStart.duration(to: .now) }
-                    let kinds = Set(layers.map(\.kind))
-                    for (kind, part) in record.layers where !kinds.contains(kind) { part.model.removeFromParent(); record.layers[kind] = nil }
-                    for layer in layers {
-                        let part = record.layers[layer.kind] ?? Part()
-                        try part.resource.update(layer.mesh)
-                        part.mesh = layer.mesh
-                        record.layers[layer.kind] = part
-                        if part.model.parent == nil { record.entity.addChild(part.model) }
+                    if self.panKeys?[input.id] == key {
+                        self.panResults[input.id] = .success(layers)
+                        record.task = nil
+                        self.finishPanIfReady()
+                    } else {
+                        try self.install(layers, on: record, key: key)
                     }
-                    record.appliedKey = key
-                    self.geometryBuildCount += 1; self.diagnostics[input.id] = nil
-                    try self.updateMaterials(record)
-                    self.updateSelection(record)
-                    record.task = nil
                 } catch {
                     guard !Task.isCancelled, !(error is CancellationError), let self, let record,
                           self.records[input.id] === record, record.key == key else { return }
-                    record.entity.isEnabled = false
                     let diagnostic = error as? OverlayGeometryError ?? .invalidSurface
-                    self.diagnostics[input.id] = diagnostic
-                    Self.logger.warning("Overlay \(input.id, privacy: .public) omitted: \(String(describing: diagnostic), privacy: .public)")
-                    record.task = nil
+                    if self.panKeys?[input.id] == key {
+                        self.panResults[input.id] = .failure(diagnostic)
+                        record.task = nil
+                        self.finishPanIfReady()
+                    } else { self.omit(record, diagnostic: diagnostic) }
                 }
             }
         }
         updateSelection()
+        finishPanIfReady()
+        supersededCompletion?(true)
+    }
+
+    private func finishPanIfReady() {
+        guard let keys = panKeys, keys.count == panResults.count else { return }
+        let results = panResults
+        panKeys = nil; panResults.removeAll()
+        // No suspension between the terrain buffer write and every matching overlay install.
+        for (id, key) in keys {
+            guard let record = records[id], record.key == key, let result = results[id] else { continue }
+            do { try install(result.get(), on: record, key: key) }
+            catch { omit(record, diagnostic: error as? OverlayGeometryError ?? .invalidSurface) }
+        }
+        panPresentationCount += 1
+        root?.finishPanPresentation()?(true)
+    }
+
+    private func install(_ layers: [DioramaOverlayLayer], on record: Record, key: Key) throws {
+        let kinds = Set(layers.map(\.kind))
+        for (kind, part) in record.layers where !kinds.contains(kind) { part.model.removeFromParent(); record.layers[kind] = nil }
+        for layer in layers {
+            let part = record.layers[layer.kind] ?? Part()
+            try part.resource.update(layer.mesh)
+            part.mesh = layer.mesh
+            record.layers[layer.kind] = part
+            if part.model.parent == nil { record.entity.addChild(part.model) }
+        }
+        record.appliedKey = key
+        geometryBuildCount += 1; diagnostics[record.input.id] = nil
+        try updateMaterials(record)
+        updateSelection(record)
+        record.task = nil
+    }
+
+    private func omit(_ record: Record, diagnostic: OverlayGeometryError) {
+        record.entity.isEnabled = false
+        diagnostics[record.input.id] = diagnostic
+        Self.logger.warning("Overlay \(record.input.id, privacy: .public) omitted: \(String(describing: diagnostic), privacy: .public)")
+        record.task = nil
     }
 
     private func updateMaterials(_ record: Record) throws {
@@ -232,7 +319,10 @@ import SwiftUI
             part.installedImage = imageKey; part.installedOrder = record.order
             materialUpdateCount += 1
         }
-        record.entity.isEnabled = record.key == record.appliedKey && !record.layers.isEmpty && style.opacity > 0
+        let presented = panKeys?[record.input.id] == record.key && record.appliedKey.map {
+            $0.shape == record.key?.shape && $0.altitude == record.key?.altitude && $0.stroke == record.key?.stroke
+        } == true
+        record.entity.isEnabled = (record.key == record.appliedKey || presented) && !record.layers.isEmpty && style.opacity > 0
     }
 
     func updateSelection() {
@@ -247,8 +337,11 @@ import SwiftUI
         configureSpatialTarget(record, identity: identity)
     }
     func waitUntilIdle() async {
-        for task in records.values.compactMap(\.task) { await task.value }
-        for task in records.values.compactMap(\.collisionTask) { await task.value }
+        while true {
+            let tasks = records.values.flatMap { [$0.task, $0.collisionTask].compactMap { $0 } }
+            guard !tasks.isEmpty else { return }
+            for task in tasks { await task.value }
+        }
     }
     func surfaceForCollision() async throws -> OverlaySurfaceMesh? { try await surfaceTask?.value }
 }

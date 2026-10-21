@@ -116,7 +116,7 @@ final class DioramaStore {
     private func notifyGroundChange() {
         if !groundChangesSuspended { groundDidChange?() }
     }
-    var hasPendingPan: Bool { isFlushingPan || panTailTask != nil || panResampler.hasUnappliedMovement }
+    var hasPendingPan: Bool { isFlushingPan || panTailTask != nil || panResampler.hasUnappliedMovement || pendingPanTarget != nil || (dioramaEntity as? DioramaEntity)?.terrain?.isPanPresentationDeferred == true }
 
     private let tileCache = TileCache()
     private let logger = Logger(maquette: "DioramaStore")
@@ -1000,6 +1000,7 @@ final class DioramaStore {
     /// ground space and the entity's transform is current, so a stale selection is in exactly the
     /// right place and merely a little late at the rim.
     private func recutBuildingsIfNeeded() {
+        guard (dioramaEntity as? DioramaEntity)?.terrain?.isPanPresentationDeferred != true else { return }
         guard buildingsCutTask == nil, let state = buildings, state.style.followsPan else { return }
         guard buildingsVisible, buildingsNeedCutting(state) else { return }
 
@@ -1277,10 +1278,13 @@ final class DioramaStore {
     /// Lands the tail of a gesture once the touches stop arriving.
     private var panTailTask: Task<Void, Never>?
     private var panRevision = 0
+    // One absolute target accumulates input while a coherent frame is being prepared.
+    private var pendingPanTarget: SIMD2<Float>?
 
     /// Drops pending gesture samples without invalidating the current scene or a loading task.
     func cancelPendingPan() {
         panRevision += 1
+        pendingPanTarget = nil
         panTailTask?.cancel()
         panTailTask = nil
         panResampler = PanPathResampler()
@@ -1338,7 +1342,7 @@ final class DioramaStore {
     private func flushPan() {
         let step = panResampler.step(now: ProcessInfo.processInfo.systemUptime)
         if step != .zero {
-            setPanOffset(panOffset + step)
+            setPanOffset((pendingPanTarget ?? panOffset) + step)
         }
 
         guard panResampler.hasUnappliedMovement else { return }
@@ -1373,6 +1377,10 @@ final class DioramaStore {
     /// - Parameter offset: The target offset in diorama meters.
     public func setPanOffset(_ offset: SIMD2<Float>) {
         guard configuration.panRange > 0 else { return }
+        if (dioramaEntity as? DioramaEntity)?.terrain?.isPanPresentationDeferred == true {
+            pendingPanTarget = offset
+            return
+        }
 
         let target: SIMD2<Float>
         if let state = rolling {
@@ -1433,9 +1441,19 @@ final class DioramaStore {
         // than placed entities, so they ride one transform instead of being repositioned. The
         // transform keeps them over their own ground; which of them the outline covers is a separate
         // question, answered off the main actor by `recutBuildingsIfNeeded` below.
-        (dioramaEntity as? DioramaEntity)?.buildings?.setPanOffset(target)
+        let root = dioramaEntity as? DioramaEntity
+        let present = { [weak self, weak root] in
+            guard let self, let root, self.dioramaEntity === root,
+                  self.panOffset == target,
+                  root.terrain.map({ $0.presentedPanOffset == target }) ?? true else { return }
+            root.buildings?.setPanOffset(target)
+            self.refreshEffect()
+            self.routePreviewEntity = root.routePreview
+        }
         let resampled = ContinuousClock.now
-        refreshEffect()
+        if root?.terrain?.isPanPresentationDeferred == true {
+            if let root { deferPanPresentation(on: root) }
+        } else { present() }
         let finished = ContinuousClock.now
         logger.debug("""
             Pan step: moved \(String(format: "%.3f", moved * 1000)) mm, resample \
@@ -1450,6 +1468,21 @@ final class DioramaStore {
         refetchBuildingsIfNeeded()
         rollTerrainIfNeeded()
         notifyGroundChange()
+    }
+
+    private func deferPanPresentation(on root: DioramaEntity, reapply: Bool = false) {
+        let revision = panRevision
+        root.panPresentationCompletion = { [weak self, weak root] drainQueuedPan in
+            guard let self, let root, self.dioramaEntity === root else { return }
+            root.buildings?.setPanOffset(self.panOffset)
+            if reapply { self.reapplyEffect() } else { self.refreshEffect() }
+            self.routePreviewEntity = root.routePreview
+            self.recutBuildingsIfNeeded()
+            guard self.panRevision == revision else { return }
+            let target = self.pendingPanTarget
+            self.pendingPanTarget = nil
+            if drainQueuedPan, let target { self.setPanOffset(target) }
+        }
     }
 
     // MARK: - Rolling Fetch
@@ -1527,8 +1560,9 @@ final class DioramaStore {
                 }
 
                 // The window is what the clamp lets the chunk pan across, so it may only advance
-                // once the ground behind it is actually on screen. Recording a roll that was
-                // declined would licence panning onto terrain nothing ever drew.
+                // once the ground is ready for presentation. A coherent overlay frame holds new
+                // pan input until that presentation commits, so its frontier cannot be crossed
+                // early. Recording a declined roll would licence panning onto missing terrain.
                 guard applyRoll(roll) else { return }
                 rolling?.tiles = roll.tiles
                 rolling?.window = roll.window
@@ -1582,7 +1616,9 @@ final class DioramaStore {
         )
         // New ground means new heights, and the roll has just handed the chunk a fresh surface
         // material — which paints the imagery back over a chunk the effect had darkened.
-        reapplyEffect()
+        if let root = dioramaEntity as? DioramaEntity, root.terrain?.isPanPresentationDeferred == true {
+            deferPanPresentation(on: root, reapply: true)
+        } else { reapplyEffect() }
 
         // The sampler reads the same ground, so it moves with it or markers drift off the terrain.
         setTerrainProjection(
@@ -1707,6 +1743,7 @@ final class DioramaStore {
         guard abs(target / groundScale - 1) > 1e-4 else { return }
 
         let started = ContinuousClock.now
+        pendingPanTarget = nil
         let offset = panOffset * (groundScale / target)
         guard let mapping = applyMapping(scale: target, zoom: template.zoom) else { return }
 

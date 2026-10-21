@@ -37,7 +37,8 @@ extension DioramaOverlayRenderer {
     /// Projection is in logical view points, so the line tolerance is independent of display scale.
     func hitTest(at point: CGPoint, project: (SIMD3<Float>) -> CGPoint?, ray: OverlayRay,
                  lineTolerance: Double = 8) -> DioramaMarkerIdentity? {
-        guard let root, root.isEnabled, let selection = root.selection else { return nil }
+        guard let root, root.isEnabled, root.terrain?.isPanPresentationDeferred != true,
+              let selection = root.selection else { return nil }
         var occlusion = Float.infinity
         for buffers in [root.terrain?.surfaceBuffers, root.terrain?.wallBuffers, root.terrain?.bottomBuffers].compactMap({ $0 }) {
             if let depth = OverlayHitTesting.distance(positions: buffers.positions, indices: buffers.indices, ray: ray) { occlusion = min(occlusion, depth) }

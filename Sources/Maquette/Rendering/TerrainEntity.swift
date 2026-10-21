@@ -35,6 +35,10 @@ class TerrainEntity: Entity {
     private var geometry: TerrainSolidGenerator.Geometry?
     private(set) var surfaceRevision = 0
     private var heightField: TerrainHeightField?
+    private(set) var isPanPresentationDeferred = false
+    private(set) var presentedPanOffset: SIMD2<Float> = .zero
+    private(set) var presentedSurfaceRevision = 0
+    private var pendingSurfaceMaterial: (any RealityKit.Material)?
     /// Directly-writable meshes, used in place of regenerating resources on every pan.
     private var surfaceMesh: ChunkSurfaceMesh?
     private var wallMesh: ChunkSurfaceMesh?
@@ -102,6 +106,8 @@ class TerrainEntity: Entity {
 
     /// The chunk's top-surface triangles as they currently stand.
     ///
+    /// During a deferred pan this is the CPU candidate; GPU buffers still match presentedPanOffset.
+    /// Effects are refreshed by the store's presentation completion, after the candidate is installed.
     /// Already clipped to the outline, and already re-sampled by whatever pan is in effect, which is
     /// what lets an effect trace lines that stop exactly on the cut edge without repeating the
     /// boundary clip for itself.
@@ -134,12 +140,29 @@ class TerrainEntity: Entity {
 
         TerrainSolidGenerator.resample(&geometry, heightField: heightField, panOffset: offset)
 
-        surfaceMesh?.update(from: geometry.top)
-        wallMesh?.update(from: geometry.walls)
+        isPanPresentationDeferred = (parent as? DioramaEntity)?.overlayRenderer.canDeferPanPresentation == true
+        if !isPanPresentationDeferred {
+            surfaceMesh?.update(from: geometry.top)
+            wallMesh?.update(from: geometry.walls)
+            presentedPanOffset = offset
+        }
 
         self.geometry = geometry
         self.panOffset = offset
         surfaceRevision &+= 1
+        if !isPanPresentationDeferred { presentedSurfaceRevision = surfaceRevision }
+    }
+
+    /// Publishes the CPU candidate only when its matching overlays are ready.
+    func commitPanPresentation() {
+        guard isPanPresentationDeferred, let geometry else { return }
+        if let pendingSurfaceMaterial { surface?.model?.materials = [pendingSurfaceMaterial] }
+        pendingSurfaceMaterial = nil
+        surfaceMesh?.update(from: geometry.top)
+        wallMesh?.update(from: geometry.walls)
+        presentedPanOffset = panOffset
+        presentedSurfaceRevision = surfaceRevision
+        isPanPresentationDeferred = false
     }
 
     /// Swaps in freshly-rolled ground beneath the chunk.
@@ -170,6 +193,12 @@ class TerrainEntity: Entity {
     ) {
         guard var geometry, self.heightField != nil else { return }
 
+        let sameMapping = heightField.anchor == self.heightField?.anchor
+            && heightField.elevationScale == self.heightField?.elevationScale
+            && heightField.baselineElevation == self.heightField?.baselineElevation
+            && (newGroundScale == nil || newGroundScale == groundScale)
+            && (newPanOffset == nil || newPanOffset == panOffset)
+        isPanPresentationDeferred = sameMapping && (parent as? DioramaEntity)?.overlayRenderer.canDeferPanPresentation == true
         self.heightField = heightField
         if let newPanOffset {
             self.panOffset = newPanOffset
@@ -177,15 +206,24 @@ class TerrainEntity: Entity {
         if let newGroundScale, newGroundScale > 0 {
             self.groundScale = newGroundScale
         }
-        if let surfaceMaterial {
-            surface?.model?.materials = [surfaceMaterial]
+        if isPanPresentationDeferred {
+            if let surfaceMaterial { pendingSurfaceMaterial = surfaceMaterial }
+        } else {
+            // A zoom may supersede a staged roll while keeping its newly loaded grids.
+            // Keep that roll's imagery too when the caller asks to retain the material.
+            if let material = surfaceMaterial ?? pendingSurfaceMaterial { surface?.model?.materials = [material] }
+            pendingSurfaceMaterial = nil
         }
 
         TerrainSolidGenerator.resample(&geometry, heightField: heightField, panOffset: panOffset)
-        surfaceMesh?.update(from: geometry.top)
-        wallMesh?.update(from: geometry.walls)
+        if !isPanPresentationDeferred {
+            surfaceMesh?.update(from: geometry.top)
+            wallMesh?.update(from: geometry.walls)
+            presentedPanOffset = panOffset
+        }
         self.geometry = geometry
         surfaceRevision &+= 1
+        if !isPanPresentationDeferred { presentedSurfaceRevision = surfaceRevision }
     }
 
     /// Creates a terrain entity from a mesh and a pre-built material.

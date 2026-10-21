@@ -96,6 +96,167 @@ struct DioramaOverlayRenderingTests {
         #expect(root.overlayRenderer.geometryTaskCount == 1)
     }
 
+    @Test func warmPanPublishesCoherentClippedGeometryWithoutABlankFrame() async throws {
+        let (root, proxy) = try OverlayRenderFixture.make()
+        let content = DioramaContentGroup {
+            DioramaPolygon(OverlayRenderFixture.polygon(proxy, hole: true), id: "park").fill(.green)
+        }
+        root.applyContent(content, using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        let record = try #require(root.overlayRenderer.records["park"])
+        let part = try #require(record.layers[.fill])
+        let resource = part.model.model?.mesh
+        var projection = try #require(proxy.projection as? TerrainProjection)
+        for offset: Float in [0.02, 0.04, -0.01, 0] {
+            let previous = part.mesh.positions
+            let presented = root.terrain?.presentedPanOffset
+            projection.panOffset = .init(offset, offset / 2)
+            root.terrain?.setPanOffset(projection.panOffset)
+            let moved = DioramaProxy(configuration: proxy.configuration, projection: projection)
+            root.applyContent(content, using: moved, physicalSize: 1)
+            // Keep the last coherent frame visible while parallel replacement work finishes.
+            #expect(record.entity.isEnabled)
+            #expect(part.mesh.positions == previous)
+            #expect(root.terrain?.presentedPanOffset == presented)
+            #expect(root.terrain?.isPanPresentationDeferred == true)
+            await root.overlayRenderer.waitUntilIdle()
+            #expect(root.terrain?.presentedPanOffset == projection.panOffset)
+            #expect(root.terrain?.isPanPresentationDeferred == false)
+            #expect(record.entity.isEnabled)
+            #expect(record.appliedKey == record.key)
+            #expect(part.mesh.positions != previous)
+            #expect(part.model.model?.mesh === resource)
+            let expected = try DioramaOverlayGeometryBuilder.build(shape: record.input.shape,
+                style: record.input.annotation.style, proxy: moved,
+                surface: OverlaySurfaceMesh(terrain: #require(root.terrain?.surfaceBuffers)), physicalSize: 1)
+            #expect(part.mesh.positions == expected.first(where: { $0.kind == .fill })?.mesh.positions)
+            #expect(part.mesh.indices == expected.first(where: { $0.kind == .fill })?.mesh.indices)
+        }
+        #expect(root.overlayRenderer.diagnostics.isEmpty)
+    }
+
+    @Test func pendingPanContentEditsCannotReviveAnObsoleteShape() async throws {
+        let (root, proxy) = try OverlayRenderFixture.make()
+        let polygon = OverlayRenderFixture.polygon(proxy)
+        let original = DioramaContentGroup {
+            DioramaPolygon(polygon, id: "changed")
+            DioramaPolygon(polygon, id: "kept")
+        }
+        root.applyContent(original, using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        var projection = try #require(proxy.projection as? TerrainProjection)
+        projection.panOffset = .init(0.03, 0)
+        root.terrain?.setPanOffset(projection.panOffset)
+        let moved = DioramaProxy(configuration: proxy.configuration, projection: projection)
+        root.applyContent(original, using: moved, physicalSize: 1)
+        let changed = DioramaContentGroup {
+            DioramaCircle(center: .init(latitude: 36, longitude: -112), radius: -1, id: "changed")
+            DioramaPolygon(polygon, id: "kept").fill(.orange)
+        }
+        for _ in 0..<2 {
+            root.applyContent(changed, using: moved, physicalSize: 1)
+            #expect(root.overlayRenderer.records["changed"]?.entity.isEnabled == false)
+            #expect(root.overlayRenderer.records["kept"]?.entity.isEnabled == true)
+        }
+        await root.overlayRenderer.waitUntilIdle()
+        #expect(root.overlayRenderer.diagnostics["changed"] != nil)
+        #expect(root.overlayRenderer.records["kept"]?.appliedKey == root.overlayRenderer.records["kept"]?.key)
+        #expect(root.terrain?.presentedPanOffset == projection.panOffset)
+    }
+
+    @Test func removingPanOverlaysCommitsTerrainAndDoesNotRestoreOldPins() async throws {
+        let (root, proxy) = try OverlayRenderFixture.make()
+        let content = DioramaContentGroup {
+            DioramaPolygon(OverlayRenderFixture.polygon(proxy), id: "park")
+            DioramaMarker("Old", coordinate: .init(latitude: 36, longitude: -112), id: "old")
+        }
+        root.applyContent(content, using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        var projection = try #require(proxy.projection as? TerrainProjection)
+        projection.panOffset = .init(0.03, 0)
+        root.terrain?.setPanOffset(projection.panOffset)
+        let moved = DioramaProxy(configuration: proxy.configuration, projection: projection)
+        root.applyContent(content, using: moved, physicalSize: 1)
+        let oldTasks = root.overlayRenderer.records.values.compactMap(\.task)
+        root.applyContent(DioramaContentGroup {
+            DioramaMarker("New", coordinate: .init(latitude: 36, longitude: -112), id: "new")
+        }, using: moved, physicalSize: 1)
+        for task in oldTasks { await task.value }
+        #expect(root.overlayRenderer.records.isEmpty)
+        #expect(root.markerEntities.keys.sorted() == ["new"])
+        #expect(root.terrain?.isPanPresentationDeferred == false)
+        #expect(root.terrain?.presentedPanOffset == projection.panOffset)
+    }
+
+    @Test func substrateReplacementCannotOverwriteAPanDrainedByItsCompletion() async throws {
+        let (root, proxy) = try OverlayRenderFixture.make()
+        let content = DioramaContentGroup { DioramaPolygon(OverlayRenderFixture.polygon(proxy), id: "park") }
+        root.applyContent(content, using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        var a = try #require(proxy.projection as? TerrainProjection)
+        a.panOffset = .init(0.02, 0)
+        root.terrain?.setPanOffset(a.panOffset)
+        root.applyContent(content, using: DioramaProxy(configuration: proxy.configuration, projection: a), physicalSize: 1)
+        let replacement = TerrainHeightField(grids: a.heightField.grids, tilePositions: a.heightField.tilePositions,
+            anchor: a.anchor, elevationScale: a.heightField.elevationScale,
+            baselineElevation: a.heightField.baselineElevation + 10)
+        let queued = TerrainProjection(heightField: replacement, panOffset: .init(0.04, 0))
+        root.panPresentationCompletion = { drainQueued in
+            guard drainQueued else { return }
+            root.terrain?.setPanOffset(queued.panOffset)
+            root.applyContent(content, using: DioramaProxy(configuration: proxy.configuration, projection: queued), physicalSize: 1)
+        }
+        root.terrain?.setTerrain(replacement, surfaceMaterial: nil)
+        root.applyContent(content, using: DioramaProxy(configuration: proxy.configuration,
+            projection: TerrainProjection(heightField: replacement, panOffset: a.panOffset)), physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        let record = try #require(root.overlayRenderer.records["park"])
+        #expect(root.terrain?.panOffset == queued.panOffset)
+        #expect(record.key?.context.pan == queued.panOffset)
+        #expect(record.appliedKey == record.key)
+        #expect(root.terrain?.presentedPanOffset == queued.panOffset)
+    }
+
+    @Test func rollingTerrainKeepsItsMatchingOverlaysVisibleUntilReplacementIsReady() async throws {
+        let (root, proxy) = try OverlayRenderFixture.make()
+        let content = DioramaContentGroup { DioramaPolygon(OverlayRenderFixture.polygon(proxy), id: "park") }
+        root.applyContent(content, using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        let record = try #require(root.overlayRenderer.records["park"])
+        let base = try #require(proxy.projection as? TerrainProjection)
+        let tile = TileMath.tileXY(for: Coordinate(proxy.configuration.center), zoom: base.anchor.zoom)
+        let field = TerrainHeightField(grids: [.init(width: 2, height: 2, values: [200, 200, 200, 200])],
+            tilePositions: [(tile.x, tile.y)], anchor: base.anchor,
+            elevationScale: base.heightField.elevationScale, baselineElevation: base.heightField.baselineElevation)
+        let revision = record.appliedKey?.context.revision
+        let old = record.layers[.fill]?.mesh.positions
+        let previousMaterial = try #require(root.terrain?.surface?.model?.materials.first as? UnlitMaterial)
+        let nextMaterial = DioramaMaterials.unlitMaterial(color: .blue)
+        root.terrain?.setTerrain(field, surfaceMaterial: nextMaterial)
+        let heldMaterial = try #require(root.terrain?.surface?.model?.materials.first as? UnlitMaterial)
+        #expect(heldMaterial.color.tint.cgColor.components == previousMaterial.color.tint.cgColor.components)
+        root.applyContent(content, using: DioramaProxy(configuration: proxy.configuration,
+            projection: TerrainProjection(heightField: field)), physicalSize: 1)
+        #expect(record.entity.isEnabled)
+        #expect(record.layers[.fill]?.mesh.positions == old)
+        #expect(record.appliedKey?.context.revision == revision)
+        #expect(root.terrain?.isPanPresentationDeferred == true)
+        await root.overlayRenderer.waitUntilIdle()
+        #expect(record.entity.isEnabled)
+        #expect(record.appliedKey == record.key)
+        #expect(record.layers[.fill]?.mesh.positions != old)
+        #expect(root.terrain?.isPanPresentationDeferred == false)
+        let installed = try #require(root.terrain?.surface?.model?.materials.first as? UnlitMaterial)
+        #expect(installed.color.tint.cgColor.components == nextMaterial.color.tint.cgColor.components)
+        // A zoom superseding the next staged roll must keep that roll's imagery.
+        let latest = DioramaMaterials.unlitMaterial(color: .red)
+        root.terrain?.setTerrain(field, surfaceMaterial: latest)
+        root.terrain?.setTerrain(field, surfaceMaterial: nil, groundScale: 2)
+        let zoomed = try #require(root.terrain?.surface?.model?.materials.first as? UnlitMaterial)
+        #expect(zoomed.color.tint.cgColor.components == latest.color.tint.cgColor.components)
+        #expect(root.terrain?.isPanPresentationDeferred == false)
+    }
+
     @Test func heightOnlyRebuildRetainsInstalledMaterialAndResource() async throws {
         let (root, proxy) = try OverlayRenderFixture.make()
         let polygon = OverlayRenderFixture.polygon(proxy)

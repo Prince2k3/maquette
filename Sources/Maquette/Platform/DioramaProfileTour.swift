@@ -31,9 +31,10 @@ extension OrbitDioramaModel {
                 var intervals: [Double] = []
                 var last = start
                 var completed = false
-                var overlaySamples = 0, hiddenOverlaySamples = 0
+                var overlaySamples = 0, hiddenOverlaySamples = 0, incoherentSurfaceSamples = 0
                 let renderer = (store.dioramaEntity as? DioramaEntity)?.overlayRenderer
                 let buildsAtStart = renderer?.geometryBuildCount ?? 0
+                let presentationsAtStart = renderer?.panPresentationCount ?? 0
                 defer {
                     if phase == 0 { primaryDrag(dx: -previous.x, dy: -previous.y) }
                     else { _ = zoomInput(-previous.x, target: phase == 1 ? .ground : .camera) }
@@ -50,6 +51,11 @@ extension OrbitDioramaModel {
                         for record in renderer.records.values {
                             overlaySamples += 1
                             if !record.entity.isEnabled { hiddenOverlaySamples += 1 }
+                            else if let terrain = (store.dioramaEntity as? DioramaEntity)?.terrain,
+                                    (record.appliedKey?.context.pan != terrain.presentedPanOffset
+                                     || record.appliedKey?.context.revision != terrain.presentedSurfaceRevision) {
+                                incoherentSurfaceSamples += 1
+                            }
                         }
                     }
                     let angle = seconds * .pi * 4 / 10
@@ -81,7 +87,7 @@ extension OrbitDioramaModel {
                 endInteraction()
                 signposter.endInterval(name, state, "ticks=\(tick) missed=\(missed) completed=true")
                 logger.notice("PROFILE phase=\(String(describing: name), privacy: .public) workload=\(workload, privacy: .public) ticks=\(tick) missed=\(missed) maxInputGapMs=\(intervals.max() ?? 0) completed=true")
-                logger.notice("PROFILE overlaySamples=\(overlaySamples) hiddenOverlaySamples=\(hiddenOverlaySamples) completedBuilds=\((renderer?.geometryBuildCount ?? 0) - buildsAtStart) phase=\(String(describing: name), privacy: .public)")
+                logger.notice("PROFILE overlaySamples=\(overlaySamples) hiddenOverlaySamples=\(hiddenOverlaySamples) completedBuilds=\((renderer?.geometryBuildCount ?? 0) - buildsAtStart) phase=\(String(describing: name), privacy: .public) incoherentSurfaceSamples=\(incoherentSurfaceSamples) panPresentations=\((renderer?.panPresentationCount ?? 0) - presentationsAtStart)")
                 try await Task.sleep(for: .seconds(2))
             }
             logger.notice("PROFILE complete workload=\(workload, privacy: .public)")

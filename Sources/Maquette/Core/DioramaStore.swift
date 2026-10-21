@@ -2016,6 +2016,8 @@ final class DioramaStore {
 
     // MARK: - Content Application
 
+    let annotationRegistry = DioramaAnnotationRegistry()
+    private(set) var annotationPlacementRevision = 0
     /// The content most recently applied, retained so panning can reposition it.
     private var appliedContent: DioramaContentGroup?
     private var contentIdentityResolver = DioramaContentIdentityResolver()
@@ -2038,13 +2040,16 @@ final class DioramaStore {
     /// - Parameter content: The content group to apply, or `nil` to skip.
     public func applyContent(_ content: DioramaContentGroup?) {
         appliedContent = content
+        annotationPlacementRevision &+= 1
         guard let content else {
+            annotationRegistry.reconcile(.empty)
             (dioramaEntity as? DioramaEntity)?.clearOverlays()
             routePreviewEntity = nil
             contentIdentityResolver = DioramaContentIdentityResolver()
             return
         }
         let resolvedContent = contentIdentityResolver.resolve(content)
+        annotationRegistry.reconcile(resolvedContent)
         guard let rootEntity = dioramaEntity as? DioramaEntity else { return }
 
         let proxy = DioramaProxy(

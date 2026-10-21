@@ -61,6 +61,8 @@ public struct DioramaFeature: DioramaContent, Sendable, Equatable, Identifiable 
     var selectionTag: DioramaSelectionTag? = nil
     var contentStyleOverrides: UInt16 = 0
     var overlay: DioramaOverlayPayload?
+    var viewAnnotation: DioramaAnnotationDescriptor?
+    var viewFactory: DioramaAnnotationViewFactory?
 
     /// The feature to draw.
     public var feature: Feature
@@ -314,11 +316,11 @@ public struct DioramaContentBuilder {
     }
 
     public static func buildEither(first component: DioramaContentGroup) -> DioramaContentGroup {
-        component
+        DioramaContentGroup(items: component.items.map { $0.scoped(to: .branch(true)) })
     }
 
     public static func buildEither(second component: DioramaContentGroup) -> DioramaContentGroup {
-        component
+        DioramaContentGroup(items: component.items.map { $0.scoped(to: .branch(false)) })
     }
 
     public static func buildArray(_ components: [DioramaContentGroup]) -> DioramaContentGroup {

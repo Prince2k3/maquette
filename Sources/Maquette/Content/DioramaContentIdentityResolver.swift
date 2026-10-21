@@ -16,12 +16,16 @@ struct DioramaContentIdentityResolver {
         })
         let items = content.items.map { item -> DioramaContentItem in
             guard case .annotation(var annotation) = item,
-                  let identity = annotation.contentIdentity,
-                  identity.scopes.contains(where: {
-                      if case .element = $0 { return true }
-                      return false
-                  })
-            else { return item }
+                  var identity = annotation.contentIdentity else { return item }
+            let isCollection = identity.scopes.contains(where: {
+                if case .element = $0 { return true }
+                return false
+            })
+            let isAnonymousView = annotation.viewAnnotation.map { !$0.hasExplicitID } ?? false
+            guard isCollection || isAnonymousView else { return item }
+            // A native label's state belongs to its declaration, independently of its title,
+            // coordinate and styling. Legacy pins retain their feature-digest behavior.
+            if isAnonymousView { identity.annotationID = "" }
 
             var identifier = next[identity] ?? identifiers[identity] ?? "collection-\(UUID().uuidString)"
             // Explicit application IDs may use any spelling, including our generated prefix.

@@ -189,6 +189,8 @@ class DioramaEntity: Entity {
         for item in content.items {
             switch item {
             case .annotation(let annotation):
+                // SwiftUI labels are hosted by the platform, never also rendered as pins.
+                if annotation.viewAnnotation != nil { continue }
                 if case .circle(let center, let radius) = annotation.overlay {
                     plans.append(.overlay(.init(id: annotation.id, shape: .circle(center, radius), annotation: annotation)))
                     continue

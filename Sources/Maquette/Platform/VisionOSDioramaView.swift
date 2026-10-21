@@ -15,6 +15,7 @@ struct VisionOSDioramaView: View {
     @State private var model: VisionOSDioramaModel
     @State private var lastMagnification: CGFloat?
     @State private var dragStartOrientation: simd_quatf?
+    @State private var annotationHost = VisionOSAnnotationHost()
 
     @Environment(\.routePreviewController) private var routePreviewController
     @Environment(\.displayScale) private var displayScale
@@ -98,11 +99,12 @@ struct VisionOSDioramaView: View {
                     SpatialTapGesture()
                         .targetedToAnyEntity()
                         .onEnded { value in
+                            guard !VisionOSAnnotationHost.contains(value.entity) else { return }
                             model.handleTap(on: value.entity)
                         }
                 )
                 .simultaneousGestureIf(enabledGestures.contains(.pan) || enabledGestures.contains(.rotate),
-                    DragGesture()
+                    DragGesture(minimumDistance: 8)
                         .targetedToAnyEntity()
                         .onChanged { value in
                             let translation = value.convert(
@@ -151,19 +153,28 @@ struct VisionOSDioramaView: View {
     }
 
     private func realityView(geometry: GeometryProxy3D) -> some View {
-        RealityView { content in
+        RealityView { content, _ in
             content.add(DioramaSceneRig.makeSunLight())
             // The stages are added once and never replaced; what the store hands back goes
             // *under* them. See `VisionOSDioramaModel.syncScene()`.
             content.add(model.chunkStage)
             content.add(model.globeStage)
-        } update: { realityViewContent in
+        } update: { realityViewContent, attachments in
             let volumeBounds = realityViewContent.convert(
                 geometry.frame(in: .local), from: .local, to: .scene
             )
             model.updateVolume(bounds: volumeBounds)
             model.syncScene()
             model.applyTransitionVisibility()
+            annotationHost.update(
+                attachments: attachments,
+                registry: model.store.annotationRegistry,
+                root: model.store.dioramaEntity,
+                projection: model.store.projection,
+                configuration: model.store.configuration,
+                visible: model.store.loadingState == .loaded
+                    && !model.transition.isShowingGlobe && !model.transition.isBusy
+            )
 
             // Drive 3D Tiles LOD from a documented approximation rather than a hardcoded guess.
             // A volumetric window offers no head pose — that needs an immersive space and a
@@ -176,6 +187,18 @@ struct VisionOSDioramaView: View {
                     screenHeight: Float(geometry.size.height * displayScale),
                     fov: DioramaSceneRig.fieldOfViewRadians
                 )
+            }
+        } attachments: {
+            ForEach(VisionOSAnnotationHost.records(in: model.store.annotationRegistry), id: \.lifetimeID) { record in
+                Attachment(id: record.lifetimeID) {
+                    DioramaAnnotationLabel(record: record, selection: inputs.selection) {
+                        model.applySelection()
+                    }
+                    .tint(record.feature.style.tint)
+                    .opacity(min(max(record.feature.style.opacity, 0), 1))
+                    .allowsHitTesting(record.feature.style.opacity > 0)
+                    .accessibilityHidden(record.feature.style.opacity <= 0)
+                }
             }
         }
     }

@@ -22,6 +22,7 @@ import SwiftUI
 struct OrbitDioramaView<Gestures: ViewModifier>: View {
     let inputs: DioramaViewInputs
     @State private var model: OrbitDioramaModel
+    @State private var annotations = OrbitAnnotationCoordinator()
     private let makeGestures: (OrbitDioramaModel) -> Gestures
 
     @Environment(\.routePreviewController) private var routePreviewController
@@ -59,6 +60,7 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
     var body: some View {
         GeometryReader { geometry in
             realityContent
+                .overlay { OrbitAnnotationHost(model: model, coordinator: annotations) }
                 .onAppear {
                     model.viewSize = geometry.size
                     model.cameraSafeAreaInsets = geometry.safeAreaInsets
@@ -189,10 +191,11 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
 
     @ViewBuilder
     private var realityContent: some View {
-        TimelineView(.animation(paused: !model.needsAnimation)) { timeline in
+        TimelineView(.animation(paused: !(model.needsAnimation || (model.arPlacementActive && !model.store.annotationRegistry.orderedRecords.isEmpty)))) { timeline in
             realityView()
                 .onChange(of: timeline.date) { _, newDate in
                     model.advanceAnimation(at: newDate)
+                    annotations.requestLayout(model)
                 }
         }
     }
@@ -284,6 +287,7 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
     }
 
     private func installPicking(_ context: RealityViewCameraContent) {
+        annotations.install(context, model: model)
         model.screenTap = { [weak model] point in
             guard let model, let root = model.store.dioramaEntity as? DioramaEntity,
                   let sceneRay = context.ray(through: point, in: .local, to: .scene) else { return }

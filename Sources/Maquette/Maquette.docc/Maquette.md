@@ -115,3 +115,8 @@ DioramaView(
 - ``DioramaLoadingContext``
 - ``DioramaStreamingProgress``
 - ``DioramaError``
+
+### Custom labels
+
+- <doc:CustomAnnotations>
+- ``DioramaAnnotation``

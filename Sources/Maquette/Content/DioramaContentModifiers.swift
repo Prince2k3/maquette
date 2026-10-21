@@ -140,6 +140,7 @@ struct DioramaContentID: Hashable, @unchecked Sendable {
 
 enum ContentScope: Hashable, Sendable {
     case statement(Int)
+    case branch(Bool)
     case iteration(Int)
     case element(DioramaContentID)
 }
@@ -153,10 +154,13 @@ struct DioramaContentIdentity: Hashable, Sendable {
 extension DioramaContentItem {
     func scoped(to scope: ContentScope) -> Self {
         guard case .annotation(var annotation) = self else { return self }
+        if case .branch = scope, annotation.viewAnnotation == nil { return self }
         var identity = annotation.contentIdentity ?? DioramaContentIdentity(
             scopes: [], annotationID: annotation.id
         )
-        if case .element = scope { identity.annotationID = "" }
+        if case .element = scope, annotation.viewAnnotation?.hasExplicitID != true {
+            identity.annotationID = ""
+        }
         identity.scopes.insert(scope, at: 0)
         annotation.contentIdentity = identity
         return .annotation(annotation)
@@ -242,6 +246,7 @@ public struct DioramaIdentifiedContent<Content: DioramaContent>: DioramaContent 
     public var items: [DioramaContentItem] {
         content.items.map { item in
             guard case .annotation(var feature) = item else { return item }
+            feature.viewAnnotation?.hasExplicitID = true
             feature.id = identifier
             feature.selectionAnnotationID = nil
             feature.contentIdentity?.annotationID = identifier

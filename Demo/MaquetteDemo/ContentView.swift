@@ -322,10 +322,11 @@ struct ContentView: View {
     /// The orbit camera, seeded from the preset and thereafter the user's.
     @State private var position: DioramaCameraPosition = .automatic
 
-    private enum Place: Hashable, Sendable { case yavapaiPoint, surveyArea, observationRadius }
+    private enum Place: Hashable, Sendable { case yavapaiPoint, surveyArea, observationRadius, cameraLabel }
 
     /// Application selection is independent of the marker's rendering identity.
     @State private var selectedAnnotation: Place?
+    @State private var annotationMoved = false
 
     /// Whether the diorama is placed on a real surface through the camera (iOS only).
     @State private var arActive = false
@@ -388,6 +389,21 @@ struct ContentView: View {
             selection: $selectedAnnotation
         ) {
             if preset.id == "camera" {
+                DioramaAnnotation("Camera viewpoint", coordinate: Turf.destination(from: preset.region.center, meters: annotationMoved ? 250 : 0, bearing: 0), id: "camera-viewpoint") {
+                    StatefulAnnotationCard(selected: selectedAnnotation == .cameraLabel)
+                }
+                .annotationOffset(y: -12)
+                .annotationPriority(10)
+                .tint(annotationMoved ? .orange : .cyan)
+                .annotationOcclusion(.alwaysVisible)
+                .tag(Place.cameraLabel)
+                DioramaAnnotation("Terrain anchor", coordinate: Turf.destination(from: preset.region.center, meters: 300, bearing: 180), id: "terrain-anchor") {
+                    Text("Terrain anchor")
+                        .font(.caption.weight(.medium))
+                        .padding(6)
+                        .background(.regularMaterial, in: Capsule())
+                }
+                .annotationOcclusion(.terrain)
                 DioramaMarker("North", coordinate: Turf.destination(from: preset.region.center, meters: 600, bearing: 0), tint: .cyan)
                 DioramaMarker("East", coordinate: Turf.destination(from: preset.region.center, meters: 600, bearing: 90), tint: .orange)
                 DioramaMarker("South", coordinate: Turf.destination(from: preset.region.center, meters: 600, bearing: 180), tint: .pink)
@@ -425,6 +441,14 @@ struct ContentView: View {
                 DioramaCompass()
                 DioramaResetButton()
                 CameraExampleControls(camera: position.camera ?? preset.camera)
+                if preset.id == "camera" {
+                    Button("Select viewpoint", systemImage: "mappin.and.ellipse") {
+                        selectedAnnotation = selectedAnnotation == .cameraLabel ? nil : .cameraLabel
+                    }
+                    .accessibilityIdentifier("select-viewpoint-alternative")
+                    Button("Move viewpoint", systemImage: "arrow.up.and.down") { annotationMoved.toggle() }
+                        .accessibilityIdentifier("move-viewpoint")
+                }
             }
             .buttonStyle(.bordered)
             .labelStyle(.iconOnly)
@@ -623,5 +647,30 @@ private struct CameraExampleControls: View {
         }
         .disabled(cameraProxy?.activeRequest == nil)
         .accessibilityIdentifier("camera-cancel")
+    }
+}
+
+/// Local state belongs to this label while its place or the camera moves.
+private struct StatefulAnnotationCard: View {
+    let selected: Bool
+    @State private var count = 0
+    @State private var note = "Viewpoint"
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Text(selected ? "Viewpoint selected" : "Camera viewpoint")
+                .font(.caption.weight(.semibold))
+                .accessibilityIdentifier("annotation-title")
+            Button("Visits: \(count)") { count += 1 }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("annotation-counter")
+            TextField("Note", text: $note)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 115)
+                .accessibilityIdentifier("annotation-note")
+        }
+        .padding(10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.orange : .white.opacity(0.25)))
     }
 }

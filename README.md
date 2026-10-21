@@ -87,6 +87,28 @@ removed content leaves the application selection intact. Tagged polylines, polyg
 Content modifiers also support `.altitudeReference(.relativeToGround)`. Widths use explicit `.physicalMeters` or `.geographicMeters` units. A modifier on a group supplies defaults; modifiers inside its children
 win. Existing initializer styling and custom content that implements `items` remain supported.
 
+## Custom SwiftUI annotations
+
+Attach a SwiftUI label or control to a coordinate. Stable `ForEach` IDs preserve each label's local
+state as its place moves or the collection changes; use `.tag` for typed selection.
+
+```swift
+DioramaView(region: region, selection: $selectedPlace) {
+    ForEach(places) { place in
+        DioramaAnnotation(place.name, coordinate: place.coordinate, anchor: .bottom) {
+            Text(place.name).padding(8).background(.regularMaterial, in: Capsule())
+        }
+        .annotationOffset(y: -8)
+        .annotationPriority(10)
+        .tag(place.id)
+    }
+}
+```
+
+Labels project onto the viewport on iOS/iPadOS/macOS and become native physical attachments on
+visionOS. See [[CustomAnnotations|Custom SwiftUI annotations]] in the DocC catalog for state,
+interactive controls, occlusion, layout budgets, and spatial sizing.
+
 ## Geographic overlays
 
 ```swift
@@ -113,7 +135,7 @@ reuse the texture. Dash lengths and phase use the stroke width's unit system.
 
 GeoJSON polygons and `DioramaFeature(feature)` use the same holes-aware rendering path. The old
 GeoJSON wrapper names `DioramaAnnotation` and `AnnotationStyle` are now `DioramaFeature` and
-`DioramaFeatureStyle`; custom SwiftUI annotation labels are planned separately.
+`DioramaFeatureStyle`; `DioramaAnnotation` now declares a custom SwiftUI label.
 
 These overlays conform to raster terrain triangles. Ground-relative placement over photorealistic
 3D Tiles is unavailable: unsupported overlays are omitted with a diagnostic instead of appearing on

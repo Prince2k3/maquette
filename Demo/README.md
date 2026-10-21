@@ -105,7 +105,8 @@ and a long pan/zoom memory capture on target hardware. The opt-in synthetic cont
 MAQUETTE_RUN_CONTENT_BENCHMARK=1 swift test -c release --filter MapContentBenchmark
 ```
 
-It measures preparation and RSS observations, checks resource identity, and exercises repeated pan
-cycles. It does not establish rendered frame time, GPU time, or long-run memory acceptance. Use
+It reports preparation, completed pan/ground-zoom mean/p95/maximum costs, and RSS observations.
+It checks resource identity and latest-result behavior during repeated nominal 16 ms input;
+actual observed input cadence is printed separately. It does not establish rendered frame time, GPU time, or long-run memory acceptance. Use
 `Scripts/validate-demo.sh` to generate and compile the complete demo for each supported platform;
 CI builds with an empty credential template and never runs live provider requests.

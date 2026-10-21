@@ -96,6 +96,40 @@ struct DioramaOverlayRenderingTests {
         #expect(root.overlayRenderer.geometryTaskCount == 1)
     }
 
+    @Test func heightOnlyRebuildRetainsInstalledMaterialAndResource() async throws {
+        let (root, proxy) = try OverlayRenderFixture.make()
+        let polygon = OverlayRenderFixture.polygon(proxy)
+        func content(_ color: Color) -> DioramaContentGroup {
+            DioramaContentGroup { DioramaPolygon(polygon, id: "park").fill(color) }
+        }
+        root.applyContent(content(.green), using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        let record = try #require(root.overlayRenderer.records["park"])
+        let part = try #require(record.layers[.fill])
+        let resource = try #require(part.model.model?.mesh)
+        let firstY = try #require(part.mesh.positions.first?.y)
+        let materials = root.overlayRenderer.materialUpdateCount
+        let projection = try #require(proxy.projection as? TerrainProjection)
+        let tile = TileMath.tileXY(for: Coordinate(proxy.configuration.center), zoom: projection.anchor.zoom)
+        let field = TerrainHeightField(grids: [.init(width: 2, height: 2, values: [200, 200, 200, 200])],
+            tilePositions: [(tile.x, tile.y)], anchor: projection.anchor,
+            elevationScale: projection.heightField.elevationScale, baselineElevation: projection.heightField.baselineElevation)
+        root.terrain?.setTerrain(field, surfaceMaterial: nil, panOffset: .zero, groundScale: 1)
+        let moved = DioramaProxy(configuration: proxy.configuration, projection: TerrainProjection(heightField: field))
+        root.applyContent(content(.green), using: moved, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        #expect(root.overlayRenderer.records["park"] === record)
+        #expect(part.model.model?.mesh === resource)
+        #expect(part.mesh.positions.first?.y != firstY)
+        #expect(root.overlayRenderer.materialUpdateCount == materials)
+        let builds = root.overlayRenderer.geometryBuildCount
+        root.applyContent(content(.red), using: moved, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        #expect(root.overlayRenderer.materialUpdateCount == materials + 1)
+        #expect(root.overlayRenderer.geometryBuildCount == builds)
+        #expect(record.entity.isEnabled)
+    }
+
     @Test func asyncCompletionInvalidatesAnIdleSceneObserver() async throws {
         let (root, proxy) = try OverlayRenderFixture.make()
         let changed = Mutex(false)

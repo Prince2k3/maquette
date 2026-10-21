@@ -73,6 +73,43 @@ struct OverlayPolygonGeometryTests {
         }
     }
 
+    @Test func sweptValidationRetainsNearTouchingEdgeRejection() throws {
+        for rotate in [false, true] {
+            for (gap, rejected) in [(2e-10, true), (8e-10, false)] {
+                let points: [SIMD2<Double>] = [.init(0, 0), .init(4, 0), .init(4, 4), .init(2, 4),
+                    .init(2, gap), .init(1, gap), .init(1, 4), .init(0, 4)]
+                let ring = OverlayFixture.ring(points.map { rotate ? .init(-$0.y, $0.x) : $0 })
+                if rejected {
+                    #expect(throws: OverlayGeometryError.selfIntersection) {
+                        try OverlayPolygonTessellator.triangulate(rings: [ring])
+                    }
+                } else {
+                    let triangles = try OverlayPolygonTessellator.triangulate(rings: [ring])
+                    #expect(abs(OverlayFixture.area(triangles) - (12 + gap)) < 1e-8)
+                }
+            }
+        }
+    }
+
+    @Test func containedClipPreservesAttributesAndNormalizesOtherWindings() throws {
+        let vertices = OverlayFixture.ring([.init(1, 1), .init(2, 1), .init(1, 2)])
+        var a = vertices[0], b = vertices[1], c = vertices[2]
+        a.uv = .init(0.1, 0.2); b.uv = .init(0.7, 0.2); c.uv = .init(0.1, 0.9)
+        a.altitude = 10; b.altitude = 20; c.altitude = 30
+        for triangle in [OverlayTriangle(a: a, b: b, c: c), OverlayTriangle(a: a, b: c, c: b)] {
+            let clipped = try OverlayAreaGeometry.clip([triangle], boundary: OverlayFixture.square)
+            #expect(abs(OverlayFixture.area(clipped) - 0.5) < 1e-9)
+            #expect(clipped.allSatisfy { OverlayMath.cross($0.b.point - $0.a.point, $0.c.point - $0.a.point) < 0 })
+            for vertex in clipped.flatMap(\.vertices) {
+                let u = vertex.point.x - 1, v = vertex.point.y - 1
+                #expect(u >= 0 && v >= 0 && u + v <= 1)
+                #expect(abs(vertex.uv.x - (0.1 + u * 0.6)) < 1e-10)
+                #expect(abs(vertex.uv.y - (0.2 + v * 0.7)) < 1e-10)
+                #expect(abs(vertex.altitude - (10 + u * 10 + v * 20)) < 1e-10)
+            }
+        }
+    }
+
     @Test func budgetsThrowInsteadOfReturningPartialArea() {
         #expect(throws: OverlayGeometryError.budgetExceeded) {
             try OverlayPolygonTessellator.triangulate(rings: [OverlayFixture.square], limits: .init(maxTriangles: 1))

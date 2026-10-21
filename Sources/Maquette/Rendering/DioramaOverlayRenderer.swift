@@ -29,6 +29,10 @@ import SwiftUI
         let model = ModelEntity()
         let resource = OverlayMeshResource()
         var mesh = OverlayMesh()
+        var installedResource: MeshResource?
+        var installedStyle: DioramaFeatureStyle?
+        var installedImage: DioramaImageResource.Key?
+        var installedOrder: Int?
     }
     @MainActor final class Record {
         let entity = ModelEntity()
@@ -48,6 +52,8 @@ import SwiftUI
     private(set) var diagnostics: [String: OverlayGeometryError] = [:]
     private(set) var geometryBuildCount = 0
     private(set) var textureUploadCount = 0
+    @ObservationIgnored private(set) var reconciliationDuration = Duration.zero
+    @ObservationIgnored private(set) var materialUpdateCount = 0
     private var textures: [DioramaImageResource.Key: TextureResource] = [:]
     private var context: Context?
     private var surfaceTask: Task<OverlaySurfaceMesh?, Error>?
@@ -165,6 +171,8 @@ import SwiftUI
                     // identical footprints must not cancel geometry still needed by another.
                     let layers = try await worker.value
                     guard !Task.isCancelled, let self, let record, self.records[input.id] === record, record.key == key else { return }
+                    let completionStart = ContinuousClock.now
+                    defer { self.reconciliationDuration += completionStart.duration(to: .now) }
                     let kinds = Set(layers.map(\.kind))
                     for (kind, part) in record.layers where !kinds.contains(kind) { part.model.removeFromParent(); record.layers[kind] = nil }
                     for layer in layers {
@@ -177,7 +185,7 @@ import SwiftUI
                     record.appliedKey = key
                     self.geometryBuildCount += 1; self.diagnostics[input.id] = nil
                     try self.updateMaterials(record)
-                    self.updateSelection()
+                    self.updateSelection(record)
                     record.task = nil
                 } catch {
                     guard !Task.isCancelled, !(error is CancellationError), let self, let record,
@@ -197,6 +205,13 @@ import SwiftUI
         let style = record.input.annotation.style
         guard style.opacity.isFinite else { throw OverlayGeometryError.nonFiniteInput }
         for (kind, part) in record.layers {
+            let imageKey: DioramaImageResource.Key?
+            if kind == .image, case .image(let image, _) = record.input.annotation.overlay { imageKey = image.key }
+            else { imageKey = nil }
+            // Buffer writes already update a retained LowLevelMesh. Reinstall a component only
+            // when its resource, appearance, image revision or draw order actually changes.
+            if part.installedResource === part.resource.resource, part.installedStyle == style,
+               part.installedImage == imageKey, part.installedOrder == record.order { continue }
             var material = DioramaMaterials.unlitMaterial(color: kind == .fill ? style.fill : style.stroke ?? style.tint)
             if kind == .image, case .image(let image, _) = record.input.annotation.overlay {
                 let texture: TextureResource
@@ -213,19 +228,23 @@ import SwiftUI
             if let resource = part.resource.resource { part.model.model = ModelComponent(mesh: resource, materials: [material]) }
             let offset = kind == .stroke ? 1 : 0
             part.model.components.set(ModelSortGroupComponent(group: sortGroup, order: Int32(clamping: record.order * 2 + offset)))
+            part.installedResource = part.resource.resource; part.installedStyle = style
+            part.installedImage = imageKey; part.installedOrder = record.order
+            materialUpdateCount += 1
         }
         record.entity.isEnabled = record.key == record.appliedKey && !record.layers.isEmpty && style.opacity > 0
     }
 
     func updateSelection() {
-        // Spatial collision installation and orbit screen tests share this structured identity.
-        for record in records.values {
-            let identity = DioramaMarkerIdentity(annotationID: record.input.annotation.selectionAnnotationID ?? record.input.annotation.id,
-                tag: record.input.annotation.selectionTag, allowsLegacyID: false)
-            record.entity.components.set(identity)
-            record.entity.components.set(DioramaOverlaySelectionState(isSelected: root?.selection?.isSelected(identity) ?? false))
-            configureSpatialTarget(record, identity: identity)
-        }
+        for record in records.values { updateSelection(record) }
+    }
+    private func updateSelection(_ record: Record) {
+        // Completion changes one record; refreshing every sibling made N completions O(N²).
+        let identity = DioramaMarkerIdentity(annotationID: record.input.annotation.selectionAnnotationID ?? record.input.annotation.id,
+            tag: record.input.annotation.selectionTag, allowsLegacyID: false)
+        record.entity.components.set(identity)
+        record.entity.components.set(DioramaOverlaySelectionState(isSelected: root?.selection?.isSelected(identity) ?? false))
+        configureSpatialTarget(record, identity: identity)
     }
     func waitUntilIdle() async {
         for task in records.values.compactMap(\.task) { await task.value }

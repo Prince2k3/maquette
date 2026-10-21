@@ -60,7 +60,14 @@ struct OverlaySurfaceIndex: Sendable {
     }
 
     func candidates(for triangle: OverlayTriangle, work: inout OverlayWork) throws -> [Int] {
-        try candidates(bounds: triangle.bounds, polygon: triangle.vertices.map(\.point), work: &work)
+        if let raster { return try raster.rasterCandidates(for: triangle.bounds, work: &work) }
+        return try candidates(bounds: triangle.bounds, polygon: triangle.vertices.map(\.point), work: &work)
+    }
+
+    func visitCandidates(for triangle: OverlayTriangle, bounds: OverlayBounds? = nil, work: inout OverlayWork,
+                         body: (Int, inout OverlayWork) throws -> Void) throws {
+        if let raster { try raster.visitRasterCandidates(for: bounds ?? triangle.bounds, work: &work, body: body) }
+        else { for id in try candidates(for: triangle, work: &work) { try body(id, &work) } }
     }
 
     func candidates(for polygon: [SIMD2<Double>], work: inout OverlayWork) throws -> [Int] {

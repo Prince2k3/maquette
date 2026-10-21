@@ -2,7 +2,7 @@
 title: Release validation scripts
 tags: [maquette, validation, ci]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 status: active
 type: reference
 ---
@@ -48,3 +48,8 @@ Run on a machine with a working RealityKit graphics context and record build, ma
 CPU preparation, memory observations, and exclusions. Neither CPU elapsed time nor resident-set
 samples establish frame/GPU cost or long-run memory stability; those remain separate hardware
 capture tasks. There are no portable timing thresholds in CI.
+
+The content harness reports mean, p95 and maximum completed pan/ground-zoom rebuild costs,
+including asynchronous geometry and resource updates. Main-actor submission and completion
+costs are separate. Repeat after competing builds/rendering stop and retain all results; a single
+mean cannot establish a 16 ms target. Nominal-input checks also print the observed input cadence.

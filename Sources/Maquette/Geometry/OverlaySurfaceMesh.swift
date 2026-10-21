@@ -235,7 +235,8 @@ struct OverlaySurfaceMesh: Sendable {
         var work = preparedWork
         try work.checkTriangles(source.count)
         let coverage = try OverlayAreaCoverage(rings: rings, work: &work)
-        let sourceIndex = try OverlaySpatialIndex(bounds: source.map(\.bounds), work: &work)
+        let convex = OverlayConvexArea(rings)
+        let sourceIndex = try convex == nil ? OverlaySpatialIndex(bounds: source.map(\.bounds), work: &work) : nil
         var mesh = OverlayMesh()
         let candidates = try index.candidates(for: coverage.bounds, work: &work)
         mesh.reserveCapacity(min(work.limits.maxTriangles, candidates.count * 2) * 3)
@@ -256,7 +257,19 @@ struct OverlaySurfaceMesh: Sendable {
                 }
                 continue
             }
-            for sourceID in try sourceIndex.rasterCandidates(for: ground.bounds, work: &work) {
+            if let convex {
+                let triangle = OverlayTriangle(a: .init(point: a, uv: first.uv, altitude: first.altitude),
+                    b: .init(point: b, uv: first.uv, altitude: first.altitude), c: .init(point: c, uv: first.uv, altitude: first.altitude))
+                for polygon in try convex.fragments(of: triangle, epsilon: epsilon, work: &work) {
+                    for i in 1..<(polygon.count - 1) {
+                        let fragment = OverlayTriangle(a: polygon[0], b: polygon[i], c: polygon[i + 1])
+                        guard abs(OverlayMath.cross(fragment.b.point - fragment.a.point, fragment.c.point - fragment.a.point)) > epsilon * epsilon else { continue }
+                        try emit(fragment)
+                    }
+                }
+                continue
+            }
+            for sourceID in try sourceIndex!.rasterCandidates(for: ground.bounds, work: &work) {
                 let polygon = try OverlayTriangleIntersection.clip(source[sourceID], a: a, b: b, c: c, epsilon: epsilon, work: &work)
                 guard polygon.count >= 3 else { continue }
                 for i in 1..<(polygon.count - 1) {
@@ -288,49 +301,74 @@ struct OverlaySurfaceMesh: Sendable {
             }
             return mesh
         }
-        for triangle in source {
-            for candidate in try index.candidates(for: triangle, work: &work) {
+        var start = 0
+        while start < source.count {
+            let first = source[start]
+            var end = start + 1, query = first.bounds
+            // Adjacent dense-ribbon triangles share nearby terrain faces. Query/load each face
+            // once for a small spatial batch, then retain exact per-triangle intersections.
+            // Dispersed triangles and overlapping photogrammetry keep one-triangle traversal.
+            if !resolvesOverlaps, source.count >= 1_024 {
+                for next in end..<min(source.count, start + 8) {
+                    try work.spend()
+                    let box = source[next].bounds
+                    var combined = query
+                    combined.lo = simd_min(query.lo, box.lo); combined.hi = simd_max(query.hi, box.hi)
+                    let extent = combined.hi - combined.lo
+                    guard max(extent.x, extent.y) <= epsilon * 1e10 / 128 else { break }
+                    query = combined; end = next + 1
+                }
+            }
+            let range = start..<end
+            try index.visitCandidates(for: first, bounds: query, work: &work) { candidate, work in
                 let ground = surfaceTriangle(at: candidate)
-                guard triangle.bounds.intersects(ground.bounds) else { continue }
-                if !resolvesOverlaps {
-                    let polygon = try OverlayTriangleIntersection.clip(triangle,
-                        a: SIMD2(ground.a.x, ground.a.z), b: SIMD2(ground.b.x, ground.b.z), c: SIMD2(ground.c.x, ground.c.z),
-                        epsilon: epsilon, work: &work)
-                    guard polygon.count >= 3 else { continue }
-                    var area = 0.0
-                    let origin = polygon[0].point
-                    for i in 0..<polygon.count {
-                        area += OverlayMath.cross(polygon[i].point - origin, polygon[(i + 1) % polygon.count].point - origin) / 2
+                for sourceID in range {
+                    let triangle = source[sourceID]
+                    if range.count > 1 {
+                        try work.spend()
+                        guard triangle.bounds.intersects(ground.bounds) else { continue }
                     }
-                    guard abs(area) > epsilon * epsilon else { continue }
-                    for i in 1..<(polygon.count - 1) {
-                        let fragment = OverlayTriangle(a: polygon[0], b: polygon[i], c: polygon[i + 1])
-                        guard abs(OverlayMath.cross(fragment.b.point - fragment.a.point, fragment.c.point - fragment.a.point)) > epsilon * epsilon else { continue }
-                        try Self.append(fragment, lift: lift, mesh: &mesh, work: &work) { vertex in
-                            let y = ground.boundedHeight(at: vertex.point)
-                            return altitude == .relativeToGround ? y + elevationToY(vertex.altitude) - elevationToY(0) : y
+                    if !resolvesOverlaps {
+                        let polygon = try OverlayTriangleIntersection.clip(triangle,
+                            a: SIMD2(ground.a.x, ground.a.z), b: SIMD2(ground.b.x, ground.b.z), c: SIMD2(ground.c.x, ground.c.z),
+                            epsilon: epsilon, work: &work)
+                        guard polygon.count >= 3 else { continue }
+                        var area = 0.0
+                        let origin = polygon[0].point
+                        for i in 0..<polygon.count {
+                            area += OverlayMath.cross(polygon[i].point - origin, polygon[(i + 1) % polygon.count].point - origin) / 2
                         }
+                        guard abs(area) > epsilon * epsilon else { continue }
+                        for i in 1..<(polygon.count - 1) {
+                            let fragment = OverlayTriangle(a: polygon[0], b: polygon[i], c: polygon[i + 1])
+                            guard abs(OverlayMath.cross(fragment.b.point - fragment.a.point, fragment.c.point - fragment.a.point)) > epsilon * epsilon else { continue }
+                            try Self.append(fragment, lift: lift, mesh: &mesh, work: &work) { vertex in
+                                let y = ground.boundedHeight(at: vertex.point)
+                                return altitude == .relativeToGround ? y + elevationToY(vertex.altitude) - elevationToY(0) : y
+                            }
+                        }
+                        continue
                     }
-                    continue
-                }
-                let polygon = try OverlayAreaGeometry.intersect(triangle, with: ground.points, epsilon: epsilon, work: &work)
-                guard polygon.count >= 3, abs(OverlayMath.area(polygon)) > epsilon * epsilon else { continue }
-                let polygons = resolvesOverlaps ? try visibleFragments(polygon, on: candidate, work: &work) : [polygon]
-                var fragments: [OverlayTriangle] = []
-                for piece in polygons {
-                    try OverlayAreaGeometry.appendFan(piece, epsilon: epsilon, result: &fragments, work: &work)
-                }
-                for fragment in fragments {
-                    try Self.append(fragment, lift: lift, mesh: &mesh, work: &work) { vertex in
-                        switch altitude {
-                        case .clampToGround: ground.boundedHeight(at: vertex.point)
-                        case .absolute: elevationToY(vertex.altitude)
-                        case .relativeToGround:
-                            ground.boundedHeight(at: vertex.point) + elevationToY(vertex.altitude) - elevationToY(0)
+                    let polygon = try OverlayAreaGeometry.intersect(triangle, with: ground.points, epsilon: epsilon, work: &work)
+                    guard polygon.count >= 3, abs(OverlayMath.area(polygon)) > epsilon * epsilon else { continue }
+                    let polygons = resolvesOverlaps ? try visibleFragments(polygon, on: candidate, work: &work) : [polygon]
+                    var fragments: [OverlayTriangle] = []
+                    for piece in polygons {
+                        try OverlayAreaGeometry.appendFan(piece, epsilon: epsilon, result: &fragments, work: &work)
+                    }
+                    for fragment in fragments {
+                        try Self.append(fragment, lift: lift, mesh: &mesh, work: &work) { vertex in
+                            switch altitude {
+                            case .clampToGround: ground.boundedHeight(at: vertex.point)
+                            case .absolute: elevationToY(vertex.altitude)
+                            case .relativeToGround:
+                                ground.boundedHeight(at: vertex.point) + elevationToY(vertex.altitude) - elevationToY(0)
+                            }
                         }
                     }
                 }
             }
+            start = end
         }
         return mesh
     }

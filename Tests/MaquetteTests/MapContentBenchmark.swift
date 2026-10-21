@@ -54,6 +54,28 @@ struct MapContentBenchmark {
         }
         let pathDrape = try clock.measure { _ = try surface?.drape(footprint, elevationToY: { $0 }) }
         print("STAGES refit \(milliseconds(refit)) ms; path footprint \(milliseconds(planar)) ms; path drape \(milliseconds(pathDrape)) ms")
+        let rings = [300, 100].enumerated().map { ring, count in
+            (0..<count).map { i in
+                let angle = Double(i) / Double(count) * .pi * 2
+                let radius = ring == 0 ? 0.06 : 0.025
+                return OverlayVertex(point: SIMD2(cos(angle), sin(angle)) * radius)
+            }
+        }
+        var polygon: [OverlayTriangle] = []
+        let polygonPrepare = try clock.measure {
+            polygon = try OverlayAreaGeometry.clip(OverlayPolygonTessellator.triangulate(rings: rings),
+                boundary: proxy.configuration.boundary.vertices.map { .init(point: SIMD2<Double>($0)) })
+        }
+        var polygonMesh = OverlayMesh()
+        let polygonDrape = try clock.measure {
+            polygonMesh = try #require(surface).drapeArea(polygon, rings: rings, altitude: .clampToGround,
+                                                        lift: 0.002, elevationToY: { $0 })
+        }
+        let polygonResource = OverlayMeshResource()
+        try polygonResource.update(polygonMesh)
+        let polygonBuffer = try clock.measure { try polygonResource.update(polygonMesh) }
+        print("STAGES one polygon: prepare \(milliseconds(polygonPrepare)) ms; drape \(milliseconds(polygonDrape)) ms; buffer \(milliseconds(polygonBuffer)) ms; vertices \(polygonMesh.positions.count)")
+
     }
 
     private func milliseconds(_ duration: Duration) -> Double {
@@ -181,7 +203,9 @@ struct MapContentBenchmark {
         for _ in 0..<10 { root.applyContent(content, using: proxy, physicalSize: 1) }
         await root.overlayRenderer.waitUntilIdle()
         #expect(root.overlayRenderer.geometryBuildCount == builds)
+        let completionStart = root.overlayRenderer.reconciliationDuration
         var panTime = Duration.zero
+        var panTimes: [Double] = []
         var samples: [Double] = []
         for step in 1...20 {
             let offset = SIMD2<Float>(Float(step % 5) * 0.002, 0)
@@ -192,7 +216,9 @@ struct MapContentBenchmark {
             terrain.setPanOffset(offset)
             root.applyContent(content, using: moved, physicalSize: 1)
             await root.overlayRenderer.waitUntilIdle()
-            panTime += panStart.duration(to: clock.now)
+            let elapsed = panStart.duration(to: clock.now)
+            panTime += elapsed
+            panTimes.append(milliseconds(elapsed))
             if let memory = residentMiB() { samples.append(memory) }
             #expect(root.overlayRenderer.diagnostics.isEmpty)
             #expect(root.overlayRenderer.records.count == expectedRecords)
@@ -200,12 +226,15 @@ struct MapContentBenchmark {
             #expect(terrain.surface?.model?.mesh === terrainMesh)
             #expect(root.overlayRenderer.textureUploadCount == expectedUploads)
         }
+        let panCompletion = root.overlayRenderer.reconciliationDuration - completionStart
+        print("CONTENT main actor completion mean \(milliseconds(panCompletion) / 20) ms")
         let vertices = root.overlayRenderer.records.values.reduce(0) { count, record in
             count + record.layers.values.reduce(0) { $0 + $1.mesh.positions.count }
         }
         let base = try #require(proxy.projection as? TerrainProjection)
         let tile = TileMath.tileXY(for: Coordinate(proxy.configuration.center), zoom: base.anchor.zoom)
         var zoomTime = Duration.zero
+        var zoomTimes: [Double] = []
         for step in 1...10 {
             let scale = 1 + Float(step % 5) * 0.05
             let field = TerrainHeightField(grids: [.init(width: 2, height: 2, values: [100, 200, 150, 250])],
@@ -216,7 +245,9 @@ struct MapContentBenchmark {
             root.applyContent(content, using: DioramaProxy(configuration: proxy.configuration,
                 projection: TerrainProjection(heightField: field)), physicalSize: 1)
             await root.overlayRenderer.waitUntilIdle()
-            zoomTime += start.duration(to: clock.now)
+            let elapsed = start.duration(to: clock.now)
+            zoomTime += elapsed
+            zoomTimes.append(milliseconds(elapsed))
             #expect(root.overlayRenderer.diagnostics.isEmpty)
             #expect(root.overlayRenderer.textureUploadCount == expectedUploads)
         }
@@ -246,6 +277,10 @@ struct MapContentBenchmark {
         inputIntervals.sort()
         print("CONTENT zoom mean \(milliseconds(zoomTime) / 10) ms; nominal 16ms-input main actor p95 \(inputTimes[Int(Double(inputTimes.count - 1) * 0.95)]) ms; overlays completed before next input \(completedFrames)/30; retained jobs \(root.overlayRenderer.activeGeometryJobCount)")
         print("CONTENT nominal 16ms input: observed interval p95 \(inputIntervals[Int(Double(inputIntervals.count - 1) * 0.95)]) ms")
+        func p95(_ samples: [Double]) -> Double {
+            samples.sorted()[Int(ceil(Double(samples.count) * 0.95)) - 1]
+        }
+        print("CONTENT completed pan p95/max \(p95(panTimes))/\(panTimes.max()!) ms; zoom p95/max \(p95(zoomTimes))/\(zoomTimes.max()!) ms")
         print("CONTENT \(label): initial \(milliseconds(initial)) ms; pan rebuild mean \(milliseconds(panTime) / 20) ms; output vertices \(vertices); uploads \(root.overlayRenderer.textureUploadCount); zero record replacements; terrain mesh retained.")
         print("CONTENT RSS MiB: before \(String(describing: memoryBefore)); warm \(String(describing: warmMemory)); cycle range \(String(describing: samples.min()))...\(String(describing: samples.max())). Process resident samples include allocator caches; exclude GPU/heap attribution and do not prove bounded long-run memory.")
     }

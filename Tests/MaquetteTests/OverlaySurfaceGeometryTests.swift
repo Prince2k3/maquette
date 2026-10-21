@@ -32,6 +32,99 @@ struct OverlaySurfaceGeometryTests {
         }
     }
 
+    @Test(arguments: [4, 7, 37, 300])
+    func convexRingCutsKeepHolesWindingAndRelief(count: Int) throws {
+        func ring(_ count: Int, center: SIMD2<Double>, radius: Double) -> [OverlayVertex] {
+            var result = (0..<count).map { i in
+                let angle = Double(i) / Double(count) * .pi * 2
+                return OverlayVertex(point: center + SIMD2(cos(angle), sin(angle)) * radius, altitude: 15)
+            }
+            result.append(result[0]) // Public LinearRing inputs retain their closing vertex.
+            return result
+        }
+        let exterior = ring(count, center: .init(2, 2), radius: 1.9)
+        let holes = [ring(7, center: .init(1.6, 2), radius: 0.3), ring(4, center: .init(2.7, 2), radius: 0.1)]
+        let surface = try OverlaySurfaceMesh(terrain: ridge())
+        for reverse in [false, true] {
+            let rings = ([exterior] + holes).map { reverse ? Array($0.reversed()) : $0 }
+            let source = try OverlayPolygonTessellator.triangulate(rings: rings)
+            let reference = try surface.drape(source, altitude: .relativeToGround, elevationToY: { $0 * 2 - 100 })
+            let mesh = try surface.drapeArea(source, rings: rings, altitude: .relativeToGround,
+                                           lift: 0, elevationToY: { $0 * 2 - 100 })
+            func area(_ mesh: OverlayMesh) -> Double {
+                stride(from: 0, to: mesh.indices.count, by: 3).reduce(0) { sum, i in
+                    let a = mesh.positions[Int(mesh.indices[i])], b = mesh.positions[Int(mesh.indices[i + 1])], c = mesh.positions[Int(mesh.indices[i + 2])]
+                    return sum + Double(simd_cross(b - a, c - a).y) / 2
+                }
+            }
+            #expect(abs(area(mesh) - area(reference)) < 2e-5)
+            for i in stride(from: 0, to: mesh.indices.count, by: 3) {
+                let a = mesh.positions[Int(mesh.indices[i])], b = mesh.positions[Int(mesh.indices[i + 1])], c = mesh.positions[Int(mesh.indices[i + 2])]
+                #expect(simd_cross(b - a, c - a).y > 0)
+                let center = SIMD2<Double>(Double((a.x + b.x + c.x) / 3), Double((a.z + b.z + c.z) / 3))
+                for hole in holes { #expect(OverlayMath.locate(center, in: hole, epsilon: 1e-7) != .inside) }
+            }
+            for p in mesh.positions { #expect(abs(p.y - (33 - abs(p.x - 2) * 1.5)) < 1e-5) }
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func convexClippingRespectsChunkOutlineAndResidentGaps(gap: Bool) throws {
+        let exterior = OverlayFixture.ring([.init(-1, 2), .init(2, -1), .init(5, 2), .init(2, 5)])
+        let hole = OverlayFixture.ring([.init(1.6, 1.6), .init(2.4, 1.6), .init(2.4, 2.4), .init(1.6, 2.4)])
+        let rings = [exterior, hole]
+        let source = try OverlayAreaGeometry.clip(OverlayPolygonTessellator.triangulate(rings: rings), boundary: OverlayFixture.square)
+        var buffers = ridge()
+        if gap { buffers.indices = Array(buffers.indices.prefix(6)) }
+        let surface = try OverlaySurfaceMesh(terrain: buffers)
+        let reference = try surface.drape(source, elevationToY: { $0 })
+        let optimized = try surface.drapeArea(source, rings: rings, altitude: .clampToGround, lift: 0, elevationToY: { $0 })
+        func area(_ mesh: OverlayMesh) -> Double {
+            stride(from: 0, to: mesh.indices.count, by: 3).reduce(0) { sum, i in
+                let a = mesh.positions[Int(mesh.indices[i])], b = mesh.positions[Int(mesh.indices[i + 1])], c = mesh.positions[Int(mesh.indices[i + 2])]
+                return sum + Double(simd_cross(b - a, c - a).y) / 2
+            }
+        }
+        #expect(!optimized.indices.isEmpty)
+        #expect(abs(area(reference) - area(optimized)) < 1e-5)
+        #expect(optimized.positions.allSatisfy { $0.x >= 0 && $0.x <= (gap ? 2 : 4) && $0.z >= 0 && $0.z <= 4 })
+    }
+
+    @Test(arguments: [false, true])
+    func denseRasterBatchesMatchIndependentFragments(clustered: Bool) throws {
+        var buffers = ridge()
+        buffers.indices.removeLast(3) // Batch queries must not bridge a missing resident face.
+        let surface = try OverlaySurfaceMesh(terrain: buffers)
+        let source = (0..<2_048).map { i -> OverlayTriangle in
+            let x = clustered ? 0.1 + Double(i) / 2_048 * 3.8 : (i.isMultiple(of: 2) ? 0.5 : 3.5)
+            let z = 2 + sin(Double(i) / 2_048 * 12) * 1.3
+            return .init(a: .init(point: .init(x, z), uv: .init(0, 0), altitude: 10),
+                b: .init(point: .init(x, z + 0.001), uv: .init(0, 1), altitude: 20),
+                c: .init(point: .init(x + 0.001, z), uv: .init(1, 0), altitude: 30))
+        }
+        let batch = try surface.drape(source, altitude: .relativeToGround, elevationToY: { $0 * 0.01 - 100 })
+        func triangles(_ mesh: OverlayMesh) -> [[UInt32]: Int] {
+            var result: [[UInt32]: Int] = [:]
+            for start in stride(from: 0, to: mesh.indices.count, by: 3) {
+                var key: [UInt32] = []
+                for offset in 0..<3 {
+                    let i = Int(mesh.indices[start + offset]), p = mesh.positions[i], n = mesh.normals[i], uv = mesh.uvs[i]
+                    key += [p.x.bitPattern, p.y.bitPattern, p.z.bitPattern, n.x.bitPattern, n.y.bitPattern, n.z.bitPattern,
+                            uv.x.bitPattern, uv.y.bitPattern]
+                }
+                result[key, default: 0] += 1
+            }
+            return result
+        }
+        var expected: [[UInt32]: Int] = [:]
+        for start in stride(from: 0, to: source.count, by: 512) {
+            let mesh = try surface.drape(Array(source[start..<start + 512]), altitude: .relativeToGround, elevationToY: { $0 * 0.01 - 100 })
+            for (key, count) in triangles(mesh) { expected[key, default: 0] += count }
+        }
+        #expect(!expected.isEmpty)
+        #expect(triangles(batch) == expected)
+    }
+
     @Test func rectangularImagesKeepOriginalUVsThroughGroundAndExtentClipping() throws {
         let ring = [OverlayVertex(point: .init(0.5, 0.5), uv: .init(0, 0)),
                     .init(point: .init(3.5, 0.5), uv: .init(1, 0)),

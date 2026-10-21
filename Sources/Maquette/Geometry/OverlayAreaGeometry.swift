@@ -28,20 +28,26 @@ struct OverlaySpatialIndex: Sendable {
     /// candidate only in the first shared bucket, avoiding a Set and sort for every fragment.
     /// The general query keeps its original broad phase/tolerance behavior for ring validation.
     func rasterCandidates(for query: OverlayBounds, work: inout OverlayWork) throws -> [Int] {
-        guard bounds.intersects(query) else { return [] }
-        let first = SIMD2(cell(query.lo.x, axis: 0), cell(query.lo.y, axis: 1))
         var result: [Int] = []
+        try visitRasterCandidates(for: query, work: &work) { id, _ in result.append(id) }
+        return result
+    }
+
+    /// Streaming avoids a heap array for each small path triangle query.
+    func visitRasterCandidates(for query: OverlayBounds, work: inout OverlayWork,
+                               body: (Int, inout OverlayWork) throws -> Void) throws {
+        guard bounds.intersects(query) else { return }
+        let first = SIMD2(cell(query.lo.x, axis: 0), cell(query.lo.y, axis: 1))
         for x in first.x...cell(query.hi.x, axis: 0) {
             for y in first.y...cell(query.hi.y, axis: 1) {
                 try work.spend()
                 for index in buckets[y * size + x, default: []] {
                     try work.spend()
                     let owner = SIMD2(max(first.x, firstCells[index].x), max(first.y, firstCells[index].y))
-                    if owner.x == x, owner.y == y, itemBounds[index].intersects(query) { result.append(index) }
+                    if owner.x == x, owner.y == y, itemBounds[index].intersects(query) { try body(index, &work) }
                 }
             }
         }
-        return result
     }
     private func cell(_ value: Double, axis: Int) -> Int {
         let span = bounds.hi[axis] - bounds.lo[axis]
@@ -73,6 +79,39 @@ enum OverlayAreaGeometry {
         let mask = try OverlayPolygonTessellator.triangulate(rings: [boundary], work: &work)
         let index = try OverlaySpatialIndex(bounds: mask.map(\.bounds), work: &work)
         let epsilon = OverlayBounds(boundary.map(\.point)).epsilon
+        // A source AABB wholly within a validated convex outline needs no mask cuts.
+        // Keeping the authored triangles also avoids artificial diagonals in dense ribbons.
+        let sign = OverlayMath.area(boundary) > 0 ? 1.0 : -1.0
+        var convex = true
+        for i in boundary.indices {
+            let a = boundary[i].point, b = boundary[(i + 1) % boundary.count].point
+            let c = boundary[(i + 2) % boundary.count].point
+            if sign * OverlayMath.cross(b - a, c - b) < 0 { convex = false; break }
+        }
+        if convex, let first = source.first {
+            var bounds = first.bounds
+            for triangle in source.dropFirst() {
+                try work.spend()
+                let box = triangle.bounds
+                bounds.lo = simd_min(bounds.lo, box.lo); bounds.hi = simd_max(bounds.hi, box.hi)
+            }
+            var inside = true
+            for i in boundary.indices {
+                try work.spend()
+                let origin = boundary[i].point, edge = boundary[(i + 1) % boundary.count].point - origin
+                let normal = sign * SIMD2(-edge.y, edge.x)
+                let corner = SIMD2(normal.x >= 0 ? bounds.lo.x : bounds.hi.x,
+                                   normal.y >= 0 ? bounds.lo.y : bounds.hi.y)
+                if simd_dot(normal, corner - origin) < 0 { inside = false; break }
+            }
+            if inside, source.allSatisfy({ triangle in
+                let a = triangle.a.point, b = triangle.b.point, c = triangle.c.point
+                return OverlayMath.cross(b - a, c - a) < -epsilon * epsilon
+                    && simd_length_squared(b - a) > epsilon * epsilon
+                    && simd_length_squared(c - b) > epsilon * epsilon
+                    && simd_length_squared(a - c) > epsilon * epsilon
+            }) { return source }
+        }
         var result: [OverlayTriangle] = []
         for triangle in source {
             for candidate in try index.rasterCandidates(for: triangle.bounds, work: &work) {

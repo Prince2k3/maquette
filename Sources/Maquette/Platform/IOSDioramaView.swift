@@ -3,7 +3,8 @@ import SwiftUI
 
 /// iOS presentation of the diorama: the shared orbit scene driven by touch.
 ///
-/// One finger slides the terrain (or steers the globe), two fingers orbit and pinch to zoom.
+/// One finger pans, two-finger twist changes heading, two-finger vertical drag changes pitch,
+/// and pinch zooms the ground. The legacy preset keeps two-finger drag orbiting.
 /// `DragGesture` cannot express that split because it reports a translation without saying how
 /// many fingers produced it, so everything is driven from a single `SpatialEventGesture` feeding
 /// raw touch locations through ``MultitouchDragTracker``. Handling all three intents in one
@@ -36,7 +37,7 @@ private struct IOSDioramaGestures: ViewModifier {
                     // The touches' own timestamps, not the delivery's: the point of carrying them is
                     // that when a touch was sampled and when its frame runs are different questions.
                     let update = dragTracker.update(
-                        with: active.map(\.location),
+                        touches: Dictionary(active.map { ($0.id, $0.location) }, uniquingKeysWith: { _, latest in latest }),
                         at: active.map(\.timestamp).max()
                     )
                     guard let update else { return }
@@ -47,6 +48,11 @@ private struct IOSDioramaGestures: ViewModifier {
                     model.endInteraction()
                 }
         )
+        .onAppear { dragTracker.thresholds = model.inputConfiguration.preset == .legacyOrbit ? .none : .standard }
+        .onChange(of: model.inputConfiguration.preset) { _, preset in
+            dragTracker = MultitouchDragTracker(thresholds: preset == .legacyOrbit ? .none : .standard)
+            model.endInteraction()
+        }
     }
 
     /// Routes a multitouch update to the model: one finger is the primary drag, two are orbit+zoom.
@@ -59,8 +65,16 @@ private struct IOSDioramaGestures: ViewModifier {
             return
         }
 
-        model.secondaryDrag(dx: dx, dy: dy)
-        model.zoomInput(Float(update.spreadChange) * Self.pinchZoomScale)
+        if model.inputConfiguration.preset == .legacyOrbit {
+            model.secondaryDrag(dx: dx, dy: dy)
+            model.zoomInput(Float(update.spreadChange) * Self.pinchZoomScale)
+        } else {
+            model.orbitInput(
+                headingDegrees: -Double(update.rotationChangeRadians) * 180 / .pi * Double(model.inputConfiguration.resolved.orbitSensitivity),
+                pitchDegrees: Double(dy * model.cameraController.rotationSensitivity * model.inputConfiguration.resolved.orbitSensitivity) * 180 / .pi
+            )
+            model.zoomInput(Float(update.log2ScaleRatio) * 25)
+        }
     }
 }
 #endif

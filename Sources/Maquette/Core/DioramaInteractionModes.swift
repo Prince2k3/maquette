@@ -1,29 +1,30 @@
 import Foundation
 
-/// The interactions a ``DioramaView`` responds to. The parallel of MapKit's `MapInteractionModes`.
+/// Independent user interaction permissions. Application camera/ground requests remain authoritative.
 public struct DioramaInteractionModes: OptionSet, Sendable {
     public let rawValue: Int
+    public init(rawValue: Int) { self.rawValue = rawValue }
 
-    public init(rawValue: Int) {
-        self.rawValue = rawValue
-    }
+    public static let heading = Self(rawValue: 1 << 0)
+    public static let pitch = Self(rawValue: 1 << 1)
+    public static let groundPan = Self(rawValue: 1 << 2)
+    public static let groundZoom = Self(rawValue: 1 << 3)
+    public static let cameraZoom = Self(rawValue: 1 << 4)
+    public static let all: Self = [.heading, .pitch, .groundPan, .groundZoom, .cameraZoom]
 
-    /// Orbiting the camera around the diorama (and steering the globe).
-    public static let rotate = DioramaInteractionModes(rawValue: 1 << 0)
-    /// Zooming the ground — and, past its limit, the globe handoff.
-    public static let zoom = DioramaInteractionModes(rawValue: 1 << 1)
-    /// Sliding the terrain beneath the chunk's fixed outline.
-    public static let pan = DioramaInteractionModes(rawValue: 1 << 2)
+    /// Both orbit axes. Prefer the independent permissions for new code.
+    public static let rotate: Self = [.heading, .pitch]
+    /// Both zoom permissions. The input configuration still chooses its explicit target.
+    public static let zoom: Self = [.groundZoom, .cameraZoom]
+    public static let pan: Self = .groundPan
 
-    /// Everything.
-    public static let all: DioramaInteractionModes = [.rotate, .zoom, .pan]
-
-    /// The gesture-type set the platform views route against.
     var gestureTypes: Set<DioramaGestureType> {
-        var types: Set<DioramaGestureType> = []
-        if contains(.rotate) { types.insert(.rotate) }
-        if contains(.zoom) { types.insert(.zoom) }
-        if contains(.pan) { types.insert(.pan) }
-        return types
+        var result: Set<DioramaGestureType> = []
+        if contains(.heading) { result.insert(.heading) }
+        if contains(.pitch) { result.insert(.pitch) }
+        if contains(.groundPan) { result.insert(.pan) }
+        if contains(.groundZoom) { result.insert(.zoom) }
+        if contains(.cameraZoom) { result.insert(.cameraZoom) }
+        return result
     }
 }

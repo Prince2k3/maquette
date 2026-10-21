@@ -85,6 +85,12 @@ enum DemoPresets {
         ),
 
         DemoPreset(
+            id: "inputs", title: "Inputs", caption: "Two focused scenes inside a scrolling page",
+            region: DioramaRegion(center: grandCanyon, radius: 1000),
+            style: .standard(exaggeration: 1.6, chunk: .canyon, panRange: 0.8),
+            camera: DioramaCamera(pitch: .degrees(50), distance: 1.6)
+        ),
+        DemoPreset(
             id: "hexagon",
             title: "Hexagon",
             caption: "Hexagonal outline, alpine strata",
@@ -380,7 +386,16 @@ struct ContentView: View {
         #endif
     }
 
-    private var diorama: some View {
+    @ViewBuilder private var diorama: some View {
+        #if os(visionOS)
+        terrainDiorama
+        #else
+        if preset.id == "inputs" { InputLabView(region: preset.region) }
+        else { terrainDiorama }
+        #endif
+    }
+
+    private var terrainDiorama: some View {
         DioramaView(
             groundPosition: $groundPosition,
             shape: preset.shape,
@@ -438,8 +453,18 @@ struct ContentView: View {
         .dioramaARPlacement($arActive)
         .dioramaControls {
             VStack {
-                DioramaCompass()
-                DioramaResetButton()
+                HStack {
+                    DioramaCompass()
+                    DioramaResetButton()
+                    DioramaPerspectiveToggle()
+                    DioramaFitButton()
+                }
+                Text("Ground").font(.caption)
+                DioramaZoomControls(target: .ground)
+                Text("Camera").font(.caption)
+                DioramaZoomControls(target: .camera)
+                DioramaPitchControl().frame(width: 140)
+                DioramaKeyboardHelp()
                 CameraExampleControls(camera: position.camera ?? preset.camera)
                 if preset.id == "camera" {
                     Button("Select viewpoint", systemImage: "mappin.and.ellipse") {
@@ -612,25 +637,6 @@ private struct CameraExampleControls: View {
 
     var body: some View {
         Button {
-            cameraProxy?.fit(.chunk, padding: EdgeInsets(top: 24, leading: 24, bottom: 24, trailing: 24),
-                             transition: .easeInOut(duration: 0.6))
-        } label: {
-            Label("Fit terrain", systemImage: "arrow.up.left.and.arrow.down.right")
-        }
-        .disabled(cameraProxy?.capabilities.canFit != true)
-        .accessibilityIdentifier("camera-fit-terrain")
-
-        Button {
-            var overhead = camera
-            overhead.pitch = .zero
-            cameraProxy?.setCamera(overhead, transition: .easeInOut(duration: 0.6))
-        } label: {
-            Label("View from overhead", systemImage: "arrow.down.to.line")
-        }
-        .disabled(cameraProxy?.capabilities.canOrbit != true)
-        .accessibilityIdentifier("camera-overhead")
-
-        Button {
             var east = camera
             east.heading = .degrees(90)
             cameraProxy?.setCamera(east, transition: .easeInOut(duration: 0.6))
@@ -674,3 +680,59 @@ private struct StatefulAnnotationCard: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.orange : .white.opacity(0.25)))
     }
 }
+
+#if !os(visionOS)
+/// Scroll ownership and independent focus can be checked without leaving the demo.
+private struct InputLabView: View {
+    let region: DioramaRegion
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                Text("Click a scene to focus it. Arrows pan; Option arrows orbit. Shift-wheel zooms its camera. Wheel over labels or this page scrolls normally.")
+                    .font(.callout).padding()
+                InputLabScene(title: "First scene", region: region)
+                Text("Page between scenes — wheel here scrolls the page").padding(24)
+                InputLabScene(title: "Second scene", region: region)
+                Text("End of input lab").padding(60)
+            }
+        }
+        .accessibilityIdentifier("input-lab-scroll")
+    }
+}
+
+private struct InputLabScene: View {
+    let title: String
+    let region: DioramaRegion
+    @State private var camera = DioramaCameraPosition.camera(DioramaCamera(pitch: .degrees(50), distance: 1.6))
+    @State private var ground: DioramaGroundPosition
+    @State private var note = "Edit me"
+    init(title: String, region: DioramaRegion) {
+        self.title = title; self.region = region
+        _ground = State(initialValue: DioramaGroundPosition(region: region))
+    }
+    var body: some View {
+        VStack {
+            Text("\(title): heading \(Int((camera.camera?.heading.degrees ?? 0).rounded()))°, distance \(camera.camera?.distance ?? 0, specifier: "%.2f"), radius \(Int(ground.region.radius)) m")
+                .accessibilityIdentifier(title == "First scene" ? "input-first-status" : "input-second-status")
+            DioramaView(groundPosition: $ground, shape: .rectangular(width: 0.8, depth: 0.8), cameraPosition: $camera) {
+                DioramaAnnotation("Editable note", coordinate: region.center, id: "note") {
+                    TextField("Scene note", text: $note).textFieldStyle(.roundedBorder).frame(width: 120)
+                }.annotationOcclusion(.alwaysVisible)
+            }
+            .dioramaStyle(.standard(exaggeration: 1.6, chunk: .canyon, panRange: 0.8))
+            .dioramaControls {
+                VStack {
+                    DioramaCompass()
+                    DioramaZoomControls(target: .ground)
+                    DioramaZoomControls(target: .camera)
+                    DioramaPerspectiveToggle()
+                    DioramaFitButton()
+                    DioramaKeyboardHelp()
+                }.buttonStyle(.bordered).labelStyle(.iconOnly)
+            }
+            .frame(height: 340)
+        }
+        .padding(.horizontal, 16)
+    }
+}
+#endif

@@ -25,7 +25,7 @@ private struct MacOSDioramaGestures: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .highPriorityGestureIf(model.enabledGestures.contains(.rotate),
+            .highPriorityGestureIf(model.enabledGestures.allowsHeading || model.enabledGestures.allowsPitch,
                 DragGesture(minimumDistance: 1)
                     .modifiers(.option)
                     .onChanged { value in
@@ -72,9 +72,22 @@ private struct MacOSDioramaGestures: ViewModifier {
             // ScrollView's geometry, and there is none — so a minimal AppKit reader sits behind the
             // scene and forwards the deltas.
             .background(
-                ScrollWheelReader { deltaY in
-                    model.zoomInput(Float(deltaY) * Self.scrollZoomScale, isWheel: true)
-                }
+                ScrollWheelReader(
+                    isFocused: { model.inputFocused },
+                    configuration: { model.inputConfiguration },
+                    excludesPoint: { point in
+                        let insets = model.cameraControlInsets
+                        let interior = CGRect(x: insets.leading, y: insets.top,
+                            width: max(0, model.viewSize.width - insets.leading - insets.trailing),
+                            height: max(0, model.viewSize.height - insets.top - insets.bottom))
+                        return !interior.contains(point) || model.store.annotationRegistry.orderedRecords.contains {
+                            $0.visible && ($0.frame?.contains(point) ?? false)
+                        }
+                    },
+                    onScroll: { delta, target in
+                        model.zoomInput(delta * Self.scrollZoomScale, isWheel: true, target: target)
+                    }
+                )
             )
     }
 
@@ -103,29 +116,71 @@ private struct MacOSDioramaGestures: ViewModifier {
     }
 }
 
-/// Forwards scroll-wheel events over the diorama to SwiftUI.
-///
-/// A background view cannot simply override `scrollWheel(with:)`: AppKit delivers scroll events
-/// to the *hit-tested* view under the cursor — the RealityView — and then up its responder chain,
-/// so an occluded sibling never hears them. A local event monitor sees every scroll event in the
-/// window instead; this one acts only when the cursor is inside the reader's own bounds, so two
-/// dioramas in one window each hear their own wheel.
+/// Pure wheel policy, shared by the native reader and ownership tests.
+struct MacOSInputOwnership {
+    static func eligible(isKeyWindow: Bool, isFocused: Bool, insideVisibleRect: Bool,
+                         excluded: Bool, isMomentum: Bool, ownsSequence: Bool) -> Bool {
+        isKeyWindow && isFocused && insideVisibleRect && !excluded && (!isMomentum || ownsSequence)
+    }
+
+    static func normalizedDelta(_ delta: CGFloat, precise: Bool, inverted: Bool) -> Float {
+        Float(delta) * (precise ? 1 : 10) * (inverted ? -1 : 1)
+    }
+
+    static func target(configuration: DioramaInputConfiguration, modifiers: EventModifiers) -> DioramaZoomTarget {
+        let alternate = configuration.alternateWheelModifiers
+        guard !alternate.isEmpty, modifiers.contains(alternate) else { return configuration.wheelZoomTarget }
+        return configuration.wheelZoomTarget == .ground ? .camera : .ground
+    }
+}
+
+extension NSEvent.ModifierFlags {
+    var dioramaEventModifiers: EventModifiers {
+        var result: EventModifiers = []
+        if contains(.shift) { result.insert(.shift) }
+        if contains(.control) { result.insert(.control) }
+        if contains(.option) { result.insert(.option) }
+        if contains(.command) { result.insert(.command) }
+        if contains(.capsLock) { result.insert(.capsLock) }
+        return result
+    }
+}
+
+/// A local monitor is needed on macOS 15 because a background NSView does not receive
+/// RealityView's scroll events. Each host owns its monitor and consumes only accepted zooms.
+/// Native trackpad rotation is not mapped by this adapter; option-drag supplies independent
+/// heading and pitch on the macOS 15 deployment floor.
 private struct ScrollWheelReader: NSViewRepresentable {
-    let onScroll: (CGFloat) -> Void
+    let isFocused: () -> Bool
+    let configuration: () -> DioramaInputConfiguration
+    let excludesPoint: (CGPoint) -> Bool
+    let onScroll: (Float, DioramaZoomTarget) -> Bool
 
     func makeNSView(context: Context) -> ScrollWheelView {
         let view = ScrollWheelView()
-        view.onScroll = onScroll
+        updateNSView(view, context: context)
         return view
     }
 
     func updateNSView(_ nsView: ScrollWheelView, context: Context) {
+        nsView.isFocused = isFocused
+        nsView.configuration = configuration
+        nsView.excludesPoint = excludesPoint
         nsView.onScroll = onScroll
     }
 
+    static func dismantleNSView(_ nsView: ScrollWheelView, coordinator: ()) {
+        nsView.removeMonitor()
+    }
+
     final class ScrollWheelView: NSView {
-        var onScroll: ((CGFloat) -> Void)?
+        override var isFlipped: Bool { true }
+        var isFocused: (() -> Bool)?
+        var configuration: (() -> DioramaInputConfiguration)?
+        var excludesPoint: ((CGPoint) -> Bool)?
+        var onScroll: ((Float, DioramaZoomTarget) -> Bool)?
         private var monitor: Any?
+        private var ownsSequence = false
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -133,45 +188,61 @@ private struct ScrollWheelReader: NSViewRepresentable {
                 removeMonitor()
             } else if monitor == nil {
                 monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-                    self?.handle(event)
-                    // Passed on rather than swallowed: nothing else in the hierarchy zooms on
-                    // scroll, and swallowing would break any scrollable chrome the app adds.
-                    return event
+                    guard let self else { return event }
+                    return self.handle(event)
                 }
             }
         }
 
-        // No deinit: a nonisolated deinit may not touch the non-Sendable monitor handle, so its
-        // removal rides window membership instead — `viewDidMoveToWindow` fires with a nil window
-        // when the view leaves the hierarchy, which precedes deallocation for a hosted view.
-
-        private func removeMonitor() {
+        func removeMonitor() {
             if let monitor {
                 NSEvent.removeMonitor(monitor)
                 self.monitor = nil
             }
+            ownsSequence = false
         }
 
-        private func handle(_ event: NSEvent) {
-            guard let window, event.window === window else { return }
+        private func isControl(at point: CGPoint, in window: NSWindow) -> Bool {
+            if let editor = window.firstResponder as? NSTextView, editor.isFieldEditor { return true }
+            guard let content = window.contentView else { return false }
+            var hit = content.hitTest(content.convert(point, from: nil))
+            while let view = hit {
+                if view is NSControl || view is NSTextView { return true }
+                // An enclosing ScrollView must still allow navigation over the scene. A nested
+                // scrolling annotation owns its wheel, and its frame is also excluded above.
+                if view is NSScrollView, !isDescendant(of: view) { return true }
+                hit = view.superview
+            }
+            return false
+        }
+
+        private func handle(_ event: NSEvent) -> NSEvent? {
+            guard let window, event.window === window else { return event }
+            if event.phase.contains(.began) || event.phase.contains(.mayBegin) { ownsSequence = false }
             let location = convert(event.locationInWindow, from: nil)
-            guard bounds.contains(location) else { return }
-            // The momentum tail is dropped: fingers that have lifted are not asking for more zoom,
-            // and a flick that kept zooming for a second after the gesture reads as the camera
-            // running away on its own.
-            guard event.momentumPhase == [] else { return }
-            // Precise deltas (trackpads) arrive in points and already feel right; line-based
-            // wheels report small line counts, so they are stepped up to a comparable rate.
-            var delta = event.hasPreciseScrollingDeltas
-                ? event.scrollingDeltaY
-                : event.scrollingDeltaY * 10
-            // Zoom is not scrolled content, so the "natural scrolling" flip is undone: the deltas
-            // arrive inverted under that setting, and without this the physical finger direction
-            // that zooms in would depend on a system preference. Fingers pushing up (away) zoom in,
-            // whichever way the user scrolls their documents.
-            if event.isDirectionInvertedFromDevice { delta = -delta }
-            guard delta != 0 else { return }
-            onScroll?(delta)
+            let momentum = !event.momentumPhase.isEmpty
+            let excluded = (excludesPoint?(location) ?? false) || isControl(at: event.locationInWindow, in: window)
+            guard MacOSInputOwnership.eligible(isKeyWindow: window.isKeyWindow,
+                isFocused: isFocused?() ?? false, insideVisibleRect: visibleRect.intersection(bounds).contains(location),
+                excluded: excluded, isMomentum: momentum, ownsSequence: ownsSequence) else {
+                ownsSequence = false
+                return event
+            }
+            // A tail is suppressed only after this reader accepted its direct input sequence.
+            if momentum {
+                if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) { ownsSequence = false }
+                return nil
+            }
+            if event.phase.contains(.cancelled) { ownsSequence = false; return event }
+            let delta = MacOSInputOwnership.normalizedDelta(event.scrollingDeltaY,
+                precise: event.hasPreciseScrollingDeltas, inverted: event.isDirectionInvertedFromDevice)
+            guard delta.isFinite, delta != 0 else { return event }
+            let target = MacOSInputOwnership.target(configuration: configuration?() ?? .map,
+                modifiers: event.modifierFlags.dioramaEventModifiers)
+            guard onScroll?(delta, target) == true else { ownsSequence = false; return event }
+            // Phase-less mouse wheels have no following momentum sequence.
+            ownsSequence = !event.phase.isEmpty
+            return nil
         }
     }
 }

@@ -227,23 +227,70 @@ pitch limits are degrees in `0...90`, and focus policy is `.insideChunk` or `.un
 proxy actions accept their own transition. Motion uses elapsed time, smooth easing, and the shortest
 heading arc. Reduce Motion applies requests immediately.
 
-## Add diorama controls
+## Configure input and controls
+
+Interaction permissions are independent: `.heading`, `.pitch`, `.groundPan`, `.groundZoom`,
+and `.cameraZoom`. The compatibility names remain: `.rotate` enables heading and pitch, `.zoom`
+enables both zoom targets, and `.pan` enables ground pan. These permissions govern user input;
+application requests remain authoritative.
+
+The default `.map` input preset uses one-finger/plain drag for ground pan, two-finger twist for
+heading, two-finger vertical drag for pitch, and pinch for ground zoom. On macOS, Option-drag
+orbits; wheel/two-finger scroll zooms the ground, and Shift-wheel zooms the camera. Native macOS
+trackpad rotation is not mapped. A ground operation that is unavailable does nothing: it never
+silently becomes an orbit or camera zoom. `.legacyOrbit` restores drag/touch orbit mappings and
+allows an implicit gesture zoom to dolly when ground zoom is unavailable; explicit zoom targets
+always retain their meaning.
 
 ```swift
-DioramaView(initialRegion: region)
-    .dioramaControls(alignment: .topLeading) {
-        VStack {
-            DioramaCompass()
-            DioramaResetButton()
-        }
-        .buttonStyle(.bordered)
+struct TerrainControlsView: View {
+    let region: DioramaRegion
+
+    private var input: DioramaInputConfiguration {
+        var input = DioramaInputConfiguration.map
+        input.zoomSensitivity = 0.8
+        input.keyboardShortcuts.append(
+            DioramaKeyboardShortcut("b", action: .oblique)
+        )
+        return input
     }
+
+    var body: some View {
+        DioramaView(initialRegion: region,
+                    interactionModes: [.heading, .pitch, .groundPan, .groundZoom, .cameraZoom])
+            .dioramaInput(input)
+            .dioramaControls(alignment: .topLeading) {
+                VStack {
+                    DioramaCompass()
+                    DioramaZoomControls(target: .ground)
+                    DioramaZoomControls(target: .camera)
+                    DioramaPitchControl()
+                    DioramaPerspectiveToggle()
+                    DioramaFitButton()
+                    DioramaResetButton()
+                    DioramaKeyboardHelp()
+                }
+                .buttonStyle(.bordered)
+            }
+    }
+}
 ```
 
-Each overlay controls its own diorama. Reset returns to the last app-requested geography and
-orbit while preserving appearance, content, and selection. The compass faces north in iOS/macOS
-orbit views; it hides in AR, visionOS volumes, globe presentation, and route-follow mode. Reset
-preserves AR and volume placement. Choose the controls' layout and button style in the builder.
+Each control targets its hosting diorama and reflects available operations and limits. Ground zoom
+changes the geography in the chunk; camera zoom changes viewing distance. Pitch and perspective
+controls require an orbit camera. Fit frames the chunk by default. Reset returns to the last
+app-requested geography and orbit, preserving appearance, content, selection, and AR/volume placement;
+interaction does not redefine that home. Camera transitions respect Reduce Motion. AR and visionOS
+volumes have no virtual-camera controls; ground controls remain available when supported.
+
+Focus the scene for keyboard input: arrows pan; Option-arrows change heading/pitch; `+`/`-` zoom
+the ground; Option-`=`/`-` zoom the camera; `N` faces north, `O` looks overhead, `F` fits, and `R`
+resets. `DioramaKeyboardHelp` exposes the configured mappings. Annotation editors keep their own
+input. On macOS, wheel zoom requires focus and a pointer inside the visible scene, outside controls
+and labels. Accepted wheel input is consumed so an enclosing scroll view does not also scroll.
+Configure `panSensitivity`, `orbitSensitivity`, and `zoomSensitivity` with positive finite multipliers;
+invalid values resolve to 1. Change `wheelZoomTarget`, `alternateWheelModifiers`, or
+`keyboardShortcuts` through `.dioramaInput(...)`.
 
 ## Own the loading UI
 

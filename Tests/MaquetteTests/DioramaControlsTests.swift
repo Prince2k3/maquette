@@ -158,7 +158,7 @@ struct DioramaControlsTests {
         guard case .accepted(let first) = proxy.setCamera(.init(heading: .degrees(100), pitch: .degrees(20), distance: 2), transition: .easeInOut(duration: 4)) else { Issue.record("Expected action"); return }
         model.advanceAnimation(at: start.addingTimeInterval(1))
         let partial = model.resolvedCamera
-        model.secondaryDrag(dx: 0, dy: 0)
+        model.interruptCameraForGesture()
         #expect(proxy.result(for: first) == .cancelled(first))
         #expect(model.resolvedCamera.heading == partial.heading)
         #expect(model.resolvedCamera.distance == partial.distance)
@@ -499,6 +499,141 @@ struct DioramaControlsTests {
         #expect(model.store.configuration.panRange == 1)
         #expect(model.controlState.canReset)
         #expect(model.controlState.canFaceNorth)
+    }
+    @Test("Explicit unsupported ground input stays inert even under legacy mapping")
+    func independentZoomTargets() async {
+        let model = await loadedModel(ControlsTilesProvider())
+        model.inputConfiguration = .legacyOrbit
+        let before = model.resolvedCamera
+        #expect(!model.performInput(.zoom(.ground, steps: 1)))
+        #expect(model.resolvedCamera == before)
+        #expect(!model.controlState.navigation.canGroundZoomIn)
+        #expect(model.performInput(.zoom(.camera, steps: 1)))
+        #expect(model.resolvedCamera.distance < before.distance)
+        model.enabledGestures = [.zoom]
+        #expect(!model.performInput(.zoom(.camera, steps: 1)))
+    }
+
+    @Test("Heading and pitch permissions are independent and primary drag never falls through")
+    func independentAxes() async {
+        let model = await loadedModel(ControlsTilesProvider())
+        model.enabledGestures = [.heading]
+        let first = model.resolvedCamera
+        model.orbitInput(headingDegrees: 20, pitchDegrees: 15)
+        #expect(abs(model.resolvedCamera.heading.degrees - 20) < 0.001)
+        #expect(abs(model.resolvedCamera.pitch.degrees - first.pitch.degrees) < 0.001)
+        model.enabledGestures = [.pitch]
+        model.orbitInput(headingDegrees: 20, pitchDegrees: 5)
+        #expect(abs(model.resolvedCamera.heading.degrees - 20) < 0.001)
+        #expect(abs(model.resolvedCamera.pitch.degrees - first.pitch.degrees - 5) < 0.001)
+        model.enabledGestures = [.heading, .pitch]
+        let beforePan = model.resolvedCamera
+        model.primaryDrag(dx: 30, dy: 20)
+        #expect(model.resolvedCamera == beforePan)
+    }
+
+    @Test("Keyboard focus, custom mappings, and native controls retain their own host")
+    func focusedInput() async {
+        let first = await loadedModel(ControlsTilesProvider())
+        let second = await loadedModel(ControlsTilesProvider())
+        let secondCamera = second.resolvedCamera
+        first.inputConfiguration.keyboardShortcuts = [.init("x", action: .orbit(heading: 10, pitch: 0))]
+        #expect(!first.keyboardInput(key: "x", modifiers: []))
+        first.inputFocused = true
+        #expect(first.keyboardInput(key: "x", modifiers: []))
+        #expect(abs(first.resolvedCamera.heading.degrees - 10) < 0.001)
+        #expect(second.resolvedCamera == secondCamera)
+        #expect(!first.keyboardInput(key: "x", modifiers: .command))
+        let home = first.homeCamera
+        first.controlState.navigation.zoom(.camera, 1)
+        first.controlState.navigation.setPitch(30)
+        #expect(first.homeCamera == home)
+        #expect(second.resolvedCamera == secondCamera)
+    }
+
+    @Test("Controls apply limits and Reduce Motion without changing reset home")
+    func nativeControlLimitsAndMotion() async throws {
+        let model = await loadedModel(ControlsTilesProvider())
+        let home = model.homeCamera
+        model.configureCamera(limits: try #require(DioramaCameraLimits(distance: 0.5...2, pitchDegrees: 0...60)), transition: .immediate, reduceMotion: true)
+        model.controlState.navigation.setPitch(80)
+        #expect(abs(model.resolvedCamera.pitch.degrees - 60) < 0.001)
+        model.controlState.navigation.togglePerspective()
+        #expect(abs(model.resolvedCamera.pitch.degrees) < 0.001)
+        #expect(model.cameraMotion == nil)
+        #expect(model.homeCamera == home)
+        model.enabledGestures = []
+        #expect(!model.controlState.canFaceNorth)
+        #expect(!model.controlState.navigation.canPitch)
+        #expect(!model.controlState.navigation.canFit)
+        #expect(!model.performInput(.overhead))
+    }
+    @Test("Subthreshold and disabled-axis motion cannot steal an animated camera")
+    func zeroInputPreservesOwnership() async {
+        let model = await loadedModel(ControlsTilesProvider())
+        let proxy = DioramaCameraProxy(host: model.cameraHost)
+        _ = proxy.setCamera(.init(heading: .degrees(100), distance: 2), transition: .easeInOut(duration: 4))
+        model.enabledGestures = [.heading]
+        model.primaryDrag(dx: 0, dy: 0)
+        model.orbitInput(headingDegrees: 0, pitchDegrees: 10)
+        #expect(model.cameraMotion != nil)
+        model.orbitInput(headingDegrees: 1, pitchDegrees: 0)
+        #expect(model.cameraMotion == nil)
+    }
+    @Test(.timeLimit(.minutes(1)))
+    func wheelObservationEndsAndDoesNotSuppressLaterDrag() async {
+        let model = await loadedModel(ControlsTilesProvider())
+        let events = AsyncStream<DioramaCameraChangeContext>.makeStream()
+        model.cameraObservation.action = DioramaCameraObservationAction(frequency: .onEnd) { events.continuation.yield($0) }
+        var iterator = events.stream.makeAsyncIterator()
+        #expect(model.zoomInput(1, isWheel: true, target: .camera))
+        let wheelEnd = await iterator.next()
+        #expect(wheelEnd?.phase == .ended)
+        model.secondaryDrag(dx: 10, dy: 0)
+        model.endInteraction(.drag)
+        let dragEnd = await iterator.next()
+        #expect(dragEnd?.phase == .ended)
+        events.continuation.finish()
+    }
+
+    @Test func controlInsetsFollowAlignment() {
+        let size = CGSize(width: 120, height: 250)
+        let left = DioramaControlsLayout.insets(size: size, alignment: .topLeading)
+        let right = DioramaControlsLayout.insets(size: size, alignment: .topTrailing)
+        #expect(left.leading == 120 && left.trailing == 0)
+        #expect(right.trailing == 120 && right.leading == 0)
+    }
+    @Test("Queued camera binding callbacks read the latest value and retain newer app requests")
+    func bindingReadbackDoesNotCancelItsAnimation() async {
+        let model = await loadedModel(ControlsTilesProvider())
+        var bound = DioramaCameraPosition.camera(model.resolvedCamera)
+        model.positionBinding = Binding(get: { bound }, set: { bound = $0 })
+        let start = Date(timeIntervalSinceReferenceDate: 100)
+        model.cameraClock = { start }
+        let proxy = DioramaCameraProxy(host: model.cameraHost)
+        _ = proxy.setCamera(.init(pitch: .zero, distance: 2), transition: .easeInOut(duration: 2))
+        model.advanceAnimation(at: start.addingTimeInterval(0.1))
+        let queuedSnapshot = bound
+        model.advanceAnimation(at: start.addingTimeInterval(0.2))
+        #expect(bound != queuedSnapshot)
+        model.synchronizeCameraBinding()
+        #expect(model.cameraMotion != nil)
+        let requested = DioramaCameraPosition.camera(DioramaCamera(heading: .degrees(90), pitch: .degrees(30), distance: 1))
+        bound = requested
+        model.advanceAnimation(at: start.addingTimeInterval(0.3))
+        #expect(bound == requested)
+        model.synchronizeCameraBinding()
+        #expect(abs(model.resolvedCamera.heading.degrees - 90) < 0.001)
+        bound = .camera(DioramaCamera(distance: -1))
+        model.synchronizeCameraBinding()
+        model.orbitInput(headingDegrees: 5, pitchDegrees: 0)
+        #expect(bound.camera?.isValid == true)
+        #expect(abs((bound.camera?.heading.degrees ?? 0) - 95) < 0.001)
+        bound = .camera(DioramaCamera(distance: .nan))
+        model.synchronizeCameraBinding()
+        model.orbitInput(headingDegrees: 5, pitchDegrees: 0)
+        #expect(bound.camera?.isValid == true)
+        #expect(abs((bound.camera?.heading.degrees ?? 0) - 100) < 0.001)
     }
     #endif
 }

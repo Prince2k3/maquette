@@ -1,27 +1,16 @@
 import Foundation
 import SwiftUI
 
-/// The gesture vocabulary the platform views route against.
-///
-/// The public face of this is ``DioramaInteractionModes`` on `DioramaView`'s initializer, which is
-/// where MapKit puts the equivalent; this internal set is what the routing code consumes.
-///
-/// ## How they map to input
-///
-/// On iOS the split follows what a map does: **one finger** slides the terrain beneath the chunk's
-/// outline, and **two fingers** orbit the camera and pinch to zoom. On macOS a pointer has no
-/// second finger, so **drag** slides the terrain and **option-drag** orbits, with pinch or scroll
-/// to zoom. On visionOS a drag slides and a pinch zooms. Zoom is also the road to the globe
-/// handoff on every platform: zooming *out* — fingers pinching together — past the last ground the
-/// map can widen onto departs, and zooming in at the globe commits the return. The handoff rides
-/// the ground zoom, so only a pannable chunk (non-zero `panRange`) ever departs.
-///
-/// Terrain sliding requires a chunk that can pan, which means a style with a non-zero `panRange`.
-/// Without one, a single drag orbits instead, so a fixed diorama behaves as it always has.
+/// Internal intent permissions routed by platform adapters. Public callers use the independent
+/// flags on DioramaInteractionModes. The map preset never substitutes a camera action when
+/// ground navigation is unavailable; the explicit legacy preset retains earlier drag mapping.
 enum DioramaGestureType: Sendable, Hashable {
     /// Orbit the camera around the diorama.
     case rotate
-    /// Zoom in/out on the diorama.
+    case heading
+    case pitch
+    case cameraZoom
+    /// Zoom the ground, including globe travel.
     case zoom
     /// Slide the terrain beneath the chunk's outline.
     case pan
@@ -65,4 +54,9 @@ extension View {
             self
         }
     }
+}
+
+extension Set where Element == DioramaGestureType {
+    var allowsHeading: Bool { contains(.heading) || contains(.rotate) }
+    var allowsPitch: Bool { contains(.pitch) || contains(.rotate) }
 }

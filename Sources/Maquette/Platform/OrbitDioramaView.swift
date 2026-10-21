@@ -23,8 +23,10 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
     let inputs: DioramaViewInputs
     @State private var model: OrbitDioramaModel
     @State private var annotations = OrbitAnnotationCoordinator()
+    @FocusState private var sceneFocused: Bool
     private let makeGestures: (OrbitDioramaModel) -> Gestures
 
+    @Environment(\.dioramaInputConfiguration) private var inputConfiguration
     @Environment(\.routePreviewController) private var routePreviewController
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dioramaEffect) private var effect
@@ -103,6 +105,7 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
         .onChange(of: effect) { _, newEffect in
             model.store.setEffect(newEffect)
         }
+        .onChange(of: inputConfiguration) { _, configuration in model.inputConfiguration = configuration.resolved }
         .onChange(of: inputs.interactionModes.rawValue) { _, _ in
             model.enabledGestures = inputs.interactionModes.gestureTypes
         }
@@ -129,9 +132,9 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
             syncInputs()
             model.applyGroundPosition(position)
         }
-        .onChange(of: inputs.position?.wrappedValue) { _, position in
+        .onChange(of: inputs.position?.wrappedValue) { _, _ in
             model.positionBinding = inputs.position
-            model.applyCameraPosition(position)
+            model.synchronizeCameraBinding()
         }
         .onChange(of: inputs.selection?.wrappedValue) { _, _ in
             model.selectionBinding = inputs.selection
@@ -175,6 +178,7 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
     }
 
     private func syncInputs() {
+        model.inputConfiguration = inputConfiguration.resolved
         model.initialCamera = inputs.initialCamera
         model.bindCameraHost(readerCameraHost)
         syncCameraConfiguration()
@@ -281,8 +285,19 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
         }
         // Use the actual viewport projection so thin lines have a point-sized tap tolerance.
         .simultaneousGesture(
-            SpatialTapGesture().onEnded { value in model.screenTap?(value.location) }
+            SpatialTapGesture().onEnded { value in
+                sceneFocused = true
+                model.screenTap?(value.location)
+            }
         )
+        .focusable()
+        .focused($sceneFocused)
+        .onChange(of: sceneFocused) { _, focused in model.inputFocused = focused }
+        .onKeyPress(phases: [.down, .repeat]) { press in
+            model.keyboardInput(key: press.key, modifiers: press.modifiers) ? .handled : .ignored
+        }
+        .accessibilityLabel("Terrain scene")
+        .accessibilityHint("Focus this terrain scene to use its configured keyboard navigation. The Keyboard shortcuts menu lists available mappings.")
         .modifier(makeGestures(model))
     }
 

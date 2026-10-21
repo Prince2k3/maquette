@@ -120,3 +120,13 @@ DioramaView(
 
 - <doc:CustomAnnotations>
 - ``DioramaAnnotation``
+
+### Input and controls
+
+- <doc:InputAndControls>
+- ``DioramaInputConfiguration``
+- ``DioramaZoomControls``
+- ``DioramaPitchControl``
+- ``DioramaPerspectiveToggle``
+- ``DioramaFitButton``
+- ``DioramaKeyboardHelp``

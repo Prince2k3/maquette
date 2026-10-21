@@ -56,7 +56,9 @@ final class OrbitDioramaModel {
 
     /// Environment mirrors, pushed in by the shared view — the model has no view hierarchy to read
     /// them from, and the intent routing below needs them.
-    var enabledGestures: Set<DioramaGestureType> = [.rotate, .zoom, .pan]
+    var enabledGestures: Set<DioramaGestureType> = [.heading, .pitch, .zoom, .cameraZoom, .pan]
+    var inputConfiguration = DioramaInputConfiguration.map
+    var inputFocused = false
     var displayScale: CGFloat = 1
     var routePreviewController: RoutePreviewController?
     var globeStyle: GlobeTransitionStyle?
@@ -68,6 +70,7 @@ final class OrbitDioramaModel {
     /// would re-apply itself. Single-direction sync — apply on change in, publish on gesture out.
     var positionBinding: Binding<DioramaCameraPosition>?
     var lastAppliedPosition: DioramaCameraPosition?
+    var lastPublishedPosition: DioramaCameraPosition?
     var homeCamera: DioramaCamera?
 
     /// The selection binding handed to `DioramaView`, written on marker taps.
@@ -203,9 +206,10 @@ final class OrbitDioramaModel {
         return DioramaControlState(
             canReset: canResetFromControls,
             heading: hasOrbit ? resolvedCamera.heading : nil,
-            canFaceNorth: hasOrbit && store.loadingState == .loaded && !navigation.isApplyingRequest,
+            canFaceNorth: hasOrbit && enabledGestures.allowsHeading && store.loadingState == .loaded && !navigation.isApplyingRequest,
             reset: { [weak self] in self?.resetFromControls() },
-            faceNorth: { [weak self] in self?.faceNorthFromControls() }
+            faceNorth: { [weak self] in self?.faceNorthFromControls() },
+            navigation: inputControlNavigation
         )
     }
 
@@ -244,10 +248,22 @@ final class OrbitDioramaModel {
 
     // MARK: - Camera binding
 
+    /// SwiftUI can deliver a queued onChange snapshot after a newer animation read-back.
+    /// Read the binding at delivery time so an old self-publication cannot cancel its own motion.
+    func synchronizeCameraBinding() {
+        applyCameraPosition(positionBinding?.wrappedValue)
+    }
+
     /// Applies an incoming camera request, once per distinct value.
     func applyCameraPosition(_ position: DioramaCameraPosition?, setsHome: Bool = true, force: Bool = false) {
         guard let position, force || position != lastAppliedPosition else { return }
-        if let camera = position.camera, !camera.isValid { return }
+        if let camera = position.camera, !camera.isValid {
+            // Normalize rejected input immediately. NaN cannot be acknowledged by equality,
+            // and leaving it pending would suppress every later valid read-back.
+            lastPublishedPosition = nil
+            writeCameraReadback(user: false)
+            return
+        }
         lastAppliedPosition = position
         guard !arPlacementActive else { return }
         let revision = cameraActionRevision
@@ -456,73 +472,76 @@ final class OrbitDioramaModel {
         return root?.terrain?.canPan == true || root?.tiles3D?.canPan == true
     }
 
-    /// Routes a primary drag: the globe steers, a pannable chunk pans, and a fixed diorama orbits.
-    ///
-    /// A single input slides the terrain, matching how a map behaves. When the chunk cannot pan —
-    /// either the caller disabled it or the configuration set no pan range — it orbits instead, so
-    /// a fixed diorama still responds the way it always has.
+    /// Routes a primary drag to ground pan or globe steering. Only the legacy preset falls
+    /// back to orbiting a fixed chunk. Unsupported map input leaves camera ownership untouched.
     func primaryDrag(dx: Float, dy: Float, at time: TimeInterval? = nil) {
-        guard !isInteractionLocked else { return }
-        interruptCameraForGesture()
-        navigation.interactionBegan()
-        cameraObservation.began()
-        // The globe has no ground to slide, so the drag spins it.
+        guard store.loadingState == .loaded, !isInteractionLocked, !navigation.isApplyingRequest, dx.isFinite, dy.isFinite, dx != 0 || dy != 0 else { return }
         if transition.isShowingGlobe {
-            if enabledGestures.contains(.rotate) {
-                steerGlobe(dx: dx, dy: dy)
-            }
+            guard enabledGestures.contains(.pan) else { return }
+            navigation.interactionBegan()
+            steerGlobe(dx: dx * inputConfiguration.resolved.panSensitivity, dy: dy * inputConfiguration.resolved.panSensitivity)
             return
         }
-        if canPanTerrain {
-            store.pan(
-                by: cameraController.terrainPanDelta(
-                    dragDeltaX: dx,
-                    dragDeltaY: dy,
-                    viewHeight: Float(viewSize.height),
-                    entityScale: entityScale
-                ),
-                at: time
-            )
-        } else if !arPlacementActive, enabledGestures.contains(.rotate) {
-            cameraController.rotate(deltaX: dx, deltaY: dy)
-            publishCameraPosition()
+        guard canPanTerrain else {
+            if inputConfiguration.preset == .legacyOrbit { secondaryDrag(dx: dx, dy: dy) }
+            return
         }
+        interruptCameraForGesture()
+        navigation.interactionBegan()
+        let sensitivity = inputConfiguration.resolved.panSensitivity
+        store.pan(by: cameraController.terrainPanDelta(dragDeltaX: dx * sensitivity,
+            dragDeltaY: dy * sensitivity, viewHeight: Float(viewSize.height), entityScale: entityScale), at: time)
     }
 
-    /// Routes a secondary drag: the globe steers, a chunk orbits.
-    ///
-    /// This is iOS's two-finger drag and macOS's option-drag — the input whose meaning is "turn",
-    /// where the primary drag's is "move".
     func secondaryDrag(dx: Float, dy: Float) {
-        guard !isInteractionLocked, !arPlacementActive else { return }
+        let sensitivity = inputConfiguration.resolved.orbitSensitivity
+        orbitInput(headingDegrees: Double(-dx * cameraController.rotationSensitivity * sensitivity) * 180 / .pi,
+                   pitchDegrees: Double(dy * cameraController.rotationSensitivity * sensitivity) * 180 / .pi)
+    }
+
+    /// Both axes are gated independently, including when a gesture supplies them together.
+    func orbitInput(headingDegrees: Double, pitchDegrees: Double) {
+        guard store.loadingState == .loaded, !isInteractionLocked, !arPlacementActive, !navigation.isApplyingRequest,
+              headingDegrees.isFinite, pitchDegrees.isFinite else { return }
+        let heading = enabledGestures.allowsHeading ? headingDegrees.remainder(dividingBy: 360) : 0
+        let pitch = enabledGestures.allowsPitch ? min(max(pitchDegrees, -180), 180) : 0
+        guard heading != 0 || pitch != 0 else { return }
         interruptCameraForGesture()
         navigation.interactionBegan()
         cameraObservation.began()
         if transition.isShowingGlobe {
-            steerGlobe(dx: dx, dy: dy)
+            steerGlobe(dx: Float(-heading * .pi / 180) / cameraController.rotationSensitivity,
+                       dy: Float(pitch * .pi / 180) / cameraController.rotationSensitivity)
             return
         }
-        if enabledGestures.contains(.rotate) {
-            cameraController.rotate(deltaX: dx, deltaY: dy)
-            publishCameraPosition()
-        }
+        cameraController.azimuth -= Float(heading * .pi / 180)
+        cameraController.elevation -= Float(pitch * .pi / 180)
+        constrainCamera()
+        publishCameraPosition()
     }
 
-    /// Routes a zoom delta, honouring the caller's gesture set.
-    func zoomInput(_ delta: Float, isWheel: Bool = false) {
-        guard !isInteractionLocked else { return }
-        guard enabledGestures.contains(.zoom), delta != 0 else {
-            if transition.isShowingGlobe { applyTransitionFraming() }
-            return
-        }
+    /// Returns true only when this scene owns the requested zoom. Unsupported ground never dollies.
+    @discardableResult
+    func zoomInput(_ delta: Float, isWheel: Bool = false, target: DioramaZoomTarget? = nil) -> Bool {
+        guard !isInteractionLocked, !navigation.isApplyingRequest, delta.isFinite, delta != 0 else { return false }
+        // The legacy gesture mapping may choose a camera dolly; explicit targets never change.
+        let target = target ?? (inputConfiguration.preset == .legacyOrbit && !store.canZoomGround && !transition.isShowingGlobe ? .camera : .ground)
+        guard canZoom(target) else { return false }
         interruptCameraForGesture()
-        if isWheel {
-            navigation.wheelInput()
-        } else {
+        if isWheel { navigation.wheelInput() }
+        else {
             navigation.interactionBegan(.zoom)
             cameraObservation.began(.zoom)
         }
-        zoom(by: delta)
+        let amount = delta * inputConfiguration.resolved.zoomSensitivity
+        if target == .camera {
+            cameraController.zoom(delta: amount)
+            constrainCamera()
+            publishCameraPosition()
+        } else {
+            zoom(by: amount)
+        }
+        return true
     }
 
     // MARK: - Globe framing

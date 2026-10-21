@@ -111,8 +111,13 @@ extension OrbitDioramaModel {
 
     func writeCameraReadback(user: Bool) {
         guard !arPlacementActive else { return }
+        // Preserve an application write waiting for SwiftUI's onChange callback. Animation
+        // read-back must not overwrite that newer request before the host can consume it.
+        if let binding = positionBinding, let published = lastPublishedPosition,
+           binding.wrappedValue != published, binding.wrappedValue != lastAppliedPosition { return }
         let position = user ? DioramaCameraPosition.userPositioned(resolvedCamera) : .camera(resolvedCamera)
         lastAppliedPosition = position
+        if positionBinding != nil { lastPublishedPosition = position }
         if positionBinding?.wrappedValue != position { positionBinding?.wrappedValue = position }
     }
 

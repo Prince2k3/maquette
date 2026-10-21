@@ -17,6 +17,7 @@ struct VisionOSDioramaView: View {
     @State private var dragStartOrientation: simd_quatf?
     @State private var annotationHost = VisionOSAnnotationHost()
 
+    @Environment(\.dioramaInputConfiguration) private var inputConfiguration
     @Environment(\.routePreviewController) private var routePreviewController
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dioramaEffect) private var effect
@@ -52,6 +53,7 @@ struct VisionOSDioramaView: View {
                 .task {
                     model.syncNavigation(binding: inputs.groundPosition, action: navigationAction, preservesGround: inputs.preservesGround, configuration: inputs.configuration)
                     model.enabledGestures = enabledGestures
+                    model.inputConfiguration = inputConfiguration.resolved
                     model.selectionBinding = inputs.selection
                     model.store.setEffect(effect)
                     let generation = model.store.loadGeneration
@@ -65,8 +67,10 @@ struct VisionOSDioramaView: View {
                 .onChange(of: effect) { _, newEffect in
                     model.store.setEffect(newEffect)
                 }
+                .onChange(of: inputConfiguration) { _, configuration in model.inputConfiguration = configuration.resolved }
                 .onChange(of: inputs.interactionModes.rawValue) { _, _ in
                     model.enabledGestures = enabledGestures
+                    model.inputConfiguration = inputConfiguration.resolved
                 }
                 .onChange(of: inputs.reloadKey) { _, key in
                     model.syncNavigation(binding: inputs.groundPosition, action: navigationAction, preservesGround: inputs.preservesGround, configuration: inputs.configuration)
@@ -103,7 +107,7 @@ struct VisionOSDioramaView: View {
                             model.handleTap(on: value.entity)
                         }
                 )
-                .simultaneousGestureIf(enabledGestures.contains(.pan) || enabledGestures.contains(.rotate),
+                .simultaneousGestureIf(enabledGestures.contains(.pan) || enabledGestures.allowsHeading,
                     DragGesture(minimumDistance: 8)
                         .targetedToAnyEntity()
                         .onChanged { value in
@@ -214,7 +218,8 @@ final class VisionOSDioramaModel {
     /// The handoff's shared mechanics; this model supplies the volumetric framing response.
     let handoff = GlobeHandoffConductor()
 
-    var enabledGestures: Set<DioramaGestureType> = [.rotate, .zoom, .pan]
+    var enabledGestures: Set<DioramaGestureType> = [.heading, .pitch, .zoom, .cameraZoom, .pan]
+    var inputConfiguration = DioramaInputConfiguration.map
     var globeStyle: GlobeTransitionStyle?
     var routePreviewController: RoutePreviewController?
     /// The selection binding handed to `DioramaView`, written on marker taps.
@@ -322,8 +327,23 @@ final class VisionOSDioramaModel {
             canReset: navigation.homeRegion != nil && !navigation.isApplyingRequest
                 && (store.loadingState == .loaded || transition.isShowingGlobe),
             heading: nil, canFaceNorth: false,
-            reset: { [weak self] in self?.resetFromControls() }, faceNorth: {}
+            reset: { [weak self] in self?.resetFromControls() }, faceNorth: {},
+            navigation: spatialInputControls
         )
+    }
+
+    var spatialInputControls: DioramaControlNavigation {
+        let available = enabledGestures.contains(.zoom) && !transition.isBusy && !navigation.isApplyingRequest
+            && store.loadingState == .loaded && (store.canZoomGround || transition.isShowingGlobe)
+        return .init(canGroundZoomIn: available && (transition.isShowingGlobe || store.groundScale > store.groundScaleLimits.lowerBound * 1.0001),
+            canGroundZoomOut: available && (transition.isShowingGlobe || store.groundScale < store.groundScaleLimits.upperBound * 0.9999 || (globeStyle != nil && store.globe != nil)),
+            canCameraZoomIn: false, canCameraZoomOut: false, groundScale: store.groundScale, cameraDistance: 0,
+            pitch: nil, pitchRange: 0...80, canPitch: false, canFit: false, canTogglePerspective: false,
+            zoom: { [weak self] target, steps in
+                guard let self, target == .ground, steps.isFinite, available else { return }
+                self.applyPinch(ratio: exp2(Float(steps * 10 / 25)))
+                self.navigation.interactionEnded(store: self.store, source: .zoom)
+            }, setPitch: { _ in }, togglePerspective: {})
     }
 
     func resetFromControls() {
@@ -669,14 +689,14 @@ final class VisionOSDioramaModel {
 
     /// Routes a drag, given its cumulative translation in scene meters.
     func applyDrag(sceneTranslation: SIMD3<Float>, startOrientation: inout simd_quatf?) {
-        guard !transition.isBusy else {
+        guard !transition.isBusy, !navigation.isApplyingRequest else {
             lastDragTranslation = sceneTranslation
             return
         }
-        navigation.interactionBegan()
         let previous = lastDragTranslation ?? .zero
         let delta = sceneTranslation - previous
         lastDragTranslation = sceneTranslation
+        guard delta.x.isFinite, delta.y.isFinite, delta.z.isFinite, delta != .zero else { return }
 
         // **Through the stage's own orientation, never straight off the scene axes.** The diorama is
         // pitched to face the viewer, so the ground plane it is dragged across is no longer the
@@ -688,8 +708,9 @@ final class VisionOSDioramaModel {
         let ground = Self.pitchRotation(stagePitch).inverse.act(delta)
 
         if transition.isShowingGlobe {
-            if enabledGestures.contains(.rotate) {
-                steerGlobe(groundDelta: ground)
+            if enabledGestures.contains(.pan) {
+                navigation.interactionBegan()
+                steerGlobe(groundDelta: ground * inputConfiguration.resolved.panSensitivity)
             }
             return
         }
@@ -699,10 +720,12 @@ final class VisionOSDioramaModel {
             // dragging toward +X carries the terrain +X-ward, so the sampled region moves the
             // other way, which is the sign `pan(by:)` expects of its offset delta.
             guard fitScale > 0 else { return }
-            store.pan(by: SIMD2(-ground.x, -ground.z) / fitScale)
-        } else if enabledGestures.contains(.rotate), let entity = store.dioramaEntity {
+            navigation.interactionBegan()
+            store.pan(by: SIMD2(-ground.x, -ground.z) / fitScale * inputConfiguration.resolved.panSensitivity)
+        } else if inputConfiguration.preset == .legacyOrbit, enabledGestures.allowsHeading, let entity = store.dioramaEntity {
             // Anchored to the gesture's start rather than compounded per frame, so a drag cannot
             // accelerate under its own accumulated rotation.
+            navigation.interactionBegan()
             let start = startOrientation ?? entity.orientation
             startOrientation = start
             let total = lastDragTranslation ?? .zero
@@ -746,9 +769,11 @@ final class VisionOSDioramaModel {
     /// octave currency the orbit platforms calibrate against, so the ladder from a valley to the
     /// globe is the same length on every platform.
     func applyPinch(ratio: Float) {
-        guard !transition.isBusy else { return }
+        guard !transition.isBusy, !navigation.isApplyingRequest, store.loadingState == .loaded,
+              enabledGestures.contains(.zoom), ratio.isFinite, ratio > 0, ratio != 1,
+              store.canZoomGround || transition.isShowingGlobe else { return }
         navigation.interactionBegan(.zoom)
-        let delta = log2(ratio) * Self.pinchOctaveScale
+        let delta = log2(ratio) * Self.pinchOctaveScale * inputConfiguration.resolved.zoomSensitivity
 
         if transition.isShowingGlobe {
             absorb(delta)

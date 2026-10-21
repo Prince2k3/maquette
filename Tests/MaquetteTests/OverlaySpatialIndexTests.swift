@@ -3,6 +3,25 @@ import Testing
 
 @Suite("Raster broad-phase ownership")
 struct OverlaySpatialIndexTests {
+    @Test func broadQueriesStayWithinOneVisitPerIndexedItem() throws {
+        let bounds = (0..<400).map { item in
+            let x = Double(item % 20), y = Double(item / 20)
+            return OverlayBounds([SIMD2(x, y), SIMD2(x + 1.25, y + 1.25)])
+        }
+        var preparation = try OverlayWork(.init())
+        let index = try OverlaySpatialIndex(bounds: bounds, work: &preparation)
+        let query = OverlayBounds([SIMD2<Double>(3, 3), SIMD2<Double>(18, 18)])
+        var work = try OverlayWork(.init(maxOperations: bounds.count))
+        let candidates = try index.rasterCandidates(for: query, work: &work)
+        let expected = Set(bounds.indices.filter { bounds[$0].intersects(query) })
+        #expect(Set(candidates) == expected)
+        #expect(candidates.count == expected.count)
+        var insufficient = try OverlayWork(.init(maxOperations: bounds.count - 1))
+        #expect(throws: OverlayGeometryError.budgetExceeded) {
+            try index.rasterCandidates(for: query, work: &insufficient)
+        }
+    }
+
     @Test func rasterQueriesVisitEveryIntersectingItemExactlyOnce() throws {
         var bounds: [OverlayBounds] = []
         for item in 0..<100 {

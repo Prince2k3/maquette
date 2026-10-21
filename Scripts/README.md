@@ -78,8 +78,21 @@ The opt-in driver in `Platform/DioramaProfileTour.swift` is compiled out unless
 seconds each of pan, ground zoom and camera zoom through the existing intent methods. It emits
 Points of Interest intervals and `ProfileTour` logs with input gaps, execution p95/max, completed
 builds, complete ground publications, unique mesh uploads and hidden record samples. The current
-profiling-only CADisplayLink driver issues one intent directly per callback and uses a bounded
-stream only to finish/cancel the phase. `missed` is the shortfall from 600 nominal callbacks,
+profiling-only driver issues one intent directly per callback and uses a bounded stream only to
+finish/cancel the phase. By default it drives from the view's `SceneEvents.Update`
+subscription. Set `MAQUETTE_PROFILE_DRIVER=displayLink` for the independent CADisplayLink control;
+`scene` explicitly selects the default.
+The scene driver follows native cadence without imposing a 60 Hz cap, so ProMotion captures
+can receive more than 600 inputs in ten seconds. `missed == 0` therefore means only that the
+nominal 60-per-second input minimum was met, not that no deadline or publication was missed.
+Scene callbacks sample the presented terrain revision and pan offset before issuing new input,
+logging distinct ground revisions per second separately from total publications. Callback gaps
+use consecutive monotonic timestamps; the source's target/frame interval is logged separately.
+`MAQUETTE_PROFILE_TRAJECTORY=linear` selects a constant-speed, back-and-forth zoom diagnostic
+with the same excursion and period as the default sine trajectory. Keep both results: the sine
+tour deliberately slows through the existing small-motion deadband at each turnaround.
+Preparation p50/p95/max, deadband skips, queued requests and geometry/refit signposts help classify
+publication shortfalls. See [[map-ground-update-cadence-investigation]] for the captures. `missed` is the shortfall from 600 nominal callbacks,
 not a count of separately measured deadline violations. Callbacks and record snapshots do not
 establish presented-frame cadence; the prior timer-driven stress captures remain historical data.
 Deactivating the scene cancels the tour and reverses outstanding movement; reactivation restarts it.
@@ -95,7 +108,9 @@ xcodebuild -project Demo/MaquetteDemo.xcodeproj -scheme MaquetteDemo \
 ```
 
 Launch the exact binary with `MAQUETTE_PROFILE=1 MAQUETTE_PRESET=performance` and
-`MAQUETTE_WORKLOAD=path|polygons|images` (choose one value). Keep its window active. Attach
+`MAQUETTE_WORKLOAD=path|polygons|images` (choose one value). For the scene cadence diagnostic,
+set `MAQUETTE_PROFILE_DRIVER=scene`; add `MAQUETTE_PROFILE_TRAJECTORY=linear` for constant-speed
+zoom. Keep its window active. Attach
 Instruments to its PID for 60 seconds. For frame counters without CPU-sampling overhead use
 `--instrument 'Metal Performance Overview' --instrument 'Points of Interest'` (no template,
 which creates Blank plus those instruments). Use `Game Performance Overview` plus `Points of

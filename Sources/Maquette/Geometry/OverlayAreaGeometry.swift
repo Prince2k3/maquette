@@ -38,8 +38,18 @@ struct OverlaySpatialIndex: Sendable {
                                body: (Int, inout OverlayWork) throws -> Void) throws {
         guard bounds.intersects(query) else { return }
         let first = SIMD2(cell(query.lo.x, axis: 0), cell(query.lo.y, axis: 1))
-        for x in first.x...cell(query.hi.x, axis: 0) {
-            for y in first.y...cell(query.hi.y, axis: 1) {
+        let last = SIMD2(cell(query.hi.x, axis: 0), cell(query.hi.y, axis: 1))
+        // Broad image/area footprints otherwise revisit faces in several shared buckets.
+        // One contiguous bounds pass is cheaper once the query covers a quarter of the grid.
+        if (last.x - first.x + 1) * (last.y - first.y + 1) * 4 >= size * size {
+            for index in itemBounds.indices {
+                try work.spend()
+                if itemBounds[index].intersects(query) { try body(index, &work) }
+            }
+            return
+        }
+        for x in first.x...last.x {
+            for y in first.y...last.y {
                 try work.spend()
                 for index in buckets[y * size + x, default: []] {
                     try work.spend()

@@ -14,6 +14,9 @@ import SwiftUI
 @MainActor
 @Observable
 final class OrbitDioramaModel {
+    #if MAQUETTE_PROFILING
+    @ObservationIgnored var profileFrameClock: DioramaProfileFrameClock?
+    #endif
     let store: DioramaStore
     let cameraController = CameraController()
     let navigation = DioramaNavigationController()

@@ -1280,6 +1280,10 @@ final class DioramaStore {
     private var panRevision = 0
     // One absolute target accumulates input while a coherent frame is being prepared.
     private var pendingGroundInput = PendingGroundInput()
+    #if MAQUETTE_PROFILING
+    @ObservationIgnored private(set) var profileGroundThresholdSkips = 0
+    @ObservationIgnored private(set) var profileGroundDeferrals = 0
+    #endif
 
     /// Drops pending gesture samples without invalidating the current scene or a loading task.
     func cancelPendingPan() {
@@ -1753,10 +1757,18 @@ final class DioramaStore {
         let limits = groundScaleLimits
         let target = min(max(scale, limits.lowerBound), limits.upperBound)
         if (dioramaEntity as? DioramaEntity)?.terrain?.isPanPresentationDeferred == true {
+            #if MAQUETTE_PROFILING
+            profileGroundDeferrals += 1
+            #endif
             pendingGroundInput.scale = target
             return
         }
-        guard abs(target / groundScale - 1) > 1e-4 else { return }
+        guard abs(target / groundScale - 1) > 1e-4 else {
+            #if MAQUETTE_PROFILING
+            profileGroundThresholdSkips += 1
+            #endif
+            return
+        }
 
         let started = ContinuousClock.now
         pendingGroundInput.pan = nil

@@ -11,7 +11,9 @@ extension OrbitDioramaModel {
         let logger = Logger(maquette: "ProfileTour")
         let signposter = OSSignposter(logger: Logger(maquette: "PointsOfInterest"))
         let workload = ProcessInfo.processInfo.environment["MAQUETTE_WORKLOAD"] ?? "unknown"
+        let linearTrajectory = ProcessInfo.processInfo.environment["MAQUETTE_PROFILE_TRAJECTORY"] == "linear"
         let clock = ContinuousClock()
+        logger.notice("PROFILE environment lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled) thermal=\(ProcessInfo.processInfo.thermalState.rawValue)")
         let deadline = clock.now.advanced(by: .seconds(90))
         do {
             while store.loadingState != .loaded {
@@ -20,7 +22,7 @@ extension OrbitDioramaModel {
             }
             if let root = store.dioramaEntity as? DioramaEntity { await root.overlayRenderer.waitUntilIdle() }
             try await Task.sleep(for: .seconds(8))
-            logger.notice("PROFILE ready driver=displayLink workload=\(workload, privacy: .public) viewport=\(self.viewSize.width)x\(self.viewSize.height)")
+            logger.notice("PROFILE ready trajectory=\(linearTrajectory ? "linear" : "sine", privacy: .public) workload=\(workload, privacy: .public) viewport=\(self.viewSize.width)x\(self.viewSize.height)")
             for (name, phase) in [("Pan" as StaticString, 0), ("GroundZoom" as StaticString, 1), ("CameraZoom" as StaticString, 2)] {
                 try Task.checkCancellation()
                 let state = signposter.beginInterval(name, id: signposter.makeSignpostID(), "\(workload, privacy: .public)")
@@ -29,7 +31,25 @@ extension OrbitDioramaModel {
                 var previous = SIMD2<Float>.zero
                 var tick = 0
                 let frameClock = DioramaProfileFrameClock()
-                defer { frameClock.stop() }
+                profileFrameClock = frameClock
+                defer { frameClock.stop(); profileFrameClock = nil }
+                var sceneFrames = 0, distinctSceneFrames = 0
+                var distinctSceneBins = [Int](repeating: 0, count: 10)
+                var lastRevision: Int?, lastPan: SIMD2<Float>?
+                frameClock.onSceneFrame = { [self] in
+                    let elapsed = start.duration(to: clock.now)
+                    let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+                    guard seconds < 10 else { return }
+                    sceneFrames += 1
+                    if let terrain = (store.dioramaEntity as? DioramaEntity)?.terrain {
+                        if let revision = lastRevision, revision != terrain.presentedSurfaceRevision || lastPan != terrain.presentedPanOffset {
+                            distinctSceneFrames += 1
+                            distinctSceneBins[min(9, Int(seconds))] += 1
+                        }
+                        lastRevision = terrain.presentedSurfaceRevision
+                        lastPan = terrain.presentedPanOffset
+                    }
+                }
                 var frames = frameClock.frames.makeAsyncIterator()
                 var inputExecutionMs: [Double] = []
                 var intervals: [Double] = []
@@ -37,6 +57,9 @@ extension OrbitDioramaModel {
                 var completed = false
                 var overlaySamples = 0, hiddenOverlaySamples = 0, incoherentSurfaceSamples = 0
                 let renderer = (store.dioramaEntity as? DioramaEntity)?.overlayRenderer
+                let skipsAtStart = store.profileGroundThresholdSkips
+                let deferralsAtStart = store.profileGroundDeferrals
+                let frameDurationStart = renderer?.profileFrameDurations.count ?? 0
                 let buildsAtStart = renderer?.geometryBuildCount ?? 0
                 let uploadsAtStart = renderer?.meshUploadCount ?? 0
                 let presentationsAtStart = renderer?.panPresentationCount ?? 0
@@ -67,7 +90,12 @@ extension OrbitDioramaModel {
                     if phase == 0 {
                         value = .init(Float(sin(angle) * viewSize.width * 0.06), Float(sin(angle) * viewSize.height * 0.03))
                     } else {
-                        value = .init(Float((1 - cos(angle)) * (phase == 1 ? 2 : 4)), 0)
+                        if linearTrajectory {
+                            let cycle = seconds.truncatingRemainder(dividingBy: 5) / 5
+                            value = .init(Float((1 - abs(cycle * 2 - 1)) * (phase == 1 ? 4 : 8)), 0)
+                        } else {
+                            value = .init(Float((1 - cos(angle)) * (phase == 1 ? 2 : 4)), 0)
+                        }
                     }
                     let delta = value - previous
                     let inputStart = clock.now
@@ -90,19 +118,36 @@ extension OrbitDioramaModel {
                     return
                 }
                 frameClock.stop()
+                logger.notice("PROFILE sceneFrames=\(sceneFrames) distinctGroundSceneFrames=\(distinctSceneFrames) driver=\(frameClock.usesSceneUpdates ? "scene" : "displayLink", privacy: .public) phase=\(String(describing: name), privacy: .public)")
+                logger.notice("PROFILE thresholdSkips=\(self.store.profileGroundThresholdSkips - skipsAtStart) deferrals=\(self.store.profileGroundDeferrals - deferralsAtStart) phase=\(String(describing: name), privacy: .public)")
+                logger.notice("PROFILE distinctGroundBins=\(distinctSceneBins.map(String.init).joined(separator: ","), privacy: .public) phase=\(String(describing: name), privacy: .public)")
+                let periods = frameClock.periods.sorted(), lateness = frameClock.lateness.sorted()
+                let sourceIntervals = frameClock.sourceIntervals.sorted()
+                logger.notice("PROFILE sourceFrameIntervalP50Ms=\(sourceIntervals[sourceIntervals.count / 2]) phase=\(String(describing: name), privacy: .public)")
+                logger.notice("PROFILE callbackPeriodP50Ms=\(periods.isEmpty ? 0 : periods[periods.count / 2]) callbackPeriodMaxMs=\(periods.last ?? 0) phase=\(String(describing: name), privacy: .public)")
+                if !frameClock.usesSceneUpdates {
+                    logger.notice("PROFILE callbackLatenessP95Ms=\(lateness[Int(Double(lateness.count - 1) * 0.95)]) callbackLatenessMaxMs=\(lateness.last ?? 0) phase=\(String(describing: name), privacy: .public)")
+                }
                 // Nominal opportunities not delivered/consumed; never burst to catch up.
                 let missed = max(0, 600 - tick)
+                let frameTimes = Array((renderer?.profileFrameDurations ?? []).dropFirst(frameDurationStart)).sorted()
+                if !frameTimes.isEmpty {
+                    logger.notice("PROFILE prepareP50Ms=\(frameTimes[frameTimes.count / 2]) prepareP95Ms=\(frameTimes[Int(Double(frameTimes.count - 1) * 0.95)]) prepareMaxMs=\(frameTimes.last ?? 0) phase=\(String(describing: name), privacy: .public)")
+                }
                 let sortedInput = inputExecutionMs.sorted()
                 let inputP95 = sortedInput.isEmpty ? 0 : sortedInput[min(sortedInput.count - 1, Int(Double(sortedInput.count - 1) * 0.95))]
+                let completedBuilds = (renderer?.geometryBuildCount ?? 0) - buildsAtStart
+                let presentations = (renderer?.panPresentationCount ?? 0) - presentationsAtStart
+                let uploads = (renderer?.meshUploadCount ?? 0) - uploadsAtStart
                 if phase == 0 { primaryDrag(dx: -previous.x, dy: -previous.y) }
                 else { _ = zoomInput(-previous.x, target: phase == 1 ? .ground : .camera) }
                 previous = .zero
                 completed = true
                 endInteraction()
                 signposter.endInterval(name, state, "ticks=\(tick) missed=\(missed) completed=true")
-                logger.notice("PROFILE inputExecutionP95Ms=\(inputP95) inputExecutionMaxMs=\(inputExecutionMs.max() ?? 0) driver=displayLink phase=\(String(describing: name), privacy: .public)")
+                logger.notice("PROFILE inputExecutionP95Ms=\(inputP95) inputExecutionMaxMs=\(inputExecutionMs.max() ?? 0) driver=\(frameClock.usesSceneUpdates ? "scene" : "displayLink", privacy: .public) phase=\(String(describing: name), privacy: .public)")
                 logger.notice("PROFILE phase=\(String(describing: name), privacy: .public) workload=\(workload, privacy: .public) ticks=\(tick) missed=\(missed) maxInputGapMs=\(intervals.max() ?? 0) completed=true")
-                logger.notice("PROFILE overlaySamples=\(overlaySamples) hiddenOverlaySamples=\(hiddenOverlaySamples) completedBuilds=\((renderer?.geometryBuildCount ?? 0) - buildsAtStart) phase=\(String(describing: name), privacy: .public) incoherentSurfaceSamples=\(incoherentSurfaceSamples) panPresentations=\((renderer?.panPresentationCount ?? 0) - presentationsAtStart) meshUploads=\((renderer?.meshUploadCount ?? 0) - uploadsAtStart)")
+                logger.notice("PROFILE overlaySamples=\(overlaySamples) hiddenOverlaySamples=\(hiddenOverlaySamples) completedBuilds=\(completedBuilds) phase=\(String(describing: name), privacy: .public) incoherentSurfaceSamples=\(incoherentSurfaceSamples) panPresentations=\(presentations) meshUploads=\(uploads)")
                 try await Task.sleep(for: .seconds(2))
             }
             logger.notice("PROFILE complete workload=\(workload, privacy: .public)")

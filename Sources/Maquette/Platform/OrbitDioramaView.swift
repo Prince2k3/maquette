@@ -216,6 +216,11 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
     private func realityView() -> some View {
         RealityView { content in
             installPicking(content)
+            #if MAQUETTE_PROFILING
+            _ = content.subscribe(to: SceneEvents.Update.self) { [weak model] event in
+                model?.profileFrameClock?.sceneFrame(deltaTime: event.deltaTime)
+            }
+            #endif
             content.add(DioramaSceneRig.makeOrbitCamera())
             content.add(DioramaSceneRig.makeSunLight())
             content.add(DioramaSceneRig.makeFillLight())

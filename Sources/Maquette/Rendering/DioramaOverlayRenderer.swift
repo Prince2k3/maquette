@@ -68,7 +68,10 @@ import SwiftUI
     // Hold one complete terrain/overlay frame while detached workers prepare its replacement.
     private(set) var panPresentationCount = 0
     #if MAQUETTE_PROFILING
+    private nonisolated static let profileSignposter = OSSignposter(logger: Logger(maquette: "PointsOfInterest"))
     private var loggedPanInvalidations = 0
+    private var profileFrameStart = ContinuousClock.now
+    private(set) var profileFrameDurations: [Double] = []
     #endif
     private var panKeys: [String: Key]?
     private var panResults: [String: Result<[DioramaOverlayLayer], OverlayGeometryError>] = [:]
@@ -128,6 +131,10 @@ import SwiftUI
                     let previous = try await base.value
                     try Task.checkCancellation()
                     if needsBase { return previous }
+                    #if MAQUETTE_PROFILING
+                    let interval = Self.profileSignposter.beginInterval("SurfaceRefit", id: Self.profileSignposter.makeSignpostID())
+                    defer { Self.profileSignposter.endInterval("SurfaceRefit", interval) }
+                    #endif
                     return try OverlaySurfaceMesh(terrain: buffers, reusing: previous)
                 }
             } else {
@@ -140,6 +147,9 @@ import SwiftUI
                 stroke: input.shape.isLine || input.annotation.style.stroke != nil ? input.annotation.style.strokeStyle : nil)
         }
         if coherentPan {
+            #if MAQUETTE_PROFILING
+            profileFrameStart = .now
+            #endif
             var requested: [String: Key] = [:]
             for (input, key) in zip(inputs, keys) { requested[input.id] = key }
             if panKeys != requested {
@@ -216,6 +226,10 @@ import SwiftUI
                 worker = Task.detached(priority: .userInitiated) {
                     let surface = try await prepared.value
                     try Task.checkCancellation()
+                    #if MAQUETTE_PROFILING
+                    let interval = Self.profileSignposter.beginInterval("OverlayGeometry", id: Self.profileSignposter.makeSignpostID())
+                    defer { Self.profileSignposter.endInterval("OverlayGeometry", interval) }
+                    #endif
                     return try DioramaOverlayGeometryBuilder.build(shape: shape, style: style, proxy: proxy,
                                                                    surface: surface, physicalSize: physicalSize)
                 }
@@ -264,6 +278,9 @@ import SwiftUI
             do { try install(result.get(), on: record, key: key) }
             catch { omit(record, diagnostic: error as? OverlayGeometryError ?? .invalidSurface) }
         }
+        #if MAQUETTE_PROFILING
+        profileFrameDurations.append(profileFrameStart.duration(to: .now).milliseconds)
+        #endif
         panPresentationCount += 1
         root?.finishPanPresentation()?(true)
     }

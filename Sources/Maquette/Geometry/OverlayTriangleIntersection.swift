@@ -60,13 +60,30 @@ enum OverlayTriangleIntersection {
             guard polygon.count >= 3 else { return Polygon() }
             let origin = edge == 0 ? a : edge == 1 ? b : edge == 2 ? c : d!
             let direction = (edge == 0 ? b : edge == 1 ? c : edge == 2 ? (d ?? a) : a) - origin
-            var output = Polygon()
-            var previous = polygon[polygon.count - 1]
-            var previousSide = sign * OverlayMath.cross(direction, previous.point - origin)
+            // Dense ribbons are much smaller than a terrain face. Most clip edges leave the
+            // entire fragment untouched; classify once instead of copying its fixed storage.
+            var sides = SIMD8<Double>.zero
+            var allInside = true, allOutside = true
             for i in 0..<polygon.count {
                 try work.spend()
+                let side = sign * OverlayMath.cross(direction, polygon[i].point - origin)
+                sides[i] = side
+                allInside = allInside && side >= 0
+                allOutside = allOutside && side < 0
+            }
+            if allOutside { return Polygon() }
+            if allInside {
+                while polygon.count > 1, simd_distance(polygon[0].point, polygon[polygon.count - 1].point) <= epsilon {
+                    polygon.count -= 1
+                }
+                continue
+            }
+            var output = Polygon()
+            var previous = polygon[polygon.count - 1]
+            var previousSide = sides[polygon.count - 1]
+            for i in 0..<polygon.count {
                 let current = polygon[i]
-                let side = sign * OverlayMath.cross(direction, current.point - origin)
+                let side = sides[i]
                 if (side >= 0) != (previousSide >= 0) {
                     output.append(previous.interpolated(to: current, at: previousSide / (previousSide - side)), epsilon: epsilon)
                 }

@@ -125,6 +125,91 @@ struct OverlaySurfaceGeometryTests {
         #expect(triangles(batch) == expected)
     }
 
+    @Test(arguments: [false, true], [false, true])
+    func denseRibbonRetainsCoverageWithFewerVertices(gap: Bool, reverse: Bool) throws {
+        var buffers = ridge()
+        if gap { buffers.indices.removeLast(3) }
+        let surface = try OverlaySurfaceMesh(terrain: buffers)
+        var source: [OverlayTriangle] = []
+        for i in 0..<1_024 {
+            let x = -0.1 + Double(i) / 1_024 * 4.2
+            let z = 2 + sin(x * 3) * 0.8
+            func v(_ x: Double, _ z: Double) -> OverlayVertex {
+                .init(point: .init(x, z), uv: .init(0.3, 0.7), altitude: 15)
+            }
+            let a = v(x, z), b = v(x + 0.012, z + 0.002)
+            let c = v(x + 0.013, z + 0.008), d = v(x + 0.001, z + 0.006)
+            source += [.init(a: a, b: b, c: c), .init(a: a, b: c, c: d)]
+        }
+        if reverse { source = source.map { .init(a: $0.a, b: $0.c, c: $0.b) } }
+        func area(_ mesh: OverlayMesh) -> Double {
+            stride(from: 0, to: mesh.indices.count, by: 3).reduce(0) { sum, i in
+                let a = mesh.positions[Int(mesh.indices[i])], b = mesh.positions[Int(mesh.indices[i + 1])]
+                let c = mesh.positions[Int(mesh.indices[i + 2])]
+                return sum + Double(simd_cross(b - a, c - a).y) / 2
+            }
+        }
+        for altitude in [AltitudeReference.clampToGround, .relativeToGround] {
+            let mesh = try surface.drape(source, altitude: altitude, elevationToY: { $0 * 2 - 100 })
+            var referenceArea = 0.0, referenceVertices = 0
+            for start in stride(from: 0, to: source.count, by: 512) {
+                let reference = try surface.drape(Array(source[start..<start + 512]), altitude: altitude, elevationToY: { $0 * 2 - 100 })
+                referenceArea += area(reference); referenceVertices += reference.positions.count
+            }
+            #expect(abs(area(mesh) - referenceArea) < 2e-6)
+            if !reverse { #expect(mesh.positions.count < referenceVertices * 4 / 5) }
+            for (i, p) in mesh.positions.enumerated() {
+                #expect(abs(Double(p.y) - (3 - abs(Double(p.x) - 2) * 1.5 + (altitude == .relativeToGround ? 30 : 0))) < 1e-5)
+                #expect(mesh.uvs[i] == SIMD2<Float>(0.3, 0.7))
+                #expect(abs(simd_length(mesh.normals[i]) - 1) < 1e-5)
+                #expect(mesh.normals[i].y > 0)
+                #expect(p.x >= -1e-5 && p.x <= 4 + 1e-5 && p.z >= -1e-5 && p.z <= 4 + 1e-5)
+                if gap && p.x > 2 { #expect(p.z <= 8 - 2 * p.x + 1e-5) }
+            }
+            for i in stride(from: 0, to: mesh.indices.count, by: 3) {
+                let a = mesh.positions[Int(mesh.indices[i])], b = mesh.positions[Int(mesh.indices[i + 1])]
+                let c = mesh.positions[Int(mesh.indices[i + 2])]
+                #expect(simd_cross(b - a, c - a).y > 0)
+            }
+        }
+    }
+
+    @Test func denseConcavePairsKeepTheirOriginalTriangleCoverage() throws {
+        let surface = try OverlaySurfaceMesh(terrain: ridge())
+        let a = OverlayVertex(point: .init(1, 1)), b = OverlayVertex(point: .init(3, 1))
+        let c = OverlayVertex(point: .init(1.5, 1.5)), d = OverlayVertex(point: .init(1, 3))
+        let pair = [OverlayTriangle(a: a, b: b, c: c), .init(a: a, b: c, c: d)]
+        let source = Array(repeating: pair, count: 512).flatMap { $0 }
+        let reference = try surface.drape(pair, elevationToY: { $0 })
+        let mesh = try surface.drape(source, elevationToY: { $0 })
+        #expect(mesh.indices.count == reference.indices.count * 512)
+        #expect(mesh.positions.count == reference.positions.count * 512)
+    }
+
+    @Test(arguments: [false, true])
+    func areaInteriorSharesResidentVertices(gap: Bool) throws {
+        var buffers = ridge()
+        if gap { buffers.indices.removeLast(3) }
+        let surface = try OverlaySurfaceMesh(terrain: buffers)
+        let ring = [SIMD2<Double>(-1, -1), .init(5, -1), .init(5, 5), .init(-1, 5)].map { OverlayVertex(point: $0) }
+        let source = try OverlayPolygonTessellator.triangulate(rings: [ring])
+        for altitude in [AltitudeReference.clampToGround, .relativeToGround] {
+            let mesh = try surface.drapeArea(source, rings: [ring], altitude: altitude, lift: 0.002, elevationToY: { $0 })
+            #expect(mesh.positions.count < mesh.indices.count * 3 / 4)
+            #expect(mesh.indices.count == buffers.indices.count)
+            var area = 0.0
+            for i in stride(from: 0, to: mesh.indices.count, by: 3) {
+                let a = mesh.positions[Int(mesh.indices[i])], b = mesh.positions[Int(mesh.indices[i + 1])]
+                let c = mesh.positions[Int(mesh.indices[i + 2])]
+                let cross = simd_cross(b - a, c - a)
+                #expect(cross.y > 0)
+                area += Double(cross.y) / 2
+            }
+            #expect(abs(area - (gap ? 12 : 16)) < 1e-5)
+            for p in mesh.positions { #expect(abs(p.y - (3 - abs(p.x - 2) * 1.5 + 0.002)) < 1e-5) }
+        }
+    }
+
     @Test func rectangularImagesKeepOriginalUVsThroughGroundAndExtentClipping() throws {
         let ring = [OverlayVertex(point: .init(0.5, 0.5), uv: .init(0, 0)),
                     .init(point: .init(3.5, 0.5), uv: .init(1, 0)),

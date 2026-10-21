@@ -274,6 +274,22 @@ struct OverlaySurfaceMesh: Sendable {
         var mesh = OverlayMesh()
         let candidates = try index.candidates(for: coverage.bounds, work: &work)
         mesh.reserveCapacity(min(work.limits.maxTriangles, candidates.count * 2) * 3)
+        // Constant unlit fills share original resident corners across interior faces. Boundary
+        // fragments retain their exact clipped vertices; no absent terrain face gains indices.
+        var interiorVertices: [UInt32: UInt32] = [:]
+        interiorVertices.reserveCapacity(min(horizontal.count, candidates.count * 2))
+        func interiorVertex(_ source: UInt32, position: SIMD3<Double>) throws -> UInt32 {
+            if let existing = interiorVertices[source] { return existing }
+            let y = altitude == .relativeToGround ? position.y + elevationToY(first.altitude) - elevationToY(0) : position.y
+            let p = SIMD3<Float>(Float(position.x), Float(y + lift), Float(position.z))
+            let uv = SIMD2<Float>(first.uv)
+            guard p.x.isFinite, p.y.isFinite, p.z.isFinite, uv.x.isFinite, uv.y.isFinite else { throw OverlayGeometryError.nonFiniteInput }
+            guard mesh.positions.count < Int(UInt32.max) else { throw OverlayGeometryError.budgetExceeded }
+            let result = UInt32(mesh.positions.count)
+            interiorVertices[source] = result
+            mesh.positions.append(p); mesh.uvs.append(uv); mesh.normals.append(.init(0, 1, 0))
+            return result
+        }
         for candidate in candidates {
             let ground = surfaceTriangle(at: candidate)
             let a = SIMD2(ground.a.x, ground.a.z), b = SIMD2(ground.b.x, ground.b.z), c = SIMD2(ground.c.x, ground.c.z)
@@ -285,9 +301,18 @@ struct OverlaySurfaceMesh: Sendable {
             }
             if try !coverage.touches(a: a, b: b, c: c, epsilon: epsilon, work: &work) {
                 if try coverage.contains((a + b + c) / 3, work: &work) {
-                    try emit(.init(a: .init(point: a, uv: first.uv, altitude: first.altitude),
-                                   b: .init(point: b, uv: first.uv, altitude: first.altitude),
-                                   c: .init(point: c, uv: first.uv, altitude: first.altitude)))
+                    try work.spend(3)
+                    try work.checkTriangles(mesh.indices.count / 3 + 1)
+                    let face = sourceFaces[candidate]
+                    let ia = try interiorVertex(sourceIndices[face], position: ground.a)
+                    let ib = try interiorVertex(sourceIndices[face + 1], position: ground.b)
+                    let ic = try interiorVertex(sourceIndices[face + 2], position: ground.c)
+                    mesh.indices.append(ia)
+                    if OverlayMath.cross(b - a, c - a) <= 0 {
+                        mesh.indices.append(ib); mesh.indices.append(ic)
+                    } else {
+                        mesh.indices.append(ic); mesh.indices.append(ib)
+                    }
                 }
                 continue
             }
@@ -316,6 +341,116 @@ struct OverlaySurfaceMesh: Sendable {
         return mesh
     }
 
+    private struct RasterPatch {
+        var source: Int
+        var fourth: OverlayVertex?
+        var bounds: OverlayBounds
+    }
+
+    /// Merge only two triangles whose shared diagonal bounds one strictly convex cell.
+    /// Constant attributes make removing that diagonal exact; no ground face is bridged.
+    private func ribbonPatches(_ source: [OverlayTriangle], work: inout OverlayWork) throws -> [RasterPatch]? {
+        guard !resolvesOverlaps, source.count >= 1_024, let first = source.first?.a,
+              source.allSatisfy({ t in
+                  t.a.uv == first.uv && t.b.uv == first.uv && t.c.uv == first.uv
+                  && t.a.altitude == first.altitude && t.b.altitude == first.altitude && t.c.altitude == first.altitude
+              }) else { return nil }
+        var patches: [RasterPatch] = []
+        patches.reserveCapacity(source.count / 2)
+        var i = 0
+        while i < source.count {
+            try work.spend()
+            let t = source[i]
+            var fourth: OverlayVertex?
+            if i + 1 < source.count {
+                let next = source[i + 1]
+                if t.a == next.a && t.c == next.b { fourth = next.c }
+                if let d = fourth {
+                    let a = t.a.point, b = t.b.point, c = t.c.point, d = d.point
+                    let turns = SIMD4(OverlayMath.cross(b - a, c - b), OverlayMath.cross(c - b, d - c),
+                                      OverlayMath.cross(d - c, a - d), OverlayMath.cross(a - d, b - a))
+                    let tolerance = epsilon * epsilon
+                    if !(turns.min() > tolerance || turns.max() < -tolerance) { fourth = nil }
+                }
+            }
+            var bounds = t.bounds
+            if let fourth {
+                bounds.lo = simd_min(bounds.lo, fourth.point); bounds.hi = simd_max(bounds.hi, fourth.point)
+            }
+            patches.append(.init(source: i, fourth: fourth, bounds: bounds))
+            i += fourth == nil ? 1 : 2
+        }
+        return patches.count < source.count ? patches : nil
+    }
+
+    private func drapeRibbon(_ source: [OverlayTriangle], patches: [RasterPatch], altitude: AltitudeReference,
+                             lift: Double, elevationToY: (Double) -> Double, work: inout OverlayWork) throws -> OverlayMesh {
+        var mesh = OverlayMesh()
+        mesh.reserveCapacity(min(work.limits.maxTriangles, source.count * 2) * 2)
+        var start = 0
+        while start < patches.count {
+            var end = start + 1, query = patches[start].bounds
+            for next in end..<min(patches.count, start + 4) {
+                try work.spend()
+                var combined = query
+                combined.lo = simd_min(query.lo, patches[next].bounds.lo)
+                combined.hi = simd_max(query.hi, patches[next].bounds.hi)
+                let extent = combined.hi - combined.lo
+                guard max(extent.x, extent.y) <= epsilon * 1e10 / 128 else { break }
+                query = combined; end = next + 1
+            }
+            try index.visitCandidates(for: source[patches[start].source], bounds: query, work: &work) { candidate, work in
+                let ground = surfaceTriangle(at: candidate)
+                for id in start..<end {
+                    try work.spend()
+                    let patch = patches[id]
+                    guard patch.bounds.intersects(ground.bounds) else { continue }
+                    let t = source[patch.source]
+                    let a = SIMD2(ground.a.x, ground.a.z), b = SIMD2(ground.b.x, ground.b.z), c = SIMD2(ground.c.x, ground.c.z)
+                    let polygon: OverlayTriangleIntersection.Polygon
+                    if let fourth = patch.fourth {
+                        polygon = try OverlayTriangleIntersection.clipQuad(t, fourth: fourth, a: a, b: b, c: c, epsilon: epsilon, work: &work)
+                    } else {
+                        polygon = try OverlayTriangleIntersection.clip(t, a: a, b: b, c: c, epsilon: epsilon, work: &work)
+                    }
+                    guard polygon.count >= 3 else { continue }
+                    try work.spend(polygon.count)
+                    let vertexLimit = min(work.limits.maxTriangles, Int(UInt32.max) / 3) * 3
+                    guard mesh.positions.count <= vertexLimit - polygon.count else { throw OverlayGeometryError.budgetExceeded }
+                    let base = UInt32(mesh.positions.count)
+                    var normal = simd_cross(ground.b - ground.a, ground.c - ground.a)
+                    if normal.y < 0 { normal = -normal }
+                    let length = simd_length(normal)
+                    guard length > 0, length.isFinite else { throw OverlayGeometryError.invalidSurface }
+                    let n = SIMD3<Float>(normal / length)
+                    // All vertices lie on this terrain face. Unlit overlays can share fan
+                    // corners, just as image overlays share resident terrain vertices.
+                    for i in 0..<polygon.count {
+                        let v = polygon[i]
+                        let y = ground.boundedHeight(at: v.point)
+                        let height = altitude == .relativeToGround ? y + elevationToY(v.altitude) - elevationToY(0) : y
+                        let p = SIMD3<Float>(Float(v.point.x), Float(height + lift), Float(v.point.y))
+                        let uv = SIMD2<Float>(v.uv)
+                        guard p.x.isFinite, p.y.isFinite, p.z.isFinite, uv.x.isFinite, uv.y.isFinite else { throw OverlayGeometryError.nonFiniteInput }
+                        mesh.positions.append(p); mesh.uvs.append(uv); mesh.normals.append(n)
+                    }
+                    for i in 1..<(polygon.count - 1) {
+                        let area = OverlayMath.cross(polygon[i].point - polygon[0].point, polygon[i + 1].point - polygon[0].point)
+                        guard abs(area) > epsilon * epsilon else { continue }
+                        let b = base + UInt32(area < 0 ? i : i + 1), c = base + UInt32(area < 0 ? i + 1 : i)
+                        let cross = simd_cross(SIMD3<Double>(mesh.positions[Int(b)]) - SIMD3<Double>(mesh.positions[Int(base)]),
+                                               SIMD3<Double>(mesh.positions[Int(c)]) - SIMD3<Double>(mesh.positions[Int(base)]))
+                        guard cross.y > 0 else { continue }
+                        try work.checkTriangles(mesh.indices.count / 3 + 1)
+                        mesh.indices.append(base); mesh.indices.append(b); mesh.indices.append(c)
+                    }
+                }
+            }
+            start = end
+        }
+        return mesh
+    }
+
     func drape(_ source: [OverlayTriangle], altitude: AltitudeReference = .clampToGround,
                lift: Double = 0, elevationToY: (Double) -> Double) throws -> OverlayMesh {
         guard lift.isFinite, source.allSatisfy(\.isFinite) else {
@@ -327,6 +462,9 @@ struct OverlaySurfaceMesh: Sendable {
         // triangles. Cancellation is checked throughout either bounded computation.
         if resolvesOverlaps { work = try OverlayWork(.init(maxOperations: 32_000_000)) }
         try work.checkTriangles(source.count)
+        if altitude != .absolute, let patches = try ribbonPatches(source, work: &work) {
+            return try drapeRibbon(source, patches: patches, altitude: altitude, lift: lift, elevationToY: elevationToY, work: &work)
+        }
         var mesh = OverlayMesh()
         mesh.reserveCapacity(min(work.limits.maxTriangles, max(342, source.count * 3)) * 3)
         if altitude == .absolute {

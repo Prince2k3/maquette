@@ -66,9 +66,9 @@ struct OverlayConvexArea {
             for polygon in result {
                 var remaining = polygon
                 for plane in crossing {
-                    let outside = try Self.clip(remaining, plane: plane, inside: false, epsilon: epsilon, work: &work)
-                    if outside.count >= 3 { next.append(outside) }
-                    remaining = try Self.clip(remaining, plane: plane, inside: true, epsilon: epsilon, work: &work)
+                    let split = try Self.split(remaining, plane: plane, epsilon: epsilon, work: &work)
+                    if split.outside.count >= 3 { next.append(split.outside) }
+                    remaining = split.inside
                     if remaining.count < 3 { break }
                 }
             }
@@ -76,6 +76,46 @@ struct OverlayConvexArea {
             if result.isEmpty { break }
         }
         return result
+    }
+
+    /// Partition a hole boundary once. Both halves share the same intersection calculation;
+    /// appending normalized vertices avoids a second allocation/copy for every fragment.
+    private static func split(_ polygon: [OverlayVertex], plane: Plane, epsilon: Double,
+                              work: inout OverlayWork) throws -> (inside: [OverlayVertex], outside: [OverlayVertex]) {
+        guard let last = polygon.last else { return ([], []) }
+        try work.spend(polygon.count)
+        var minimum = Double.infinity, maximum = -Double.infinity
+        for vertex in polygon {
+            let side = plane.side(vertex)
+            minimum = min(minimum, side); maximum = max(maximum, side)
+        }
+        if minimum >= 0 { return (polygon, maximum <= 0 ? polygon : []) }
+        if maximum <= 0 { return ([], polygon) }
+        var inside: [OverlayVertex] = [], outside: [OverlayVertex] = []
+        inside.reserveCapacity(polygon.count + 1); outside.reserveCapacity(polygon.count + 1)
+        var previous = last, previousSide = plane.side(last)
+        for current in polygon {
+            let side = plane.side(current)
+            let entersInside = (side >= 0) != (previousSide >= 0)
+            let entersOutside = (side <= 0) != (previousSide <= 0)
+            if entersInside || entersOutside {
+                let cut = previous.interpolated(to: current, at: previousSide / (previousSide - side))
+                if entersInside { append(cut, to: &inside, epsilon: epsilon) }
+                if entersOutside { append(cut, to: &outside, epsilon: epsilon) }
+            }
+            if side >= 0 { append(current, to: &inside, epsilon: epsilon) }
+            if side <= 0 { append(current, to: &outside, epsilon: epsilon) }
+            previous = current; previousSide = side
+        }
+        close(&inside, epsilon: epsilon); close(&outside, epsilon: epsilon)
+        return (inside, outside)
+    }
+
+    private static func append(_ vertex: OverlayVertex, to polygon: inout [OverlayVertex], epsilon: Double) {
+        if polygon.last.map({ simd_distance($0.point, vertex.point) > epsilon }) ?? true { polygon.append(vertex) }
+    }
+    private static func close(_ polygon: inout [OverlayVertex], epsilon: Double) {
+        while polygon.count > 1, simd_distance(polygon[0].point, polygon[polygon.count - 1].point) <= epsilon { polygon.removeLast() }
     }
 
     private static func clip(_ polygon: [OverlayVertex], plane: Plane, inside: Bool,
@@ -96,11 +136,12 @@ struct OverlayConvexArea {
         for current in polygon {
             let side = sign * plane.side(current)
             if (side >= 0) != (previousSide >= 0) {
-                result.append(previous.interpolated(to: current, at: previousSide / (previousSide - side)))
+                append(previous.interpolated(to: current, at: previousSide / (previousSide - side)), to: &result, epsilon: epsilon)
             }
-            if side >= 0 { result.append(current) }
+            if side >= 0 { append(current, to: &result, epsilon: epsilon) }
             previous = current; previousSide = side
         }
-        return OverlayMath.normalized(result, epsilon: epsilon)
+        close(&result, epsilon: epsilon)
+        return result
     }
 }

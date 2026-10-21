@@ -57,7 +57,14 @@ enum OverlayTriangleIntersection {
         return try clipGeneral(source, a: a, b: b, c: c, d: d, epsilon: epsilon, work: &work)
     }
 
-    private static func clipPoints(_ source: OverlayTriangle, a: SIMD2<Double>, b: SIMD2<Double>, c: SIMD2<Double>, d: SIMD2<Double>? = nil,
+    /// A proven convex constant-attribute ribbon cell, without its artificial diagonal.
+    static func clipQuad(_ source: OverlayTriangle, fourth: OverlayVertex,
+                         a: SIMD2<Double>, b: SIMD2<Double>, c: SIMD2<Double>,
+                         epsilon: Double, work: inout OverlayWork) throws -> Polygon {
+        try clipPoints(source, fourth: fourth.point, a: a, b: b, c: c, epsilon: epsilon, work: &work)
+    }
+
+    private static func clipPoints(_ source: OverlayTriangle, fourth: SIMD2<Double>? = nil, a: SIMD2<Double>, b: SIMD2<Double>, c: SIMD2<Double>, d: SIMD2<Double>? = nil,
                      epsilon: Double, work: inout OverlayWork) throws -> Polygon {
         let area = OverlayMath.cross(b - a, c - a)
         guard abs(area) > epsilon * epsilon else { return Polygon() }
@@ -77,6 +84,7 @@ enum OverlayTriangleIntersection {
             append(source.a.point, to: input, count: &count)
             append(source.b.point, to: input, count: &count)
             append(source.c.point, to: input, count: &count)
+            if let fourth { append(fourth, to: input, count: &count) }
             let edgeCount = d == nil ? 3 : 4
             for edge in 0..<edgeCount {
                 guard count >= 3 else { return Polygon() }

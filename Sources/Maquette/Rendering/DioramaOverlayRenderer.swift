@@ -27,7 +27,7 @@ import SwiftUI
     }
     @MainActor final class Part {
         let model = ModelEntity()
-        let resource = OverlayMeshResource()
+        var resource = OverlayMeshResource()
         var mesh = OverlayMesh()
         var installedResource: MeshResource?
         var installedStyle: DioramaFeatureStyle?
@@ -52,6 +52,8 @@ import SwiftUI
     private(set) var diagnostics: [String: OverlayGeometryError] = [:]
     private(set) var geometryBuildCount = 0
     private(set) var textureUploadCount = 0
+    private(set) var meshUploadCount = 0
+    private var imageMeshes: [(key: Key, resource: OverlayMeshResource)] = []
     @ObservationIgnored private(set) var reconciliationDuration = Duration.zero
     @ObservationIgnored private(set) var materialUpdateCount = 0
     private var textures: [DioramaImageResource.Key: TextureResource] = [:]
@@ -83,7 +85,7 @@ import SwiftUI
         for record in records.values {
             record.task?.cancel(); record.collisionTask?.cancel(); record.entity.removeFromParent()
         }
-        records.removeAll(); diagnostics.removeAll(); textures.removeAll()
+        records.removeAll(); diagnostics.removeAll(); textures.removeAll(); imageMeshes.removeAll()
         surfaceTask?.cancel(); surfaceTask = nil; context = nil
         rasterBaseTask?.cancel(); rasterBaseTask = nil
         for job in geometryJobs { job.task.cancel() }
@@ -146,6 +148,7 @@ import SwiftUI
                 panKeys = requested
             }
         }
+        imageMeshes.removeAll { entry in !keys.contains(entry.key) }
         geometryJobs.removeAll { job in
             guard !keys.contains(job.key) else { return false }
             job.task.cancel(); return true
@@ -270,7 +273,24 @@ import SwiftUI
         for (kind, part) in record.layers where !kinds.contains(kind) { part.model.removeFromParent(); record.layers[kind] = nil }
         for layer in layers {
             let part = record.layers[layer.kind] ?? Part()
-            try part.resource.update(layer.mesh)
+            if layer.kind == .image {
+                if let shared = imageMeshes.first(where: { $0.key == key }) {
+                    part.resource = shared.resource
+                } else {
+                    // A shared displayed mesh may be refilled only if every remaining owner
+                    // wants this exact candidate. A footprint edit detaches before writing.
+                    let hasOtherMapping = records.values.contains { sibling in
+                        sibling.key != key && sibling.layers[.image]?.resource === part.resource
+                    }
+                    if hasOtherMapping { part.resource = OverlayMeshResource() }
+                    try part.resource.update(layer.mesh)
+                    meshUploadCount += 1
+                    imageMeshes.append((key, part.resource))
+                }
+            } else {
+                try part.resource.update(layer.mesh)
+                meshUploadCount += 1
+            }
             part.mesh = layer.mesh
             record.layers[layer.kind] = part
             if part.model.parent == nil { record.entity.addChild(part.model) }

@@ -228,6 +228,14 @@ struct MapContentBenchmark {
         }
         let panCompletion = root.overlayRenderer.reconciliationDuration - completionStart
         print("CONTENT main actor completion mean \(milliseconds(panCompletion) / 20) ms")
+        var uploadedResources = Set<ObjectIdentifier>()
+        var uploadedVertices = 0
+        for record in root.overlayRenderer.records.values {
+            for part in record.layers.values where uploadedResources.insert(ObjectIdentifier(part.resource)).inserted {
+                uploadedVertices += part.mesh.positions.count
+            }
+        }
+        print("CONTENT GPU geometry: \(uploadedResources.count) resources; \(uploadedVertices) unique vertices")
         let vertices = root.overlayRenderer.records.values.reduce(0) { count, record in
             count + record.layers.values.reduce(0) { $0 + $1.mesh.positions.count }
         }

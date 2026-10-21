@@ -68,12 +68,20 @@ presentations separately from input iterations and layer FPS.
 [[map-overlay-ground-zoom-visibility-fix]] records the subsequent mapping-change handoff and repeat
 captures. `Fixtures/overlay-profile-ground-zoom-fix-2026-10-21.json` preserves those results.
 
+[[map-image-overlay-zoom-optimization]] records shared/indexed image geometry and the subsequent
+frame-paced captures. `Fixtures/overlay-profile-image-optimization-2026-10-21.json` retains all
+final runs and intermediate diagnostics.
+
 The opt-in driver in `Platform/DioramaProfileTour.swift` is compiled out unless
 `MAQUETTE_PROFILING` is defined. It also requires the runtime environment variable
 `MAQUETTE_PROFILE=1`. It waits for initial content, warms up for eight seconds, then drives ten
 seconds each of pan, ground zoom and camera zoom through the existing intent methods. It emits
-Points of Interest intervals and `ProfileTour` logs with input deadlines, gaps, completed builds
-and hidden overlay record samples. These samples are diagnostics, not frame measurements.
+Points of Interest intervals and `ProfileTour` logs with input gaps, execution p95/max, completed
+builds, complete ground publications, unique mesh uploads and hidden record samples. The current
+profiling-only CADisplayLink driver issues one intent directly per callback and uses a bounded
+stream only to finish/cancel the phase. `missed` is the shortfall from 600 nominal callbacks,
+not a count of separately measured deadline violations. Callbacks and record snapshots do not
+establish presented-frame cadence; the prior timer-driven stress captures remain historical data.
 Deactivating the scene cancels the tour and reverses outstanding movement; reactivation restarts it.
 
 For example, build a separate Release Mac demo:
@@ -88,7 +96,10 @@ xcodebuild -project Demo/MaquetteDemo.xcodeproj -scheme MaquetteDemo \
 
 Launch the exact binary with `MAQUETTE_PROFILE=1 MAQUETTE_PRESET=performance` and
 `MAQUETTE_WORKLOAD=path|polygons|images` (choose one value). Keep its window active. Attach
-Instruments to its PID, using `Game Performance Overview` plus `Points of Interest` for 60 seconds.
+Instruments to its PID for 60 seconds. For frame counters without CPU-sampling overhead use
+`--instrument 'Metal Performance Overview' --instrument 'Points of Interest'` (no template,
+which creates Blank plus those instruments). Use `Game Performance Overview` plus `Points of
+Interest` or Time Profiler in separate CPU diagnosis runs. Keep those methods distinct in reports.
 Attaching by PID avoids Launch Services resolving an older demo with the same executable name.
 Do not build, inspect the UI, or run other captures during the measured phases. Validate phase
 completion and target PID/layer before summarizing counters; exclude canceled intervals.

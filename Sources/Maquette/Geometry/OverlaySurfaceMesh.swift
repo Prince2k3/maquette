@@ -192,7 +192,30 @@ struct OverlaySurfaceMesh: Sendable {
             .init(point: point, uv: .init((point.x - a.x) / dx, (point.y - a.y) / dz), altitude: ring[0].altitude)
         }
         let candidates = try index.candidates(for: bounds, work: &work)
-        mesh.reserveCapacity(min(work.limits.maxTriangles, candidates.count * 2) * 3)
+        let vertexCapacity = min(horizontal.count, candidates.count * 3)
+        mesh.positions.reserveCapacity(vertexCapacity)
+        mesh.normals.reserveCapacity(vertexCapacity)
+        mesh.uvs.reserveCapacity(vertexCapacity)
+        mesh.indices.reserveCapacity(min(work.limits.maxTriangles, candidates.count * 2) * 3)
+        var indexedVertices = [UInt32](repeating: .max, count: horizontal.count)
+        let relativeHeight = altitude == .relativeToGround ? elevationToY(ring[0].altitude) - elevationToY(0) : 0
+        func indexedVertex(_ source: UInt32, position: SIMD3<Double>) throws -> UInt32 {
+            let sourceID = Int(source)
+            if indexedVertices[sourceID] != .max { return indexedVertices[sourceID] }
+            let point = SIMD3<Float>(Float(position.x), Float(position.y + relativeHeight + lift), Float(position.z))
+            let uv = SIMD2<Float>(Float((position.x - a.x) / dx), Float((position.z - a.y) / dz))
+            guard point.x.isFinite, point.y.isFinite, point.z.isFinite, uv.x.isFinite, uv.y.isFinite else {
+                throw OverlayGeometryError.nonFiniteInput
+            }
+            guard mesh.positions.count < Int(UInt32.max) else { throw OverlayGeometryError.budgetExceeded }
+            let result = UInt32(mesh.positions.count)
+            indexedVertices[sourceID] = result
+            mesh.positions.append(point); mesh.uvs.append(uv)
+            // Image materials are unlit. A common normal lets adjacent terrain faces share
+            // vertices without changing their exact positions or visible image shading.
+            mesh.normals.append(.init(0, 1, 0))
+            return result
+        }
         for id in candidates {
             let ground = surfaceTriangle(at: id)
             let triangle = OverlayTriangle(a: vertex(SIMD2(ground.a.x, ground.a.z)),
@@ -205,7 +228,18 @@ struct OverlaySurfaceMesh: Sendable {
             }
             if ground.bounds.lo.x >= bounds.lo.x, ground.bounds.hi.x <= bounds.hi.x,
                ground.bounds.lo.y >= bounds.lo.y, ground.bounds.hi.y <= bounds.hi.y {
-                try emit(triangle)
+                try work.spend(3)
+                try work.checkTriangles(mesh.indices.count / 3 + 1)
+                let offset = sourceFaces[id]
+                let ia = try indexedVertex(sourceIndices[offset], position: ground.a)
+                let ib = try indexedVertex(sourceIndices[offset + 1], position: ground.b)
+                let ic = try indexedVertex(sourceIndices[offset + 2], position: ground.c)
+                mesh.indices.append(ia)
+                if OverlayMath.cross(triangle.b.point - triangle.a.point, triangle.c.point - triangle.a.point) <= 0 {
+                    mesh.indices.append(ib); mesh.indices.append(ic)
+                } else {
+                    mesh.indices.append(ic); mesh.indices.append(ib)
+                }
             } else {
                 let polygon = try OverlayTriangleIntersection.clip(triangle, a: a, b: b, c: c, d: d, epsilon: epsilon, work: &work)
                 guard polygon.count >= 3 else { continue }

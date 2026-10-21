@@ -1,0 +1,1209 @@
+{
+  "date": "2026-10-21",
+  "parentCommit": "2582bd2",
+  "configuration": "Release with opt-in MAQUETTE_PROFILING",
+  "optimization": "Shared GPU image meshes plus indexed resident terrain vertices for image interiors; exact edge clipping retained.",
+  "mac": {
+    "hardware": "Apple M4 Pro MacBook Pro, 48 GB",
+    "os": "macOS 27.0.1",
+    "tools": "Xcode/Instruments 27.1",
+    "viewportPoints": [
+      1000,
+      610.5
+    ],
+    "powerContext": "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=23068771)\t90%; discharging; 3:24 remaining present: true\nBattery Power:\n Sleep On Power Button 1\n powermode            1\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             0\n hibernatefile        /var/vm/sleepimage\n displaysleep         3\n womp                 0\n networkoversleep     0\n sleep                3\n tcpkeepalive         1\n lessbright           1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n powermode            0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                0\n tcpkeepalive         1\n disksleep            10\nNote: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded\n",
+    "captures": {
+      "path": {
+        "prefix": "/tmp/maquette-image-direct-mac-path",
+        "pid": "35912",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 364,
+            "missed": 236,
+            "maxInputGapMs": 64.727917,
+            "fullBins": 9,
+            "seconds": 9.005863585,
+            "meanFPS": 60.071973910563386,
+            "minFPS": 59.075906474,
+            "maxFPS": 60.933702718,
+            "skippedFrames": 0.0,
+            "overlaySamples": 364,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 317,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 317,
+            "meshUploads": 317,
+            "inputExecutionP95Ms": 0.015791,
+            "inputExecutionMaxMs": 0.087
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 230,
+            "missed": 370,
+            "maxInputGapMs": 51.210042,
+            "fullBins": 9,
+            "seconds": 9.011472166,
+            "meanFPS": 59.923616263083446,
+            "minFPS": 58.868502854,
+            "maxFPS": 60.335992555,
+            "skippedFrames": 0.0,
+            "overlaySamples": 230,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 228,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 228,
+            "meshUploads": 228,
+            "inputExecutionP95Ms": 1.605334,
+            "inputExecutionMaxMs": 2.599125
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 387,
+            "missed": 213,
+            "maxInputGapMs": 50.772875,
+            "fullBins": 9,
+            "seconds": 8.985398127,
+            "meanFPS": 59.98621322078818,
+            "minFPS": 59.584547535,
+            "maxFPS": 60.433273802,
+            "skippedFrames": 0.0,
+            "overlaySamples": 387,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "inputExecutionP95Ms": 0.064125,
+            "inputExecutionMaxMs": 0.150959
+          }
+        ]
+      },
+      "polygons": {
+        "prefix": "/tmp/maquette-image-direct-mac-polygons",
+        "pid": "36947",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 331,
+            "missed": 269,
+            "maxInputGapMs": 68.892583,
+            "fullBins": 9,
+            "seconds": 9.016490042,
+            "meanFPS": 59.66845164250722,
+            "minFPS": 57.83418346,
+            "maxFPS": 60.217105159,
+            "skippedFrames": 0.0,
+            "overlaySamples": 8275,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 7450,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 298,
+            "meshUploads": 7450,
+            "inputExecutionP95Ms": 0.016417,
+            "inputExecutionMaxMs": 0.077958
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 283,
+            "missed": 317,
+            "maxInputGapMs": 66.322542,
+            "fullBins": 9,
+            "seconds": 8.995186917,
+            "meanFPS": 58.92039830259255,
+            "minFPS": 56.468683703,
+            "maxFPS": 60.138319093,
+            "skippedFrames": 0.0,
+            "overlaySamples": 7075,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 6925,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 277,
+            "meshUploads": 6925,
+            "inputExecutionP95Ms": 2.151167,
+            "inputExecutionMaxMs": 2.878833
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 309,
+            "missed": 291,
+            "maxInputGapMs": 52.23075,
+            "fullBins": 9,
+            "seconds": 9.017057289,
+            "meanFPS": 59.88649898866097,
+            "minFPS": 59.031469909,
+            "maxFPS": 60.816938911,
+            "skippedFrames": 0.0,
+            "overlaySamples": 7725,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "inputExecutionP95Ms": 0.067292,
+            "inputExecutionMaxMs": 0.08875
+          }
+        ]
+      },
+      "images-final": {
+        "prefix": "/tmp/maquette-image-direct-mac-images-final",
+        "pid": "34889",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 507,
+            "missed": 93,
+            "maxInputGapMs": 49.861125,
+            "fullBins": 9,
+            "seconds": 9.000533791,
+            "meanFPS": 59.99644181337134,
+            "minFPS": 59.89239,
+            "maxFPS": 60.114756542,
+            "skippedFrames": 0.0,
+            "overlaySamples": 2028,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 1200,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 300,
+            "meshUploads": 300,
+            "inputExecutionP95Ms": 0.00975,
+            "inputExecutionMaxMs": 0.128125
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 229,
+            "missed": 371,
+            "maxInputGapMs": 66.601333,
+            "fullBins": 9,
+            "seconds": 9.000092539,
+            "meanFPS": 59.99938289694919,
+            "minFPS": 59.542956488,
+            "maxFPS": 60.425801997,
+            "skippedFrames": 0.0,
+            "overlaySamples": 916,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 900,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 225,
+            "meshUploads": 225,
+            "inputExecutionP95Ms": 1.61425,
+            "inputExecutionMaxMs": 4.554375
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 301,
+            "missed": 299,
+            "maxInputGapMs": 51.759583,
+            "fullBins": 9,
+            "seconds": 8.99942604,
+            "meanFPS": 60.00382685802558,
+            "minFPS": 59.563475937,
+            "maxFPS": 60.428670609,
+            "skippedFrames": 0.0,
+            "overlaySamples": 1204,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "inputExecutionP95Ms": 0.074125,
+            "inputExecutionMaxMs": 0.105125
+          }
+        ]
+      },
+      "images-repeat-final": {
+        "prefix": "/tmp/maquette-image-direct-mac-images-repeat-final",
+        "pid": "37116",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 479,
+            "missed": 121,
+            "maxInputGapMs": 117.142833,
+            "fullBins": 9,
+            "seconds": 8.994439834,
+            "meanFPS": 57.14641582548179,
+            "minFPS": 41.333455187,
+            "maxFPS": 60.079591811,
+            "skippedFrames": 0.0,
+            "overlaySamples": 1916,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 1348,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 337,
+            "meshUploads": 337,
+            "inputExecutionP95Ms": 0.01475,
+            "inputExecutionMaxMs": 0.125584
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 300,
+            "missed": 300,
+            "maxInputGapMs": 50.145416,
+            "fullBins": 9,
+            "seconds": 9.017962164,
+            "meanFPS": 59.769601395362436,
+            "minFPS": 59.000897703,
+            "maxFPS": 60.042201139,
+            "skippedFrames": 0.0,
+            "overlaySamples": 1200,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 1168,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 292,
+            "meshUploads": 292,
+            "inputExecutionP95Ms": 1.608791,
+            "inputExecutionMaxMs": 1.672875
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 293,
+            "missed": 307,
+            "maxInputGapMs": 91.875292,
+            "fullBins": 9,
+            "seconds": 9.000404207999999,
+            "meanFPS": 58.664031758711374,
+            "minFPS": 53.496892706,
+            "maxFPS": 60.036503814,
+            "skippedFrames": 0.0,
+            "overlaySamples": 1172,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "inputExecutionP95Ms": 0.069625,
+            "inputExecutionMaxMs": 0.136042
+          }
+        ]
+      }
+    }
+  },
+  "ipadSimulator": {
+    "device": "iPad Pro 11-inch (M5)",
+    "os": "iOS 27",
+    "viewportPoints": [
+      834,
+      1035.5
+    ],
+    "hardwareFPSVerified": false,
+    "captures": {
+      "path": {
+        "prefix": "/tmp/maquette-image-direct-ipad-path",
+        "pid": "37274",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 598,
+            "missed": 2,
+            "maxInputGapMs": 39.950208,
+            "overlaySamples": 598,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 597,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 597,
+            "meshUploads": 597,
+            "inputExecutionP95Ms": 0.018209,
+            "inputExecutionMaxMs": 4.585041
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 594,
+            "missed": 6,
+            "maxInputGapMs": 34.676583,
+            "overlaySamples": 594,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 573,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 573,
+            "meshUploads": 573,
+            "inputExecutionP95Ms": 0.013667,
+            "inputExecutionMaxMs": 4.64675
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 600,
+            "missed": 0,
+            "maxInputGapMs": 17.4495,
+            "overlaySamples": 600,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "inputExecutionP95Ms": 0.055625,
+            "inputExecutionMaxMs": 0.133834
+          }
+        ],
+        "targetProcessCPUSampleRows": 42991
+      },
+      "polygons": {
+        "prefix": "/tmp/maquette-image-direct-ipad-polygons",
+        "pid": "37376",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 571,
+            "missed": 29,
+            "maxInputGapMs": 34.024584,
+            "overlaySamples": 14275,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 14275,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 571,
+            "meshUploads": 14275,
+            "inputExecutionP95Ms": 0.017958,
+            "inputExecutionMaxMs": 3.376459
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 446,
+            "missed": 154,
+            "maxInputGapMs": 34.648042,
+            "overlaySamples": 11150,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 10775,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 431,
+            "meshUploads": 10775,
+            "inputExecutionP95Ms": 2.032416,
+            "inputExecutionMaxMs": 2.528833
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 600,
+            "missed": 0,
+            "maxInputGapMs": 17.501375,
+            "overlaySamples": 15000,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "inputExecutionP95Ms": 0.052625,
+            "inputExecutionMaxMs": 0.134125
+          }
+        ],
+        "targetProcessCPUSampleRows": 102047
+      },
+      "images": {
+        "prefix": "/tmp/maquette-image-direct-ipad-images",
+        "pid": "37464",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 599,
+            "missed": 1,
+            "maxInputGapMs": 38.220583,
+            "overlaySamples": 2396,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 2400,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 600,
+            "meshUploads": 600,
+            "inputExecutionP95Ms": 0.01825,
+            "inputExecutionMaxMs": 3.683417
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 520,
+            "missed": 80,
+            "maxInputGapMs": 33.850916,
+            "overlaySamples": 2080,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 2016,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 504,
+            "meshUploads": 504,
+            "inputExecutionP95Ms": 1.847208,
+            "inputExecutionMaxMs": 2.016667
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 600,
+            "missed": 0,
+            "maxInputGapMs": 17.468875,
+            "overlaySamples": 2400,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "inputExecutionP95Ms": 0.055333,
+            "inputExecutionMaxMs": 0.170833
+          }
+        ],
+        "targetProcessCPUSampleRows": 29496
+      }
+    }
+  },
+  "iphone": {
+    "hardwareFPSVerified": false,
+    "reason": "Excluded per user instruction"
+  },
+  "cpuResourceBenchmarks": {
+    "path": {
+      "initialMs": 54.397375,
+      "panMeanMs": 13.516187550000001,
+      "recordVertices": 140022,
+      "panP95Ms": 13.946833,
+      "panMaxMs": 14.246208,
+      "zoomP95Ms": 13.880667,
+      "zoomMaxMs": 13.880667,
+      "uniqueGPUResources": 1,
+      "uniqueGPUVertices": 140022,
+      "panMainActorCompletionMeanMs": 0.81197735
+    },
+    "polygons": {
+      "initialMs": 50.60525,
+      "panMeanMs": 12.5926251,
+      "recordVertices": 213468,
+      "panP95Ms": 14.000292,
+      "panMaxMs": 14.420667,
+      "zoomP95Ms": 14.022792,
+      "zoomMaxMs": 14.022792,
+      "uniqueGPUResources": 25,
+      "uniqueGPUVertices": 213468,
+      "panMainActorCompletionMeanMs": 2.3899783500000003
+    },
+    "images": {
+      "initialMs": 94.862417,
+      "panMeanMs": 6.47815215,
+      "recordVertices": 197572,
+      "panP95Ms": 7.014708,
+      "panMaxMs": 8.230084,
+      "zoomP95Ms": 6.623584,
+      "zoomMaxMs": 6.623584,
+      "uniqueGPUResources": 1,
+      "uniqueGPUVertices": 49393,
+      "panMainActorCompletionMeanMs": 0.5841019000000001
+    }
+  },
+  "optimizedCPUSamples": {
+    "windowNs": {
+      "Begin": 19245734166,
+      "End": 29261825708
+    },
+    "samples": 9194,
+    "topSelfSampleWeightsMs": [
+      [
+        "<deduplicated_symbol>",
+        454.0
+      ],
+      [
+        "TerrainHeightField.surfaceSample(atX:z:)",
+        296.0
+      ],
+      [
+        "specialized Array._checkSubscript(_:wasNativeTypeChecked:)",
+        254.0
+      ],
+      [
+        "OverlaySurfaceMesh.drapeImage(_:ring:altitude:lift:elevationToY:)",
+        230.0
+      ],
+      [
+        "specialized Array._getElement(_:wasNativeTypeChecked:matchingSubscriptCheck:)",
+        222.0
+      ],
+      [
+        "OverlaySpatialIndex.visitRasterCandidates(for:work:body:)",
+        196.0
+      ],
+      [
+        "OverlayWork.spend(_:)",
+        183.0
+      ],
+      [
+        "_platform_memmove",
+        167.0
+      ],
+      [
+        "AG::Graph::UpdateStack::update()",
+        147.0
+      ],
+      [
+        "swift_release",
+        141.0
+      ],
+      [
+        "specialized static Hasher._hash(seed:_:)",
+        132.0
+      ],
+      [
+        "start_wqthread",
+        113.0
+      ],
+      [
+        "swift_retain",
+        113.0
+      ],
+      [
+        "swift::MetadataCacheKey::operator==(swift::MetadataCacheKey const&) const",
+        112.0
+      ],
+      [
+        "OverlaySurfaceMesh.surfaceTriangle(at:)",
+        109.0
+      ]
+    ],
+    "overlayInclusiveSampleWeightsMs": [
+      [
+        "static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+        1851.0
+      ],
+      [
+        "specialized static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+        1851.0
+      ],
+      [
+        "closure #14 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+        1851.0
+      ],
+      [
+        "specialized draped #1 (_:kind:rings:) in static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+        1844.0
+      ],
+      [
+        "OverlaySurfaceMesh.drapeImage(_:ring:altitude:lift:elevationToY:)",
+        1685.0
+      ],
+      [
+        "DioramaStore.setGroundScale(_:)",
+        685.0
+      ],
+      [
+        "OverlaySurfaceIndex.candidates(bounds:polygon:work:)",
+        627.0
+      ],
+      [
+        "OverlaySurfaceIndex.candidates(for:work:)",
+        627.0
+      ],
+      [
+        "specialized static TerrainSolidGenerator.resample(_:heightField:panOffset:)",
+        614.0
+      ],
+      [
+        "static TerrainSolidGenerator.resample(_:heightField:panOffset:)",
+        614.0
+      ],
+      [
+        "OverlaySpatialIndex.rasterCandidates(for:work:)",
+        536.0
+      ],
+      [
+        "OverlaySpatialIndex.visitRasterCandidates(for:work:body:)",
+        523.0
+      ],
+      [
+        "closure #15 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+        470.0
+      ],
+      [
+        "DioramaOverlayRenderer.finishPanIfReady()",
+        466.0
+      ],
+      [
+        "closure #2 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+        288.0
+      ],
+      [
+        "OverlaySurfaceMesh.init(terrain:resolvesOverlaps:limits:reusing:)",
+        287.0
+      ],
+      [
+        "DioramaOverlayRenderer.install(_:on:key:)",
+        276.0
+      ],
+      [
+        "OverlayMeshResource.update(_:)",
+        244.0
+      ],
+      [
+        "OverlaySurfaceMesh.surfaceTriangle(at:)",
+        221.0
+      ],
+      [
+        "OverlayWork.spend(_:)",
+        188.0
+      ],
+      [
+        "specialized static OverlayTriangleIntersection.clip(_:a:b:c:d:epsilon:work:)",
+        160.0
+      ],
+      [
+        "static OverlayTriangleIntersection.clip(_:a:b:c:d:epsilon:work:)",
+        156.0
+      ],
+      [
+        "specialized indexedVertex #1 (_:position:) in OverlaySurfaceMesh.drapeImage(_:ring:altitude:lift:elevationToY:)",
+        143.0
+      ],
+      [
+        "closure #1 in OverlaySpatialIndex.rasterCandidates(for:work:)",
+        47.0
+      ],
+      [
+        "type metadata accessor for OverlaySurfaceMesh",
+        46.0
+      ]
+    ]
+  },
+  "baselineCPUSamples": {
+    "windowNs": {
+      "Begin": 19000177708,
+      "End": 29017736583
+    },
+    "samples": 11960,
+    "topSelfSampleWeightsMs": [
+      [
+        "specialized static OverlaySurfaceMesh.append(_:lift:mesh:work:height:)",
+        1209.0
+      ],
+      [
+        "_platform_memmove",
+        783.0
+      ],
+      [
+        "OverlayMeshResource.update(_:)",
+        657.0
+      ],
+      [
+        "specialized Array._getElement(_:wasNativeTypeChecked:matchingSubscriptCheck:)",
+        589.0
+      ],
+      [
+        "<deduplicated_symbol>",
+        461.0
+      ],
+      [
+        "specialized Array._checkSubscript(_:wasNativeTypeChecked:)",
+        387.0
+      ],
+      [
+        "TerrainHeightField.surfaceSample(atX:z:)",
+        273.0
+      ],
+      [
+        "type metadata accessor for OverlaySurfaceMesh",
+        202.0
+      ],
+      [
+        "DYLD-STUB$$swift_isUniquelyReferenced_nonNull_native",
+        153.0
+      ],
+      [
+        "OverlaySpatialIndex.visitRasterCandidates(for:work:body:)",
+        148.0
+      ],
+      [
+        "swift_release",
+        144.0
+      ],
+      [
+        "OverlaySurfaceMesh.drapeImage(_:ring:altitude:lift:elevationToY:)",
+        137.0
+      ],
+      [
+        "swift_retain",
+        134.0
+      ],
+      [
+        "start_wqthread",
+        121.0
+      ],
+      [
+        "swift_isUniquelyReferenced_nonNull_native",
+        118.0
+      ]
+    ],
+    "overlayInclusiveSampleWeightsMs": [
+      [
+        "specialized static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+        2924.0
+      ],
+      [
+        "closure #13 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+        2924.0
+      ],
+      [
+        "static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+        2924.0
+      ],
+      [
+        "specialized draped #1 (_:kind:rings:) in static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+        2906.0
+      ],
+      [
+        "OverlaySurfaceMesh.drapeImage(_:ring:altitude:lift:elevationToY:)",
+        2711.0
+      ],
+      [
+        "closure #14 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+        2420.0
+      ],
+      [
+        "DioramaOverlayRenderer.finishPanIfReady()",
+        2413.0
+      ],
+      [
+        "DioramaOverlayRenderer.install(_:on:key:)",
+        2224.0
+      ],
+      [
+        "OverlayMeshResource.update(_:)",
+        2171.0
+      ],
+      [
+        "specialized static OverlaySurfaceMesh.append(_:lift:mesh:work:height:)",
+        1400.0
+      ],
+      [
+        "specialized emit #1 (_:) in OverlaySurfaceMesh.drapeImage(_:ring:altitude:lift:elevationToY:)",
+        1255.0
+      ],
+      [
+        "DioramaStore.setGroundScale(_:)",
+        676.0
+      ],
+      [
+        "specialized static TerrainSolidGenerator.resample(_:heightField:panOffset:)",
+        605.0
+      ],
+      [
+        "static TerrainSolidGenerator.resample(_:heightField:panOffset:)",
+        604.0
+      ],
+      [
+        "OverlaySurfaceIndex.candidates(bounds:polygon:work:)",
+        588.0
+      ],
+      [
+        "OverlaySurfaceIndex.candidates(for:work:)",
+        588.0
+      ],
+      [
+        "OverlaySpatialIndex.rasterCandidates(for:work:)",
+        499.0
+      ],
+      [
+        "OverlaySpatialIndex.visitRasterCandidates(for:work:body:)",
+        482.0
+      ],
+      [
+        "closure #1 in OverlayMeshResource.update(_:)",
+        460.0
+      ],
+      [
+        "OverlaySurfaceMesh.surfaceTriangle(at:)",
+        407.0
+      ],
+      [
+        "closure #2 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+        256.0
+      ],
+      [
+        "OverlaySurfaceMesh.init(terrain:resolvesOverlaps:limits:reusing:)",
+        254.0
+      ],
+      [
+        "type metadata accessor for OverlaySurfaceMesh",
+        202.0
+      ],
+      [
+        "specialized static OverlayTriangleIntersection.clip(_:a:b:c:d:epsilon:work:)",
+        143.0
+      ],
+      [
+        "static OverlayTriangleIntersection.clip(_:a:b:c:d:epsilon:work:)",
+        139.0
+      ]
+    ]
+  },
+  "intermediateTrials": {
+    "sharingOnly": {
+      "prefix": "/tmp/maquette-zoom-verified-mac-image-sharing-trial",
+      "pid": "23456",
+      "phases": [
+        {
+          "phase": "Pan",
+          "ticks": 445,
+          "missed": 155,
+          "maxInputGapMs": 45.182875,
+          "fullBins": 9,
+          "seconds": 8.998808666,
+          "meanFPS": 58.341055490184615,
+          "minFPS": 51.924984111,
+          "maxFPS": 60.86496474,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1780,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 1752,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 438
+        },
+        {
+          "phase": "GroundZoom",
+          "ticks": 399,
+          "missed": 201,
+          "maxInputGapMs": 44.962709,
+          "fullBins": 9,
+          "seconds": 9.000624418,
+          "meanFPS": 55.99611457948271,
+          "minFPS": 47.147273968,
+          "maxFPS": 60.055415504,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1596,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 1544,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 386
+        },
+        {
+          "phase": "CameraZoom",
+          "ticks": 568,
+          "missed": 32,
+          "maxInputGapMs": 34.816583,
+          "fullBins": 9,
+          "seconds": 9.001419666,
+          "meanFPS": 59.8794422934642,
+          "minFPS": 59.052836067,
+          "maxFPS": 59.999163162,
+          "skippedFrames": 0.0,
+          "overlaySamples": 2272,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 0,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 0
+        }
+      ]
+    },
+    "indexedBeforeCleanup": {
+      "prefix": "/tmp/maquette-image-optimized-mac-images",
+      "pid": "25848",
+      "phases": [
+        {
+          "phase": "Pan",
+          "ticks": 414,
+          "missed": 186,
+          "maxInputGapMs": 47.015416,
+          "fullBins": 9,
+          "seconds": 9.019822,
+          "meanFPS": 56.2095341720779,
+          "minFPS": 33.118694356,
+          "maxFPS": 59.995944774,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1656,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 1660,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 415,
+          "meshUploads": 415
+        },
+        {
+          "phase": "GroundZoom",
+          "ticks": 458,
+          "missed": 142,
+          "maxInputGapMs": 37.460667,
+          "fullBins": 9,
+          "seconds": 9.002716373,
+          "meanFPS": 59.87081839921713,
+          "minFPS": 59.283281888,
+          "maxFPS": 60.264655308,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1832,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 1776,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 444,
+          "meshUploads": 444
+        },
+        {
+          "phase": "CameraZoom",
+          "ticks": 495,
+          "missed": 104,
+          "maxInputGapMs": 36.857083,
+          "fullBins": 9,
+          "seconds": 8.99639675,
+          "meanFPS": 57.13398520718307,
+          "minFPS": 50.214157917,
+          "maxFPS": 60.051685949,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1980,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 0,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 0,
+          "meshUploads": 0
+        }
+      ]
+    },
+    "indexedAfterCleanupWithCPU": {
+      "prefix": "/tmp/maquette-image-optimized-mac-images-final",
+      "pid": "28511",
+      "phases": [
+        {
+          "phase": "Pan",
+          "ticks": 377,
+          "missed": 223,
+          "maxInputGapMs": 42.385792,
+          "fullBins": 9,
+          "seconds": 9.007788166000001,
+          "meanFPS": 58.393913055585315,
+          "minFPS": 53.631740066,
+          "maxFPS": 60.597189369,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1508,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 1512,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 378,
+          "meshUploads": 378
+        },
+        {
+          "phase": "GroundZoom",
+          "ticks": 475,
+          "missed": 125,
+          "maxInputGapMs": 44.017542,
+          "fullBins": 9,
+          "seconds": 8.985988499,
+          "meanFPS": 59.759701791347965,
+          "minFPS": 58.501153546,
+          "maxFPS": 60.500252066,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1900,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 1864,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 466,
+          "meshUploads": 466
+        },
+        {
+          "phase": "CameraZoom",
+          "ticks": 511,
+          "missed": 88,
+          "maxInputGapMs": 40.46575,
+          "fullBins": 9,
+          "seconds": 9.005374832000001,
+          "meanFPS": 57.18806954099495,
+          "minFPS": 52.567732549,
+          "maxFPS": 60.20149317,
+          "skippedFrames": 0.0,
+          "overlaySamples": 2044,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 0,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 0,
+          "meshUploads": 0
+        }
+      ]
+    },
+    "indexedAfterCleanupGPUTimer": {
+      "prefix": "/tmp/maquette-image-optimized-gpu-mac-images-final",
+      "pid": "29863",
+      "phases": [
+        {
+          "phase": "Pan",
+          "ticks": 366,
+          "missed": 234,
+          "maxInputGapMs": 42.540333,
+          "fullBins": 9,
+          "seconds": 9.001398126,
+          "meanFPS": 59.99068126643799,
+          "minFPS": 59.551035625,
+          "maxFPS": 60.454068093,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1464,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 1460,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 365,
+          "meshUploads": 365
+        },
+        {
+          "phase": "GroundZoom",
+          "ticks": 314,
+          "missed": 286,
+          "maxInputGapMs": 35.627,
+          "fullBins": 9,
+          "seconds": 9.000675958,
+          "meanFPS": 59.88439026937433,
+          "minFPS": 58.632045578,
+          "maxFPS": 60.374857652,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1256,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 1228,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 307,
+          "meshUploads": 307
+        },
+        {
+          "phase": "CameraZoom",
+          "ticks": 407,
+          "missed": 192,
+          "maxInputGapMs": 39.785375,
+          "fullBins": 9,
+          "seconds": 9.001421875,
+          "meanFPS": 59.879428020063756,
+          "minFPS": 59.041300577,
+          "maxFPS": 60.330217113,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1628,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 0,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 0,
+          "meshUploads": 0
+        }
+      ]
+    },
+    "displayAsyncConsumerTrial": {
+      "prefix": "/tmp/maquette-image-display-mac-images-final",
+      "pid": "32402",
+      "phases": [
+        {
+          "phase": "Pan",
+          "ticks": 408,
+          "missed": 192,
+          "maxInputGapMs": 112.005959,
+          "fullBins": 9,
+          "seconds": 9.006445792,
+          "meanFPS": 55.51579503945361,
+          "minFPS": 46.84725484,
+          "maxFPS": 60.180731866,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1632,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 1632,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 408,
+          "meshUploads": 408
+        },
+        {
+          "phase": "GroundZoom",
+          "ticks": 326,
+          "missed": 274,
+          "maxInputGapMs": 100.982708,
+          "fullBins": 9,
+          "seconds": 9.000990208,
+          "meanFPS": 53.43856420330086,
+          "minFPS": 47.201432763,
+          "maxFPS": 58.576836675,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1304,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 1288,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 322,
+          "meshUploads": 322
+        },
+        {
+          "phase": "CameraZoom",
+          "ticks": 422,
+          "missed": 178,
+          "maxInputGapMs": 66.796833,
+          "fullBins": 9,
+          "seconds": 8.983172002,
+          "meanFPS": 59.778439477769965,
+          "minFPS": 57.929340718,
+          "maxFPS": 60.95204407,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1688,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 0,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 0,
+          "meshUploads": 0
+        }
+      ]
+    },
+    "explicitActivationCheck": {
+      "prefix": "/tmp/maquette-image-direct-mac-images-focused-check",
+      "pid": "37938",
+      "phases": [
+        {
+          "phase": "Pan",
+          "ticks": 190,
+          "missed": 410,
+          "maxInputGapMs": 90.640166,
+          "fullBins": 9,
+          "seconds": 8.991194749,
+          "meanFPS": 59.613879626669835,
+          "minFPS": 56.520489159,
+          "maxFPS": 60.567452082,
+          "skippedFrames": 0.0,
+          "overlaySamples": 760,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 692,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 173,
+          "meshUploads": 173
+        },
+        {
+          "phase": "GroundZoom",
+          "ticks": 298,
+          "missed": 302,
+          "maxInputGapMs": 51.939125,
+          "fullBins": 9,
+          "seconds": 9.004671294,
+          "meanFPS": 59.857821243332836,
+          "minFPS": 58.818872319,
+          "maxFPS": 60.079724485,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1192,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 1164,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 291,
+          "meshUploads": 291
+        },
+        {
+          "phase": "CameraZoom",
+          "ticks": 275,
+          "missed": 325,
+          "maxInputGapMs": 101.498125,
+          "fullBins": 9,
+          "seconds": 9.021774792,
+          "meanFPS": 59.63349936223402,
+          "minFPS": 57.680667552,
+          "maxFPS": 60.399672414,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1100,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 0,
+          "incoherentSurfaceSamples": 0,
+          "panPresentations": 0,
+          "meshUploads": 0
+        }
+      ]
+    }
+  },
+  "tests": {
+    "configurations": [
+      "Debug",
+      "Release"
+    ],
+    "internal": 835,
+    "publicAPI": 21,
+    "optInBenchmark": 5
+  },
+  "measurementNotes": [
+    "Layer FPS summaries are duration-weighted whole approximately one-second bins at least 100 ms inside phase signposts, not frame-time percentiles or physical display scanout.",
+    "The per-frame interval table is empty. Duration counter summary exports are retained raw; no unsupported per-frame percentile or absolute no-hitch claim is made.",
+    "Final driver executes input directly in a main-thread CADisplayLink callback requesting60Hz. bufferingNewest(1) stream handles only phase completion/cancellation, no input queue or catch-up. missed is 600 minus consumed callbacks, floored at zero. Earlier timer stress results are retained separately. Intermediate trials and historical baseline ran alongside prior task demo renderers; final captures run after stopping those four known task-owned demo processes. These are not matched before/after timing deltas.",
+    "CPU geometry and resource update measurements are not GPU frame times. CPU sample weights are inclusive statistics, not elapsed wall time, and cannot be summed across nested functions.",
+    "Visibility and coherence are record/input snapshots, not percentages of rendered frames. panPresentations counts complete ground frames in pan and zoom; meshUploads counts unique GPU buffer updates, not texture uploads.",
+    "No builds or benchmarks ran during captures. Ordinary apps remained running. Short programmatic-intent runs do not verify physical gestures, thermal soak, or long-run memory stability.",
+    "Physical iPhone excluded by user. iPad simulator diagnostics do not verify hardware FPS."
+  ],
+  "acceptance": {
+    "steady60DistinctGroundUpdatesVerified": false,
+    "imageGroundZoomMacMeanFPS": [
+      59.99938289694919,
+      59.769601395362436
+    ],
+    "limitation": "Layer FPS averages are near 60, but display callback and ground publication counts do not verify 60 distinct ground updates per second. Simulator diagnostics do not establish physical iPad performance."
+  }
+}

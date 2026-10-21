@@ -146,6 +146,33 @@ struct OverlaySurfaceGeometryTests {
         }
     }
 
+    @Test func imageInteriorsRetainIndexedTerrainVerticesAcrossHeightRefits() throws {
+        var buffers = ridge()
+        let ring = [OverlayVertex(point: .init(-1, -1), uv: .init(0, 0)),
+                    OverlayVertex(point: .init(5, -1), uv: .init(1, 0)),
+                    OverlayVertex(point: .init(5, 5), uv: .init(1, 1)),
+                    OverlayVertex(point: .init(-1, 5), uv: .init(0, 1))]
+        let source = try OverlayPolygonTessellator.triangulate(rings: [ring])
+        var surface = try OverlaySurfaceMesh(terrain: buffers)
+        for height: Float in [0, 1, -0.5] {
+            buffers.positions = ridge().positions.map { $0 + SIMD3(0, height, 0) }
+            surface = try OverlaySurfaceMesh(terrain: buffers, reusing: surface)
+            let mesh = try surface.drapeImage(source, ring: ring, altitude: .relativeToGround,
+                lift: 0.001, elevationToY: { $0 * 2 - 100 })
+            #expect(mesh.positions.count == 6)
+            #expect(mesh.indices.count == 12)
+            for (p, uv) in zip(mesh.positions, mesh.uvs) {
+                #expect(abs(p.y - (3 - abs(p.x - 2) * 1.5 + height + 0.001)) < 1e-5)
+                #expect(abs(uv.x - (p.x + 1) / 6) < 1e-6)
+                #expect(abs(uv.y - (p.z + 1) / 6) < 1e-6)
+            }
+            for i in stride(from: 0, to: mesh.indices.count, by: 3) {
+                let a = mesh.positions[Int(mesh.indices[i])], b = mesh.positions[Int(mesh.indices[i + 1])], c = mesh.positions[Int(mesh.indices[i + 2])]
+                #expect(simd_cross(b - a, c - a).y > 0)
+            }
+        }
+    }
+
     @Test func heightRefitsReuseOnlyMatchingHorizontalTopology() throws {
         let buffers = ridge()
         let first = try OverlaySurfaceMesh(terrain: buffers)

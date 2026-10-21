@@ -67,6 +67,52 @@ struct DioramaOverlayRenderingTests {
         #expect(Set(models.map(ObjectIdentifier.init)).count == 4)
     }
 
+    @Test func imageMeshesShareUploadsAndDetachWhenOneFootprintChanges() async throws {
+        let (root, proxy) = try OverlayRenderFixture.make()
+        let pixels = try OverlayRenderFixture.image()
+        let bounds = try #require(GeographicBounds(enclosing: OverlayRenderFixture.polygon(proxy).exterior!.coordinates))
+        let smaller = GeographicBounds(west: bounds.west, south: bounds.south,
+            east: bounds.center.longitude, north: bounds.north)
+        func content(_ edited: Bool) -> DioramaContentGroup {
+            DioramaContentGroup {
+                for i in 0..<4 {
+                    DioramaImageOverlay(image: .init(id: "image-\(i)", revision: "1", image: pixels),
+                        bounds: edited && i == 0 ? smaller : bounds, id: "overlay-\(i)").opacity(Double(i + 1) / 4)
+                }
+            }
+        }
+        root.applyContent(content(false), using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        let parts = try (0..<4).map { try #require(root.overlayRenderer.records["overlay-\($0)"]?.layers[.image]) }
+        #expect(Set(parts.map { ObjectIdentifier($0.resource) }).count == 1)
+        #expect(root.overlayRenderer.meshUploadCount == 1)
+        let keptPositions = parts[1].mesh.positions
+        let keptResource = parts[1].resource
+        root.applyContent(content(true), using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        #expect(parts[0].resource !== keptResource)
+        #expect(parts[1].resource === keptResource)
+        #expect(parts[1].mesh.positions == keptPositions)
+        #expect(parts[0].mesh.positions != keptPositions)
+        root.applyContent(content(false), using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        #expect(Set(parts.map { ObjectIdentifier($0.resource) }).count == 1)
+        #expect(root.overlayRenderer.textureUploadCount == 4)
+        #expect(root.overlayRenderer.meshUploadCount == 2)
+        let base = try #require(proxy.projection as? TerrainProjection)
+        let field = TerrainHeightField(grids: base.heightField.grids, tilePositions: base.heightField.tilePositions,
+            anchor: base.anchor.scaled(by: 1.1), elevationScale: base.heightField.elevationScale / 1.1,
+            baselineElevation: base.heightField.baselineElevation)
+        root.terrain?.setTerrain(field, surfaceMaterial: nil, groundScale: 1.1)
+        root.applyContent(content(false), using: DioramaProxy(configuration: proxy.configuration,
+            projection: TerrainProjection(heightField: field)), physicalSize: 1)
+        #expect(root.overlayRenderer.records.values.allSatisfy { $0.entity.isEnabled })
+        await root.overlayRenderer.waitUntilIdle()
+        #expect(root.overlayRenderer.meshUploadCount == 3)
+        #expect(Set(parts.map { ObjectIdentifier($0.resource) }).count == 1)
+        #expect(root.overlayRenderer.records.values.allSatisfy { $0.entity.isEnabled })
+    }
+
     @Test func invalidOpacityDoesNotPoisonSharedGeometry() async throws {
         let (root, proxy) = try OverlayRenderFixture.make()
         let polygon = OverlayRenderFixture.polygon(proxy)

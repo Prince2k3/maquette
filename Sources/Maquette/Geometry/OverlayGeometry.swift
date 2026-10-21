@@ -63,12 +63,19 @@ struct OverlayTriangle: Sendable {
     var b: OverlayVertex
     var c: OverlayVertex
     var vertices: [OverlayVertex] { [a, b, c] }
-    var bounds: OverlayBounds { OverlayBounds(vertices.map(\.point)) }
+    var isFinite: Bool { a.isFinite && b.isFinite && c.isFinite }
+    var bounds: OverlayBounds {
+        var value = OverlayBounds(point: a.point)
+        value.lo = simd_min(value.lo, simd_min(b.point, c.point))
+        value.hi = simd_max(value.hi, simd_max(b.point, c.point))
+        return value
+    }
 }
 
 struct OverlayBounds: Sendable {
     var lo: SIMD2<Double>
     var hi: SIMD2<Double>
+    init(point: SIMD2<Double>) { lo = point; hi = point }
     init(_ points: [SIMD2<Double>]) {
         lo = points.first ?? .zero; hi = lo
         for p in points.dropFirst() { lo = simd_min(lo, p); hi = simd_max(hi, p) }

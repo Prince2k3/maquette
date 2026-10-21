@@ -51,6 +51,12 @@ import SwiftUI
     private var textures: [DioramaImageResource.Key: TextureResource] = [:]
     private var context: Context?
     private var surfaceTask: Task<OverlaySurfaceMesh?, Error>?
+    // The raster's X/Z topology survives pan, zoom and height-field replacement. Its base
+    // preparation is independent of cancelled per-frame height/geometry workers.
+    private var rasterBaseTask: Task<OverlaySurfaceMesh, Error>?
+    private var geometryJobs: [(key: Key, task: Task<[DioramaOverlayLayer], Error>)] = []
+    private(set) var geometryTaskCount = 0
+    var activeGeometryJobCount: Int { geometryJobs.count }
     private let sortGroup = ModelSortGroup(depthPass: .postPass)
     private static let logger = Logger(maquette: "DioramaOverlayRenderer")
     var spatialHitTesting = false
@@ -63,6 +69,9 @@ import SwiftUI
         }
         records.removeAll(); diagnostics.removeAll(); textures.removeAll()
         surfaceTask?.cancel(); surfaceTask = nil; context = nil
+        rasterBaseTask?.cancel(); rasterBaseTask = nil
+        for job in geometryJobs { job.task.cancel() }
+        geometryJobs.removeAll()
     }
     func apply(_ inputs: [DioramaOverlayInput], proxy: DioramaProxy, physicalSize: Float) {
         guard let root else { return }
@@ -74,13 +83,35 @@ import SwiftUI
             pan: proxy.projection.panOffset, boundary: proxy.configuration.boundary.vertices,
             datum: proxy.projection.y(forElevation: 0), scale: proxy.projection.y(forElevation: 1), physicalSize: physicalSize)
         if current != context || surfaceTask == nil {
+            let sameTerrain = current.terrain != nil && current.terrain == context?.terrain
             surfaceTask?.cancel(); context = current
             let buffers = root.terrain?.surfaceBuffers
             let photorealistic = (proxy.projection as? EllipsoidProjection)?.surface
-            surfaceTask = Task.detached(priority: .userInitiated) {
-                if let buffers { return try OverlaySurfaceMesh(terrain: buffers) }
-                return photorealistic
+            if let buffers {
+                let needsBase = !sameTerrain || rasterBaseTask == nil
+                if needsBase {
+                    rasterBaseTask?.cancel()
+                    rasterBaseTask = Task.detached(priority: .userInitiated) { try OverlaySurfaceMesh(terrain: buffers) }
+                }
+                let base = rasterBaseTask!
+                surfaceTask = Task.detached(priority: .userInitiated) {
+                    let previous = try await base.value
+                    try Task.checkCancellation()
+                    if needsBase { return previous }
+                    return try OverlaySurfaceMesh(terrain: buffers, reusing: previous)
+                }
+            } else {
+                rasterBaseTask?.cancel(); rasterBaseTask = nil
+                surfaceTask = Task.detached(priority: .userInitiated) { photorealistic }
             }
+        }
+        let keys = inputs.map { input in
+            Key(context: current, shape: input.shape, altitude: input.annotation.style.altitude,
+                stroke: input.shape.isLine || input.annotation.style.stroke != nil ? input.annotation.style.strokeStyle : nil)
+        }
+        geometryJobs.removeAll { job in
+            guard !keys.contains(job.key) else { return false }
+            job.task.cancel(); return true
         }
         let active = Set(inputs.map(\.id))
         for (id, record) in records where !active.contains(id) {
@@ -94,8 +125,7 @@ import SwiftUI
             let record = records[input.id] ?? Record(input)
             if records[input.id] == nil { records[input.id] = record; root.addChild(record.entity) }
             record.input = input; record.order = order
-            let key = Key(context: current, shape: input.shape, altitude: input.annotation.style.altitude,
-                stroke: input.shape.isLine || input.annotation.style.stroke != nil ? input.annotation.style.strokeStyle : nil)
+            let key = keys[order]
             if record.key == key {
                 do {
                     try updateMaterials(record)
@@ -110,16 +140,30 @@ import SwiftUI
             record.collisionRequest = UUID(); record.collisionKey = nil
             record.key = key; record.entity.isEnabled = false
             record.entity.components.remove(CollisionComponent.self)
-            let shape = input.shape, style = input.annotation.style, prepared = surfaceTask!
-            let worker = Task.detached(priority: .userInitiated) {
-                let surface = try await prepared.value
-                try Task.checkCancellation()
-                return try DioramaOverlayGeometryBuilder.build(shape: shape, style: style, proxy: proxy,
-                                                               surface: surface, physicalSize: physicalSize)
+            let shape = input.shape, prepared = surfaceTask!
+            // Opacity belongs to each record's material, never its shared geometry job.
+            // A malformed sibling must not poison an otherwise valid footprint.
+            var geometryStyle = input.annotation.style
+            geometryStyle.opacity = 1
+            let style = geometryStyle
+            let worker: Task<[DioramaOverlayLayer], Error>
+            if let shared = geometryJobs.first(where: { $0.key == key }) {
+                worker = shared.task
+            } else {
+                worker = Task.detached(priority: .userInitiated) {
+                    let surface = try await prepared.value
+                    try Task.checkCancellation()
+                    return try DioramaOverlayGeometryBuilder.build(shape: shape, style: style, proxy: proxy,
+                                                                   surface: surface, physicalSize: physicalSize)
+                }
+                geometryJobs.append((key, worker))
+                geometryTaskCount += 1
             }
             record.task = Task { [weak self, weak record] in
                 do {
-                    let layers = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+                    // Cancellation belongs to the active-key job cache: removing one of several
+                    // identical footprints must not cancel geometry still needed by another.
+                    let layers = try await worker.value
                     guard !Task.isCancelled, let self, let record, self.records[input.id] === record, record.key == key else { return }
                     let kinds = Set(layers.map(\.kind))
                     for (kind, part) in record.layers where !kinds.contains(kind) { part.model.removeFromParent(); record.layers[kind] = nil }

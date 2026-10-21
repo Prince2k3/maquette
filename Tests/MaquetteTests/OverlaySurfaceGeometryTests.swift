@@ -4,6 +4,77 @@ import Testing
 
 @Suite("Overlay terrain intersection")
 struct OverlaySurfaceGeometryTests {
+    @Test(arguments: [false, true])
+    func areaCoverageKeepsConcavitiesHolesAndMissingGround(gap: Bool) throws {
+        func ring(_ points: [SIMD2<Double>]) -> [OverlayVertex] { points.map { OverlayVertex(point: $0, altitude: 15) } }
+        let exterior = ring([.init(0, 0), .init(4, 0), .init(4, 2), .init(2, 2), .init(2, 4), .init(0, 4)])
+        let hole = ring([.init(0.3, 0.3), .init(0.8, 0.3), .init(0.8, 0.8), .init(0.3, 0.8)])
+        let rings = [exterior, hole]
+        let source = try OverlayPolygonTessellator.triangulate(rings: rings)
+        var buffers = ridge()
+        if gap { buffers.indices = Array(buffers.indices.prefix(6)) }
+        let surface = try OverlaySurfaceMesh(terrain: buffers)
+        for altitude in [AltitudeReference.clampToGround, .relativeToGround] {
+            let reference = try surface.drape(source, altitude: altitude, elevationToY: { ($0 - 100) * 2 })
+            let optimized = try surface.drapeArea(source, rings: rings, altitude: altitude, lift: 0, elevationToY: { ($0 - 100) * 2 })
+            func area(_ mesh: OverlayMesh) -> Double {
+                stride(from: 0, to: mesh.indices.count, by: 3).reduce(0) { sum, i in
+                    let a = mesh.positions[Int(mesh.indices[i])], b = mesh.positions[Int(mesh.indices[i + 1])], c = mesh.positions[Int(mesh.indices[i + 2])]
+                    return sum + Double(simd_cross(b - a, c - a).y) / 2
+                }
+            }
+            #expect(abs(area(reference) - area(optimized)) < 1e-5)
+            #expect(abs(area(optimized) - (gap ? 7.75 : 11.75)) < 1e-5)
+            for position in optimized.positions {
+                let expected = 3 - abs(Double(position.x) - 2) * 1.5 + (altitude == .relativeToGround ? 30 : 0)
+                #expect(abs(Double(position.y) - expected) < 1e-5)
+            }
+        }
+    }
+
+    @Test func rectangularImagesKeepOriginalUVsThroughGroundAndExtentClipping() throws {
+        let ring = [OverlayVertex(point: .init(0.5, 0.5), uv: .init(0, 0)),
+                    .init(point: .init(3.5, 0.5), uv: .init(1, 0)),
+                    .init(point: .init(3.5, 3.5), uv: .init(1, 1)),
+                    .init(point: .init(0.5, 3.5), uv: .init(0, 1))]
+        let source = try OverlayPolygonTessellator.triangulate(rings: [ring])
+        let surface = try OverlaySurfaceMesh(terrain: ridge())
+        let mesh = try surface.drapeImage(source, ring: ring, altitude: .clampToGround, lift: 0.001, elevationToY: { $0 })
+        var area = 0.0
+        for i in stride(from: 0, to: mesh.indices.count, by: 3) {
+            let a = mesh.positions[Int(mesh.indices[i])], b = mesh.positions[Int(mesh.indices[i + 1])], c = mesh.positions[Int(mesh.indices[i + 2])]
+            area += Double(simd_cross(b - a, c - a).y) / 2
+        }
+        #expect(abs(area - 9) < 1e-5)
+        for (p, uv) in zip(mesh.positions, mesh.uvs) {
+            #expect(abs(uv.x - (p.x - 0.5) / 3) < 1e-6)
+            #expect(abs(uv.y - (p.z - 0.5) / 3) < 1e-6)
+            #expect(abs(p.y - (3 - abs(p.x - 2) * 1.5 + 0.001)) < 1e-5)
+        }
+    }
+
+    @Test func heightRefitsReuseOnlyMatchingHorizontalTopology() throws {
+        let buffers = ridge()
+        let first = try OverlaySurfaceMesh(terrain: buffers)
+        var raised = buffers
+        raised.positions = buffers.positions.map { .init($0.x, $0.y * 2, $0.z) }
+        let second = try OverlaySurfaceMesh(terrain: raised, reusing: first)
+        #expect(second.topologyID == first.topologyID)
+        #expect(second.surfaceY(atX: 2, z: 2) == 6)
+        #expect(first.surfaceY(atX: 2, z: 2) == 3)
+        var steep = buffers
+        steep.positions[1].y = 1e9
+        let changedCoverage = try OverlaySurfaceMesh(terrain: steep, reusing: first)
+        #expect(changedCoverage.topologyID != first.topologyID)
+        #expect(changedCoverage.surfaceY(atX: 1, z: 1) == nil)
+        raised.positions[0].x -= 1
+        let moved = try OverlaySurfaceMesh(terrain: raised, reusing: second)
+        #expect(moved.topologyID != second.topologyID)
+        raised.indices.removeLast(3)
+        let removed = try OverlaySurfaceMesh(terrain: raised, reusing: moved)
+        #expect(removed.topologyID != moved.topologyID)
+    }
+
     private func ridge() -> TerrainSolidGenerator.Buffers {
         var buffers = TerrainSolidGenerator.Buffers()
         buffers.positions = [.init(0, 0, 0), .init(2, 3, 0), .init(4, 0, 0),

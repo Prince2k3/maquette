@@ -85,7 +85,7 @@ struct OverlaySurfaceIndex: Sendable {
     }
 
     private func candidates(bounds: OverlayBounds, polygon: [SIMD2<Double>]?, work: inout OverlayWork) throws -> [Int] {
-        if let raster { return try raster.candidates(for: bounds, work: &work) }
+        if let raster { return try raster.rasterCandidates(for: bounds, work: &work) }
         guard !nodes.isEmpty else { return [] }
         var pending = [0], result: [Int] = []
         while let next = pending.popLast() {

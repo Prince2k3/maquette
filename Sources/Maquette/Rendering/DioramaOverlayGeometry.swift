@@ -34,9 +34,20 @@ enum DioramaOverlayGeometryBuilder {
         let boundary = proxy.configuration.boundary.vertices.map { OverlayVertex(point: SIMD2<Double>($0)) }
         let lift = Double(physicalSize) * 0.002
         var result: [DioramaOverlayLayer] = []
-        func draped(_ source: [OverlayTriangle], kind: DioramaOverlayLayerKind) throws {
-            let mesh = try ground.drape(source, using: projection, altitude: style.altitude,
-                                        lift: lift + (kind == .stroke ? Double(physicalSize) * 0.0002 : 0))
+        func draped(_ source: [OverlayTriangle], kind: DioramaOverlayLayerKind, rings: [[OverlayVertex]]? = nil) throws {
+            let layerLift = lift + (kind == .stroke ? Double(physicalSize) * 0.0002 : 0)
+            let mesh: OverlayMesh
+            if kind == .image, let ring = rings?.first {
+                mesh = try ground.drapeImage(source, ring: ring, altitude: style.altitude, lift: layerLift) {
+                    Double(projection.y(forElevation: $0))
+                }
+            } else if let rings {
+                mesh = try ground.drapeArea(source, rings: rings, altitude: style.altitude, lift: layerLift) {
+                    Double(projection.y(forElevation: $0))
+                }
+            } else {
+                mesh = try ground.drape(source, using: projection, altitude: style.altitude, lift: layerLift)
+            }
             if !mesh.indices.isEmpty { result.append(.init(kind: kind, mesh: mesh)) }
         }
         func coordinate(at vertex: OverlayVertex, fallback: Coordinate) -> Coordinate {
@@ -83,14 +94,14 @@ enum DioramaOverlayGeometryBuilder {
         case .polygon(let polygon):
             let rings = try polygon.rings.map { try geographic.project($0.coordinates) }
             let source = try OverlayPolygonTessellator.triangulate(rings: rings)
-            try draped(OverlayAreaGeometry.clip(source, boundary: boundary), kind: .fill)
+            try draped(OverlayAreaGeometry.clip(source, boundary: boundary), kind: .fill, rings: rings)
             if style.stroke != nil {
                 for (ring, vertices) in zip(polygon.rings, rings) { try stroke(vertices, coordinates: ring.coordinates, closed: true) }
             }
         case .circle(let center, let radius):
             var ring = try geographic.circle(center: center, radius: radius, maximumError: max(1e-7, Double(physicalSize) * 0.0002))
             let source = try OverlayPolygonTessellator.triangulate(rings: [ring])
-            try draped(OverlayAreaGeometry.clip(source, boundary: boundary), kind: .fill)
+            try draped(OverlayAreaGeometry.clip(source, boundary: boundary), kind: .fill, rings: [ring])
             if style.stroke != nil, let first = ring.first {
                 ring.append(first)
                 try stroke(ring, coordinates: ring.map { coordinate(at: $0, fallback: center) }, closed: true)
@@ -98,7 +109,7 @@ enum DioramaOverlayGeometryBuilder {
         case .image(let bounds):
             let ring = try geographic.image(bounds: bounds)
             let source = try OverlayPolygonTessellator.triangulate(rings: [ring])
-            try draped(OverlayAreaGeometry.clip(source, boundary: boundary), kind: .image)
+            try draped(OverlayAreaGeometry.clip(source, boundary: boundary), kind: .image, rings: [ring])
         }
         var merged: [DioramaOverlayLayer] = []
         for layer in result {

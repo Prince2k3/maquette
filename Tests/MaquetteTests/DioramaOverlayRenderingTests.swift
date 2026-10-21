@@ -39,6 +39,63 @@ enum OverlayRenderFixture {
 @Suite("Diorama overlay reconciliation")
 @MainActor
 struct DioramaOverlayRenderingTests {
+    @Test func identicalFootprintsShareWorkWithoutSharingMaterialsOrCancellation() async throws {
+        let (root, proxy) = try OverlayRenderFixture.make()
+        let bounds = try #require(GeographicBounds(enclosing: OverlayRenderFixture.polygon(proxy).exterior!.coordinates))
+        let pixels = try OverlayRenderFixture.image()
+        func content(_ count: Int) -> DioramaContentGroup {
+            DioramaContentGroup {
+                for index in 0..<count {
+                    DioramaImageOverlay(image: .init(id: "image-\(index)", revision: "1", image: pixels),
+                                        bounds: bounds, id: "overlay-\(index)").opacity(Double(index + 1) / 4)
+                }
+            }
+        }
+        root.applyContent(content(4), using: proxy, physicalSize: 1)
+        #expect(root.overlayRenderer.geometryTaskCount == 1)
+        root.applyContent(content(1), using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        #expect(root.overlayRenderer.diagnostics.isEmpty)
+        #expect(root.overlayRenderer.records["overlay-0"]?.entity.isEnabled == true)
+        #expect(root.overlayRenderer.records.count == 1)
+        root.applyContent(content(4), using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        #expect(root.overlayRenderer.geometryTaskCount == 1)
+        #expect(root.overlayRenderer.textureUploadCount == 4)
+        #expect(root.overlayRenderer.records.count == 4)
+        let models = root.overlayRenderer.records.values.compactMap { $0.layers[.image]?.model }
+        #expect(Set(models.map(ObjectIdentifier.init)).count == 4)
+    }
+
+    @Test func invalidOpacityDoesNotPoisonSharedGeometry() async throws {
+        let (root, proxy) = try OverlayRenderFixture.make()
+        let polygon = OverlayRenderFixture.polygon(proxy)
+        func content(_ invalidOpacity: Double?, includeValid: Bool = true) -> DioramaContentGroup {
+            DioramaContentGroup {
+                if let invalidOpacity {
+                    DioramaPolygon(polygon, id: "invalid").opacity(invalidOpacity)
+                }
+                if includeValid { DioramaPolygon(polygon, id: "valid") }
+            }
+        }
+        root.applyContent(content(.nan), using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        #expect(root.overlayRenderer.geometryTaskCount == 1)
+        #expect(root.overlayRenderer.diagnostics["invalid"] == .nonFiniteInput)
+        #expect(root.overlayRenderer.records["invalid"]?.entity.isEnabled == false)
+        #expect(root.overlayRenderer.records["valid"]?.entity.isEnabled == true)
+        root.applyContent(content(nil), using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        #expect(root.overlayRenderer.records["valid"]?.entity.isEnabled == true)
+        root.applyContent(content(.infinity), using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        root.applyContent(content(1), using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        #expect(root.overlayRenderer.diagnostics.isEmpty)
+        #expect(root.overlayRenderer.records["invalid"]?.entity.isEnabled == true)
+        #expect(root.overlayRenderer.geometryTaskCount == 1)
+    }
+
     @Test func asyncCompletionInvalidatesAnIdleSceneObserver() async throws {
         let (root, proxy) = try OverlayRenderFixture.make()
         let changed = Mutex(false)

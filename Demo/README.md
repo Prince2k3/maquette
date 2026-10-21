@@ -36,17 +36,17 @@ exactly what the chunk model adds.
 
 | Platform | Pan | Orbit | Ground zoom |
 |---|---|---|---|
-| iOS/iPadOS | One-finger drag | Two-finger drag | Pinch |
+| iOS/iPadOS | One-finger drag | Two-finger twist for heading; vertical two-finger movement for pitch | Pinch |
 | macOS | Plain drag | Option-drag | Trackpad pinch or scroll wheel |
 | visionOS | Drag | Move around the volume | Pinch |
 
 The automatic loading policy provisions a pan margin and respects each preset's explicit nonzero
 style margin. Panning stays inside the loaded ground while more tiles arrive; the initial margin
-does not impose a permanent geographic limit. With pan disabled or a zero-margin policy, an orbit
-view uses plain drag to rotate instead. Zooming out far enough enters the globe transition.
+does not impose a permanent geographic limit. With the default `.map` input preset, disabled or unavailable ground pan does not become orbit.
+The explicit `.legacyOrbit` preset retains that fallback. Zooming out far enough enters the globe transition.
 
-The controls overlay provides a compass, reset, Fit terrain, overhead-view, and camera-cancel
-buttons. Custom controls read the host-scoped `dioramaCamera` environment proxy. Fit terrain uses
+The controls overlay provides compass, reset, ground/camera zoom, pitch, perspective, fit, keyboard
+help, and camera-cancel controls. Custom controls read the host-scoped `dioramaCamera` environment proxy. Fit terrain uses
 point padding and a 0.6-second transition; overhead preserves the current focus, heading, and
 distance while setting pitch to zero. Cancel stops an active camera action at its current pose.
 Orbit and fit controls disable when the host lacks those capabilities, including AR and visionOS.
@@ -77,5 +77,35 @@ they are not full frame times or an automated performance threshold.
 
 The Camera preset starts with terrain relief, canyon walls, and an oblique view so the chunk's
 three-dimensional shape is visible. North is cyan, east orange, south pink, and west green.
-Choose View from overhead and Face north to check cardinal orientation: cyan appears at the top.
+Choose Overhead and Face north to check cardinal orientation: cyan appears at the top.
 Face east (heading 90) moves orange to the top and cyan to the left while preserving the pitch.
+
+
+## Release validation
+
+The Inputs preset places independently focused scenes inside a parent scroll view, with editable
+labels. Check that scene zoom consumes its wheel event, wheel over an editor scrolls the parent,
+and keyboard commands affect only the focused scene. The Camera preset starts oblique; use its
+perspective, pitch, fit, cancel, and reset controls to inspect camera actions.
+
+City, Trail, and Pan 3D exercise visible-mesh placement for pins, labels, lines, polygons, circles,
+and north-up image overlays while LOD changes. Provider credentials and network access are needed
+for those presets; missing coverage can hide ground-dependent content.
+
+Before release, record hardware touch, AR, and visionOS hand checks separately from macOS rendered
+checks and compiler builds. Building the app is not hardware validation. See
+[[release-notes-map-content-camera]] and [[map-content-camera-api-plan]] for release scope and evidence.
+
+
+The Performance preset supplies a reproducible rendered content workload for profiling labels,
+paths, polygons, and image overlays. Record the workload settings together with frame/GPU traces
+and a long pan/zoom memory capture on target hardware. The opt-in synthetic content harness is:
+
+```sh
+MAQUETTE_RUN_CONTENT_BENCHMARK=1 swift test -c release --filter MapContentBenchmark
+```
+
+It measures preparation and RSS observations, checks resource identity, and exercises repeated pan
+cycles. It does not establish rendered frame time, GPU time, or long-run memory acceptance. Use
+`Scripts/validate-demo.sh` to generate and compile the complete demo for each supported platform;
+CI builds with an empty credential template and never runs live provider requests.

@@ -98,6 +98,10 @@ struct Tiles3DLODManagerTests {
 
     @Test("The leaf the camera actually wants is requested")
     func requestsTheDetailItSelected() async {
+        // Also a minimal optimized-build regression: the actor provider hops executors and
+        // throws for each child request. Returning an async closure from the fetch factory
+        // aborted swift_task_dealloc in Swift 6.4 even when this test ran alone. Keep Release
+        // coverage so draining failed child tasks is verified, not just request selection.
         let requested = await Self.run(middleGeometricError: Self.nearbyError)
         #expect(requested.contains("leaf.glb"))
     }

@@ -76,6 +76,15 @@ enum DemoPresets {
         ),
 
         DemoPreset(
+            id: "performance",
+            title: "Performance",
+            caption: "Release capture workloads · 100 labels · 10k path · 10k polygon vertices · four 2048px images",
+            region: DioramaRegion(center: grandCanyon, radius: 1000),
+            shape: .rectangular(width: 0.8, depth: 0.8),
+            style: .standard(exaggeration: 1.6, chunk: .canyon, panRange: 0.8),
+            camera: DioramaCamera(pitch: .degrees(50), distance: 1.6)
+        ),
+        DemoPreset(
             id: "camera",
             title: "Camera",
             caption: "3D camera controls · North cyan · East orange · South pink · West green",
@@ -334,6 +343,7 @@ struct ContentView: View {
     /// Application selection is independent of the marker's rendering identity.
     @State private var selectedAnnotation: Place?
     @State private var annotationMoved = false
+    @State private var performanceWorkload = PerformanceWorkload.labels
 
     /// Whether the diorama is placed on a real surface through the camera (iOS only).
     @State private var arActive = false
@@ -404,6 +414,7 @@ struct ContentView: View {
             cameraPosition: $position,
             selection: $selectedAnnotation
         ) {
+            if preset.id == "performance" { performanceContent }
             if ["photoreal", "photoreal-trail", "photoreal-pan"].contains(preset.id) {
                 photorealPlacementContent
             }
@@ -470,6 +481,14 @@ struct ContentView: View {
                 DioramaPitchControl().frame(width: 140)
                 DioramaKeyboardHelp()
                 CameraExampleControls(camera: position.camera ?? preset.camera)
+                if preset.id == "performance" {
+                    Picker("Workload", selection: $performanceWorkload) {
+                        ForEach(PerformanceWorkload.allCases) { workload in
+                            Text(workload.rawValue).tag(workload)
+                        }
+                    }
+                    .labelStyle(.titleAndIcon)
+                }
                 if preset.id == "camera" {
                     Button("Select viewpoint", systemImage: "mappin.and.ellipse") {
                         selectedAnnotation = selectedAnnotation == .cameraLabel ? nil : .cameraLabel
@@ -496,6 +515,33 @@ struct ContentView: View {
             position = .camera(preset.camera)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @DioramaContentBuilder
+    private var performanceContent: DioramaContentGroup {
+        switch performanceWorkload {
+        case .labels:
+            for index in 0..<100 {
+                DioramaAnnotation("Label \(index)", coordinate: PerformanceWorkload.coordinate(
+                    x: Double(index % 10) * 120 - 540, z: Double(index / 10) * 120 - 540), id: "perf-label-\(index)") {
+                    Label("Label \(index)", systemImage: "mappin")
+                        .font(.caption).padding(4).background(.regularMaterial, in: Capsule())
+                }
+                .annotationOcclusion(.alwaysVisible)
+            }
+        case .path:
+            DioramaPolyline(coordinates: PerformanceWorkload.pathCoordinates, id: "perf-path")
+                .stroke(.orange, width: .physicalMeters(0.001))
+        case .polygons:
+            for index in PerformanceWorkload.polygonData.indices {
+                DioramaPolygon(PerformanceWorkload.polygonData[index], id: "perf-polygon-\(index)").fill(.green.opacity(0.6))
+            }
+        case .images:
+            for index in PerformanceWorkload.imageResources.indices {
+                DioramaImageOverlay(image: PerformanceWorkload.imageResources[index], bounds: PerformanceWorkload.bounds, id: "perf-image-\(index)")
+                    .opacity(0.25)
+            }
+        }
     }
 
     /// All six content types use the same streamed surface; gaps remain empty until tiles arrive.

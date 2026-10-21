@@ -1,0 +1,71 @@
+name: Swift API and platform validation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version
+      - name: Published migration examples
+        run: python3 Scripts/validate-documentation.py
+      - name: Library and consumer tests (macOS 15 minimum)
+        run: swift test
+      - name: Optimized library and consumer tests
+        run: swift test -c release
+      - name: Reject removed production API spellings
+        shell: bash
+        run: |
+          set -euo pipefail
+          modules=$(swift build --show-bin-path)
+          if [[ -d "$modules/Modules/Maquette.swiftmodule" || -f "$modules/Modules/Maquette.swiftmodule" ]]; then
+            modules="$modules/Modules"
+          fi
+          python3 Scripts/verify-production-rejections.py --modules "$modules"
+      - name: Prototype contract
+        run: swift test --package-path Prototypes/APIContract
+      - name: Reject invalid consumer contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          modules=$(swift build --package-path Prototypes/APIContract --show-bin-path)
+          if [[ -d "$modules/Modules/MaquetteNext.swiftmodule" || -f "$modules/Modules/MaquetteNext.swiftmodule" ]]; then
+            modules="$modules/Modules"
+          fi
+          python3 Prototypes/APIContract/verify-rejections.py --modules "$modules"
+      - name: Public symbol graph and DocC
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift package dump-symbol-graph --minimum-access-level public
+          graphs=$(find .build -type f -name Maquette.symbols.json -path '*/symbolgraph/*' -print -quit)
+          test -n "$graphs"
+          python3 Scripts/validate-documentation.py --compile-docc --symbol-graphs "$(dirname "$graphs")"
+
+      - name: Install demo project generator
+        run: command -v xcodegen || brew install xcodegen
+      - name: Compile complete macOS demo
+        run: bash Scripts/validate-demo.sh macos
+
+  platform:
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ios, visionos]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile library and consumer tests at minimum deployment target
+        run: bash Scripts/validate-platform.sh '${{ matrix.platform }}'
+      - name: Install demo project generator
+        run: command -v xcodegen || brew install xcodegen
+      - name: Compile complete platform demo
+        run: bash Scripts/validate-demo.sh '${{ matrix.platform }}'

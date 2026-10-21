@@ -215,6 +215,9 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
                 content.add(entity)
             }
         } update: { content in
+            // Async meshes can finish after an otherwise idle RealityView's last frame.
+            // Observe completion so they appear without waiting for the next camera gesture.
+            _ = (model.store.dioramaEntity as? DioramaEntity)?.overlayRenderer.geometryBuildCount
             installPicking(content)
             if let camera = content.entities.first(where: { $0.name == "OrbitCamera" }) {
                 camera.transform = model.cameraController.cameraTransform

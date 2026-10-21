@@ -164,6 +164,7 @@ struct VisionOSDioramaView: View {
             content.add(model.chunkStage)
             content.add(model.globeStage)
         } update: { realityViewContent, attachments in
+            _ = (model.store.dioramaEntity as? DioramaEntity)?.overlayRenderer.geometryBuildCount
             let volumeBounds = realityViewContent.convert(
                 geometry.frame(in: .local), from: .local, to: .scene
             )

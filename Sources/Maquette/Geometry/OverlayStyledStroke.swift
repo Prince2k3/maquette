@@ -27,6 +27,12 @@ enum OverlayStyledStroke {
             points.append(.init(vertex: path[i], width: widths[i], distance: distances[i]))
         }
         guard points.count > 1 else { return [] }
+        // A validated simple miter ribbon shares its joins instead of building overlapping
+        // segment patches. Dense smooth paths otherwise amplify into many union-slab slivers.
+        if !closed, style.dash.isEmpty,
+           let ribbon = try simpleMiterRibbon(points, style: style, work: &work) {
+            return try OverlayAreaGeometry.clip(ribbon, boundary: boundary, work: &work)
+        }
         var pattern = style.dash
         if !pattern.count.isMultiple(of: 2) { pattern += pattern }
         let period = pattern.reduce(0, +)
@@ -119,4 +125,70 @@ enum OverlayStyledStroke {
         let merged = try OverlayRegionUnion.triangulate(patches, work: &work)
         return try OverlayAreaGeometry.clip(merged, boundary: boundary, work: &work)
     }
+    /// Returns nil for geometry requiring the general patch union. Every accepted cell is
+    /// convex and the full outline is simple, so its cells form one non-overlapping ribbon.
+    private static func simpleMiterRibbon(_ points: [Point], style: DioramaStrokeStyle,
+                                          work: inout OverlayWork) throws -> [OverlayTriangle]? {
+        guard style.lineJoin == .miter, style.lineCap != .round,
+              points.allSatisfy({ $0.width == points[0].width && $0.vertex.altitude == points[0].vertex.altitude
+                  && $0.vertex.uv == points[0].vertex.uv }) else { return nil }
+        let half = points[0].width / 2
+        let directions = (1..<points.count).map { simd_normalize(points[$0].vertex.point - points[$0 - 1].vertex.point) }
+        var left: [OverlayVertex] = [], right: [OverlayVertex] = []
+        for i in points.indices {
+            try work.spend()
+            var center = points[i].vertex
+            let offset: SIMD2<Double>
+            if i == 0 || i == points.count - 1 {
+                let direction = directions[i == 0 ? 0 : directions.count - 1]
+                offset = SIMD2(-direction.y, direction.x) * half
+                if style.lineCap == .square { center.point += direction * (i == 0 ? -half : half) }
+            } else {
+                let before = directions[i - 1], after = directions[i]
+                let denominator = 1 + simd_dot(before, after)
+                guard denominator > 1e-12 else { return nil }
+                offset = SIMD2(-before.y - after.y, before.x + after.x) * (half / denominator)
+                guard simd_length(offset) <= style.miterLimit * half else { return nil }
+            }
+            var a = center, b = center
+            a.point += offset; b.point -= offset
+            guard a.isFinite, b.isFinite else { return nil }
+            left.append(a); right.append(b)
+        }
+        let ring = left + right.reversed()
+        let bounds = OverlayBounds(ring.map(\.point)), epsilon = bounds.epsilon
+        let axis = bounds.hi.x - bounds.lo.x >= bounds.hi.y - bounds.lo.y ? 0 : 1
+        let edgeBounds = ring.indices.map { OverlayBounds([ring[$0].point, ring[($0 + 1) % ring.count].point]) }
+        let ordered = ring.indices.sorted {
+            if edgeBounds[$0].lo[axis] == edgeBounds[$1].lo[axis] { return $0 < $1 }
+            return edgeBounds[$0].lo[axis] < edgeBounds[$1].lo[axis]
+        }
+        var active: [Int] = []
+        for i in ordered {
+            active.removeAll { edgeBounds[$0].hi[axis] < edgeBounds[i].lo[axis] }
+            for j in active {
+                try work.spend()
+                guard edgeBounds[i].intersects(edgeBounds[j]), abs(i - j) != 1,
+                      !(min(i, j) == 0 && max(i, j) == ring.count - 1) else { continue }
+                if OverlayMath.intersects(ring[i].point, ring[(i + 1) % ring.count].point,
+                                          ring[j].point, ring[(j + 1) % ring.count].point, epsilon: epsilon) { return nil }
+            }
+            active.append(i)
+        }
+        var result: [OverlayTriangle] = []
+        for i in 1..<points.count {
+            let cell = [left[i - 1], left[i], right[i], right[i - 1]]
+            // Reject inverted/overlapping join cross sections, including acute bends whose
+            // miter reaches beyond an adjacent very short segment.
+            for j in cell.indices {
+                try work.spend()
+                guard OverlayMath.cross(cell[(j + 1) % 4].point - cell[j].point,
+                                        cell[(j + 2) % 4].point - cell[(j + 1) % 4].point) < -epsilon * epsilon else { return nil }
+            }
+            try OverlayMath.appendTriangle(cell[0], cell[1], cell[2], epsilon: epsilon, to: &result, work: &work)
+            try OverlayMath.appendTriangle(cell[0], cell[2], cell[3], epsilon: epsilon, to: &result, work: &work)
+        }
+        return result
+    }
+
 }

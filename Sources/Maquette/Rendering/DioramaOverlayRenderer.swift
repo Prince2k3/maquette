@@ -1,11 +1,12 @@
 import Foundation
 import os
 import RealityKit
+import Observation
 import SwiftUI
 
 /// Owns only current content. Geometry keys exclude materials, image revision, and selection.
 @MainActor
-final class DioramaOverlayRenderer {
+@Observable final class DioramaOverlayRenderer {
     struct Context: Equatable {
         var terrain: ObjectIdentifier?
         var revision: Int

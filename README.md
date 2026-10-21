@@ -57,7 +57,10 @@ relocates or rebuilds in place.
 
 For before/after examples and compatibility details, see
 [[migrating-to-the-swiftui-api|Migrating to the SwiftUI API]] in the DocC catalog
-(`Sources/Maquette/Maquette.docc`).
+(`Sources/Maquette/Maquette.docc`). The coordinated pre-1.0 change is recorded in
+[[release-notes-map-content-camera|Map content and camera release notes]].
+Migration examples compile as consumer code on all supported targets; see
+`Tests/MaquetteAPITests/MigrationExamplesAPITests.swift`.
 
 ## Compose and select content
 

@@ -12,8 +12,9 @@ type: permanent
 -->
 
 Adopt composable content, typed selection, geographic navigation, and presentation modifiers
-incrementally. Existing String selection, items-only content, initializer styling, and camera-only
-callbacks remain supported. The default pan policy and custom-provider comparison need particular
+as one coordinated pre-1.0 migration. The feature-wrapper names, camera constructor, and camera
+argument label change together. Existing String selection, items-only content, marker/polyline
+initializer styling, and camera-only callbacks remain supported. The default pan policy and custom-provider comparison need particular
 attention when preserving an existing application's behavior.
 
 Vault context: [[README]] and [[mapkit-swiftui-api-plan]]. For package documentation, start with
@@ -70,8 +71,9 @@ does not become diorama content automatically.
 
 Tapping the selected marker clears selection. Markers sharing a tag select together. Removing a
 marker, panning it off the chunk, or changing its tag does not clear the application's selection.
-Untagged markers remain selectable by annotation ID with String bindings. Polylines are not
-selection targets.
+Untagged markers remain selectable by annotation ID with String bindings. Lines, areas, and image
+overlays require an explicit tag of the selection binding’s type; their visible geometry supplies
+the hit target. Custom labels retain native SwiftUI interaction and can also carry a tag.
 
 ## Replace flattened items with a content body
 
@@ -153,7 +155,9 @@ To tune loading independently of appearance, use `.prefetchMargin(0.8)`. It desc
 kept ready as a fraction of chunk extent, rather than a geographic pan limit. Positive legacy
 style `panRange` values still supply the automatic policy's margin. An explicit loading policy
 overrides that legacy value. Zero disables ground panning; remove `.pan` from `interactionModes`
-when the intent is to disable the interaction itself.
+when the intent is to disable the interaction itself. With the default `.map` input configuration,
+an unavailable ground pan does not become an orbit gesture. Use `.dioramaInput(.legacyOrbit)`
+only when that explicit fallback matches your application.
 
 ## Keep reloads separate from effects
 
@@ -301,8 +305,8 @@ Angles use SwiftUI `Angle`; `.relativeToGround` altitude uses geographic elevati
 
 `.dioramaShape` and `.dioramaPhysicalSize` override initializer values, with the nearest modifier
 winning. Content group modifiers supply defaults; child modifiers win. Repeating a modifier on
-the same styled content layer replaces its earlier value. Existing initializer tint, altitude,
-and line-width styling remain available.
+the same styled content layer replaces its earlier value. Existing marker/polyline initializer tint, altitude,
+and line-width styling remain available; modifier syntax is the preferred composable form.
 
 ## Release checks
 
@@ -335,7 +339,8 @@ watchOS lacks RealityKit; tvOS is not a supported interaction platform.
 The GeoJSON wrapper is now ``DioramaFeature`` and its style is ``DioramaFeatureStyle``.
 Replace `DioramaAnnotation(feature)` with `DioramaFeature(feature)` and `AnnotationStyle(...)`
 with `DioramaFeatureStyle(...)`. The old spellings are removed before 1.0. Custom SwiftUI labels
-are a separate upcoming API.
+are available through `DioramaAnnotation("Title", coordinate: point) { Text("Label") }`.
+A geographic feature and a native label have separate lifecycles and may share a coordinate.
 
 ``DioramaPolygon`` supports holes and multipolygons; ``DioramaCircle`` takes a geographic radius.
 Use `.fill(...)` and `.stroke(..., style:)` independently, including on `DioramaFeature`.
@@ -345,5 +350,122 @@ matching the binding's type; untagged marker String-ID compatibility remains ava
 
 ``DioramaImageOverlay`` takes a north-up ``GeographicBounds`` and an immutable decoded
 ``DioramaImageResource``. Keep its ID/revision stable for unchanged pixels, and change the revision
-when pixels change. Its attribution supplements the terrain attribution. Ground-conforming overlays
-currently require raster terrain; unsupported photorealistic placement is omitted with a diagnostic.
+when pixels change. Its attribution supplements the terrain attribution. Ground-conforming content also supports visible photorealistic triangles. Placement chooses the
+highest surface beneath each point, including roofs and bridges. Missing streamed coverage is
+omitted, never replaced with a flat height; LOD changes can move anchors or temporarily hide
+replacement geometry. Vertical facades occlude labels but do not receive horizontal drapes.
+Absolute altitude on 3D Tiles means WGS84 ellipsoid metres. See <doc:PhotorealisticPlacement>.
+
+
+## Update input ownership and controls
+
+Use `.heading`, `.pitch`, `.groundPan`, `.groundZoom`, and `.cameraZoom` to grant independent
+permissions. The retained `.rotate`, `.pan`, and `.zoom` names are unions for compatibility;
+they do not imply that geography and camera distance are the same operation. The default `.map`
+preset uses one-finger ground pan, two-finger twist for heading, vertical two-finger movement for
+pitch, and pinch for ground zoom. macOS uses plain drag for pan and Option-drag for orbit.
+Explicit ground commands never silently fall back to camera zoom.
+
+Wheel and keyboard navigation belong to the focused scene. Wheel input over labels, editors,
+controls, or another scene passes to its appropriate owner; consumed scene zoom does not also
+scroll the parent. Default shortcuts include arrows for pan, Option-arrows for heading/pitch,
+plus/minus for ground zoom, Option-plus/minus for camera distance, and N/O/F/R for north,
+overhead, fit, and reset. Native label editors retain their text commands. macOS trackpad rotation
+is not mapped; pinch and Option-drag remain available. See <doc:InputAndControls> for remapping.
+
+Use `DioramaZoomControls(target:)`, `DioramaPitchControl`, `DioramaPerspectiveToggle`,
+`DioramaFitButton`, `DioramaCompass`, `DioramaResetButton`, and `DioramaKeyboardHelp` inside
+`.dioramaControls`. They respect permissions, limits, host capabilities, and Reduce Motion.
+Virtual-camera controls are unavailable in AR and visionOS; supported ground controls remain.
+An overhead camera is a requested pose, not the default appearance of a terrain chunk.
+
+## Compile the migration examples
+
+The following complete declarations are copied verbatim into the plain-import compiler fixture
+`Tests/MaquetteAPITests/MigrationExamplesAPITests.swift`. `Scripts/validate-documentation.py`
+checks the marked blocks against that fixture before CI compiles it for every supported platform.
+The surrounding illustrative fragments in this article assume application-provided state and data.
+
+<!-- migration-example: compatibility -->
+```swift
+@MainActor
+struct MigrationCompatibilityExample: View {
+    let point = Coordinate(latitude: 36, longitude: -112)
+    @State private var selected: String?
+
+    var body: some View {
+        DioramaView(region: .init(center: point, radius: 1_000), selection: $selected) {
+            DioramaMarker("Overlook", coordinate: point, tint: .orange, id: "overlook")
+            LegacyMigrationContent(point: point)
+        }
+        .dioramaInput(.legacyOrbit)
+        .dioramaLoadingPolicy(.prefetchMargin(0))
+    }
+}
+
+struct LegacyMigrationContent: DioramaContent {
+    let point: Coordinate
+    var items: [DioramaContentItem] {
+        DioramaPolyline(coordinates: [point, .init(latitude: 36.01, longitude: -112)]).items
+    }
+}
+```
+<!-- /migration-example -->
+
+<!-- migration-example: coordinated -->
+```swift
+@MainActor
+struct MigrationCoordinatedExample: View {
+    enum Selection: Hashable, Sendable { case overlook, trail, park, radius }
+    let point = Coordinate(latitude: 36, longitude: -112)
+    @State private var ground = DioramaGroundPosition(region: .init(
+        center: .init(latitude: 36, longitude: -112), radius: 1_000))
+    @State private var camera: DioramaCameraPosition = .camera(.init(
+        heading: .degrees(30), pitch: .degrees(50), distance: 1.6))
+    @State private var selection: Selection?
+
+    var body: some View {
+        DioramaReader { proxy in
+            DioramaView(groundPosition: $ground, cameraPosition: $camera, selection: $selection) {
+                DioramaAnnotation("Overlook", coordinate: point, anchor: .bottom, id: "overlook") {
+                    Text("Overlook").padding(6).background(.regularMaterial)
+                }
+                .annotationOcclusion(.terrain).annotationOverlap(.avoid).tag(Selection.overlook)
+                DioramaPolyline(coordinates: [point, .init(latitude: 36.01, longitude: -112)])
+                    .stroke(.orange, style: .init(width: .geographicMeters(5), lineCap: .round,
+                                                  lineJoin: .round, dash: [20, 10]))
+                    .id("trail").tag(Selection.trail)
+                DioramaPolygon(Polygon(exterior: LinearRing([
+                    point, .init(latitude: 36.01, longitude: -112),
+                    .init(latitude: 36, longitude: -111.99)
+                ])), id: "park")
+                    .fill(.green.opacity(0.2)).stroke(.green, width: .physicalMeters(0.002))
+                    .tag(Selection.park)
+                DioramaCircle(center: point, radius: 200, id: "radius")
+                    .fill(.cyan.opacity(0.2)).tag(Selection.radius)
+                DioramaFeature(Feature(geometry: .point(Point(point))), style: DioramaFeatureStyle(), id: "survey")
+            }
+            .dioramaInput(.map)
+            .dioramaCameraTransition(.easeInOut(duration: 0.6))
+            .dioramaControls {
+                VStack {
+                    DioramaZoomControls(target: .ground)
+                    DioramaZoomControls(target: .camera)
+                    DioramaPitchControl()
+                    DioramaPerspectiveToggle()
+                    DioramaFitButton(target: .contentIDs(["trail"]))
+                    DioramaResetButton()
+                    Button("Cancel") { proxy.cancel() }
+                }
+            }
+        }
+    }
+}
+```
+<!-- /migration-example -->
+
+Do not keep obsolete feature-wrapper constructors as compatibility code: `DioramaAnnotation(feature)`
+and `AnnotationStyle` must become `DioramaFeature(feature)` and `DioramaFeatureStyle`. Likewise,
+`DioramaCamera(azimuth:elevation:distance:)` and the view’s `position:` label must migrate together
+to the angle-based camera and `cameraPosition:` binding. Items-only conformers, marker/polyline
+constructor styling, legacy interaction unions, and String marker selection remain supported.

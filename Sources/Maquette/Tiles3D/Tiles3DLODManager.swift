@@ -287,7 +287,7 @@ final class Tiles3DLODManager {
     }
 
     /// Content the traversal wants but does not yet have.
-    private struct ContentRequest {
+    private struct ContentRequest: Sendable {
         let uri: String
         let transform: simd_double4x4
     }
@@ -611,19 +611,13 @@ final class Tiles3DLODManager {
         for request in batch { inFlight.insert(request.uri) }
 
         let provider = self.provider
-        func load(_ request: ContentRequest) -> @Sendable () async -> (ContentRequest, Result<Data, any Error>) {
-            {
-                do { return (request, .success(try await provider.fetchTileContent(uri: request.uri))) }
-                catch { return (request, .failure(error)) }
-            }
-        }
-
         await withTaskGroup(of: (ContentRequest, Result<Data, any Error>).self) { group in
             var next = 0
             let width = min(max(1, maxConcurrentLoads), batch.count)
 
             while next < width {
-                group.addTask(operation: load(batch[next]))
+                let request = batch[next]
+                group.addTask { await Self.fetchContent(request, from: provider) }
                 next += 1
             }
 
@@ -631,7 +625,8 @@ final class Tiles3DLODManager {
                 await integrate(request: request, result: result, into: parentEntity)
 
                 if next < batch.count {
-                    group.addTask(operation: load(batch[next]))
+                    let request = batch[next]
+                    group.addTask { await Self.fetchContent(request, from: provider) }
                     next += 1
                 }
             }
@@ -639,6 +634,16 @@ final class Tiles3DLODManager {
 
         // A dead session rejects every request alike, so one renewal covers the whole batch.
         if needsSessionRenewal { await renewSession() }
+    }
+
+    /// Keep child work as a concrete async call, rather than returning an async closure
+    /// through a factory. The latter creates nested isolation thunks that abort task-stack
+    /// deallocation in optimized Swift 6.4 builds, even in an isolated LOD traversal test.
+    private nonisolated static func fetchContent(
+        _ request: ContentRequest, from provider: any Tiles3DProvider
+    ) async -> (ContentRequest, Result<Data, any Error>) {
+        do { return (request, .success(try await provider.fetchTileContent(uri: request.uri))) }
+        catch { return (request, .failure(error)) }
     }
 
     /// Establishes a fresh session after the old one expired.

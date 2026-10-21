@@ -1,12 +1,14 @@
 import CoreGraphics
+import Observation
 import RealityKit
 import SwiftUI
+import Synchronization
 import Testing
 @testable import Maquette
 
 @MainActor
 enum OverlayRenderFixture {
-    static func make() throws -> (DioramaEntity, DioramaProxy) {
+    static func make(resolution: Int = 8) throws -> (DioramaEntity, DioramaProxy) {
         let center = Coordinate(latitude: 36, longitude: -112)
         let anchor = TerrainAnchor(centeredOn: center, zoom: 10, extent: .init(1, 1), radiusMeters: 1000)
         let tile = TileMath.tileXY(for: center, zoom: 10)
@@ -14,7 +16,7 @@ enum OverlayRenderFixture {
             tilePositions: [(tile.x, tile.y)], anchor: anchor, elevationScale: 0.0005)
         let configuration = DioramaConfiguration(center: center.clLocationCoordinate, radiusMeters: 1000,
             shape: .rectangular(width: 1, depth: 1), physicalSize: 1)
-        let parts = try TerrainSolidGenerator.generate(heightField: field, boundary: configuration.boundary, baseDepth: 0.1, resolution: 8)
+        let parts = try TerrainSolidGenerator.generate(heightField: field, boundary: configuration.boundary, baseDepth: 0.1, resolution: resolution)
         let root = DioramaEntity()
         root.setTerrain(TerrainEntity(parts: parts, surfaceMaterial: DioramaMaterials.unlitMaterial(color: .white),
                                      wallMaterial: nil, bottomMaterial: nil, pannableTerrain: field))
@@ -37,6 +39,36 @@ enum OverlayRenderFixture {
 @Suite("Diorama overlay reconciliation")
 @MainActor
 struct DioramaOverlayRenderingTests {
+    @Test func asyncCompletionInvalidatesAnIdleSceneObserver() async throws {
+        let (root, proxy) = try OverlayRenderFixture.make()
+        let changed = Mutex(false)
+        withObservationTracking {
+            _ = root.overlayRenderer.geometryBuildCount
+        } onChange: {
+            changed.withLock { $0 = true }
+        }
+        root.applyContent(DioramaContentGroup {
+            DioramaPolygon(OverlayRenderFixture.polygon(proxy), id: "async").fill(.green)
+        }, using: proxy, physicalSize: 1)
+        #expect(!changed.withLock { $0 })
+        await root.overlayRenderer.waitUntilIdle()
+        #expect(changed.withLock { $0 })
+        #expect(root.overlayRenderer.geometryBuildCount == 1)
+        #expect(root.overlayRenderer.records["async"]?.entity.isEnabled == true)
+
+        let unchanged = Mutex(false)
+        withObservationTracking {
+            _ = root.overlayRenderer.geometryBuildCount
+        } onChange: {
+            unchanged.withLock { $0 = true }
+        }
+        root.applyContent(DioramaContentGroup {
+            DioramaPolygon(OverlayRenderFixture.polygon(proxy), id: "async").fill(.orange)
+        }, using: proxy, physicalSize: 1)
+        await root.overlayRenderer.waitUntilIdle()
+        #expect(!unchanged.withLock { $0 })
+    }
+
     @Test func polygonAndGeoJSONShareRenderingAndAppearanceEditsKeepGeometry() async throws {
         let (root, proxy) = try OverlayRenderFixture.make()
         let polygon = OverlayRenderFixture.polygon(proxy, hole: true)

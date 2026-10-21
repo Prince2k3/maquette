@@ -1,0 +1,326 @@
+{
+  "date": "2026-10-21",
+  "renderingCommit": "7f6026c",
+  "configuration": "Release, opt-in MAQUETTE_PROFILING instrumentation",
+  "mac": {
+    "hardware": "Apple M4 Pro MacBook Pro, 48 GB",
+    "os": "macOS 27.0.1",
+    "viewportPoints": [
+      1000,
+      610.5
+    ],
+    "workloads": {
+      "path": [
+        {
+          "phase": "Pan",
+          "ticks": 439,
+          "missed": 161,
+          "maxInputGapMs": 104.10075,
+          "fullBins": 9,
+          "seconds": 9.000483331,
+          "meanFPS": 61.44114380415061,
+          "minFPS": 38.999595527,
+          "maxFPS": 71.970186186,
+          "skippedFrames": 0.0,
+          "overlaySamples": 439,
+          "hiddenOverlaySamples": 330,
+          "completedBuilds": 351
+        },
+        {
+          "phase": "GroundZoom",
+          "ticks": 530,
+          "missed": 70,
+          "maxInputGapMs": 40.032042,
+          "fullBins": 9,
+          "seconds": 8.99523075,
+          "meanFPS": 68.81424326516286,
+          "minFPS": 66.979679193,
+          "maxFPS": 71.550267345,
+          "skippedFrames": 0.0,
+          "overlaySamples": 530,
+          "hiddenOverlaySamples": 18,
+          "completedBuilds": 496
+        },
+        {
+          "phase": "CameraZoom",
+          "ticks": 555,
+          "missed": 45,
+          "maxInputGapMs": 34.61675,
+          "fullBins": 9,
+          "seconds": 8.999703709,
+          "meanFPS": 66.33551627460659,
+          "minFPS": 61.725229321,
+          "maxFPS": 69.894840385,
+          "skippedFrames": 0.0,
+          "overlaySamples": 555,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 0
+        }
+      ],
+      "polygons": [
+        {
+          "phase": "Pan",
+          "ticks": 493,
+          "missed": 107,
+          "maxInputGapMs": 43.489667,
+          "fullBins": 9,
+          "seconds": 8.998542458,
+          "meanFPS": 67.45536991315011,
+          "minFPS": 63.566366041,
+          "maxFPS": 70.906496088,
+          "skippedFrames": 0.0,
+          "overlaySamples": 12325,
+          "hiddenOverlaySamples": 9493,
+          "completedBuilds": 12321
+        },
+        {
+          "phase": "GroundZoom",
+          "ticks": 472,
+          "missed": 128,
+          "maxInputGapMs": 53.690291,
+          "fullBins": 9,
+          "seconds": 9.005589749,
+          "meanFPS": 64.62652710681313,
+          "minFPS": 62.056126097,
+          "maxFPS": 67.608500912,
+          "skippedFrames": 0.0,
+          "overlaySamples": 11800,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 11450
+        },
+        {
+          "phase": "CameraZoom",
+          "ticks": 560,
+          "missed": 40,
+          "maxInputGapMs": 38.226709,
+          "fullBins": 9,
+          "seconds": 8.99597625,
+          "meanFPS": 69.03086331502058,
+          "minFPS": 67.015230719,
+          "maxFPS": 70.276528316,
+          "skippedFrames": 0.0,
+          "overlaySamples": 14000,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 0
+        }
+      ],
+      "images": [
+        {
+          "phase": "Pan",
+          "ticks": 496,
+          "missed": 103,
+          "maxInputGapMs": 45.792,
+          "fullBins": 9,
+          "seconds": 9.003642417,
+          "meanFPS": 67.41716012684564,
+          "minFPS": 63.142719451,
+          "maxFPS": 72.393836181,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1984,
+          "hiddenOverlaySamples": 1576,
+          "completedBuilds": 1980
+        },
+        {
+          "phase": "GroundZoom",
+          "ticks": 489,
+          "missed": 111,
+          "maxInputGapMs": 39.648292,
+          "fullBins": 9,
+          "seconds": 9.006569123,
+          "meanFPS": 63.842289655434165,
+          "minFPS": 62.015735685,
+          "maxFPS": 65.446328923,
+          "skippedFrames": 0.0,
+          "overlaySamples": 1956,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 1908
+        },
+        {
+          "phase": "CameraZoom",
+          "ticks": 591,
+          "missed": 9,
+          "maxInputGapMs": 33.139667,
+          "fullBins": 9,
+          "seconds": 8.999901461,
+          "meanFPS": 69.33409373757583,
+          "minFPS": 67.166322282,
+          "maxFPS": 71.072427111,
+          "skippedFrames": 0.0,
+          "overlaySamples": 2364,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 0
+        }
+      ]
+    },
+    "pathRepeat": [
+      {
+        "phase": "Pan",
+        "ticks": 515,
+        "missed": 85,
+        "maxInputGapMs": 46.802083,
+        "fullBins": 9,
+        "seconds": 8.997782377,
+        "meanFPS": 68.12789688115748,
+        "minFPS": 63.047175793,
+        "maxFPS": 70.516981975,
+        "skippedFrames": 0.0,
+        "overlaySamples": 515,
+        "hiddenOverlaySamples": 426,
+        "completedBuilds": 423,
+        "signpostWindowSeconds": {
+          "Begin": 7.295871958,
+          "End": 17.301974875
+        }
+      },
+      {
+        "phase": "GroundZoom",
+        "ticks": 467,
+        "missed": 133,
+        "maxInputGapMs": 33.896916,
+        "fullBins": 9,
+        "seconds": 9.000454040000001,
+        "meanFPS": 69.32983550513275,
+        "minFPS": 68.006368041,
+        "maxFPS": 70.340373089,
+        "skippedFrames": 0.0,
+        "overlaySamples": 467,
+        "hiddenOverlaySamples": 15,
+        "completedBuilds": 437,
+        "signpostWindowSeconds": {
+          "Begin": 19.320821625,
+          "End": 29.329028166
+        }
+      },
+      {
+        "phase": "CameraZoom",
+        "ticks": 567,
+        "missed": 33,
+        "maxInputGapMs": 33.424667,
+        "fullBins": 9,
+        "seconds": 8.999856623,
+        "meanFPS": 69.22332615358903,
+        "minFPS": 66.990233295,
+        "maxFPS": 70.037404009,
+        "skippedFrames": 0.0,
+        "overlaySamples": 567,
+        "hiddenOverlaySamples": 0,
+        "completedBuilds": 0,
+        "signpostWindowSeconds": {
+          "Begin": 31.349047666,
+          "End": 41.358253625
+        }
+      }
+    ]
+  },
+  "ipadSimulator": {
+    "device": "iPad Pro 11-inch (M5)",
+    "runtime": "iOS 27.0",
+    "viewportPoints": [
+      834,
+      1035.5
+    ],
+    "frameCounterRows": 0,
+    "hardwareFPSVerified": false,
+    "workloads": {
+      "path": [
+        {
+          "phase": "Pan",
+          "ticks": 600,
+          "missed": 0,
+          "maxInputGapMs": 25.556458,
+          "overlaySamples": 600,
+          "hiddenOverlaySamples": 3,
+          "completedBuilds": 598
+        },
+        {
+          "phase": "GroundZoom",
+          "ticks": 600,
+          "missed": 0,
+          "maxInputGapMs": 21.345083,
+          "overlaySamples": 600,
+          "hiddenOverlaySamples": 1,
+          "completedBuilds": 583
+        },
+        {
+          "phase": "CameraZoom",
+          "ticks": 600,
+          "missed": 0,
+          "maxInputGapMs": 17.748667,
+          "overlaySamples": 600,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 0
+        }
+      ],
+      "polygons": [
+        {
+          "phase": "Pan",
+          "ticks": 600,
+          "missed": 0,
+          "maxInputGapMs": 22.642042,
+          "overlaySamples": 15000,
+          "hiddenOverlaySamples": 50,
+          "completedBuilds": 14987
+        },
+        {
+          "phase": "GroundZoom",
+          "ticks": 600,
+          "missed": 0,
+          "maxInputGapMs": 19.898958,
+          "overlaySamples": 15000,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 14600
+        },
+        {
+          "phase": "CameraZoom",
+          "ticks": 600,
+          "missed": 0,
+          "maxInputGapMs": 17.827125,
+          "overlaySamples": 15000,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 0
+        }
+      ],
+      "images": [
+        {
+          "phase": "Pan",
+          "ticks": 600,
+          "missed": 0,
+          "maxInputGapMs": 28.795291,
+          "overlaySamples": 2400,
+          "hiddenOverlaySamples": 20,
+          "completedBuilds": 2392
+        },
+        {
+          "phase": "GroundZoom",
+          "ticks": 598,
+          "missed": 2,
+          "maxInputGapMs": 27.335417,
+          "overlaySamples": 2392,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 2328
+        },
+        {
+          "phase": "CameraZoom",
+          "ticks": 600,
+          "missed": 0,
+          "maxInputGapMs": 17.749208,
+          "overlaySamples": 2400,
+          "hiddenOverlaySamples": 0,
+          "completedBuilds": 0
+        }
+      ]
+    }
+  },
+  "iphone": {
+    "device": "iPhone 17 Pro Max",
+    "os": "iOS 27.0.1",
+    "hardwareFPSVerified": false,
+    "blockedReason": "CoreDevice launch denied: device locked; Instruments lists device offline"
+  },
+  "measurementNotes": [
+    "FPS fields are Instruments Metal Performance Overview CAMetalLayer counter averages, not physical display scanout or frame-time percentiles.",
+    "Mac summaries retain whole bins inside phase windows; hiddenOverlaySamples are record/input snapshots, not hidden presented frames.",
+    "Input ticks and missed deadlines describe the diagnostic driver. Simulator input cadence does not verify hardware FPS.",
+    "The initial path pan minimum of 39 FPS did not reproduce; repeat minimum was 63.047 FPS. The hidden-overlay sampling issue reproduced."
+  ]
+}

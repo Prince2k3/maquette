@@ -343,7 +343,14 @@ struct ContentView: View {
     /// Application selection is independent of the marker's rendering identity.
     @State private var selectedAnnotation: Place?
     @State private var annotationMoved = false
-    @State private var performanceWorkload = PerformanceWorkload.labels
+    @State private var performanceWorkload: PerformanceWorkload = {
+        switch ProcessInfo.processInfo.environment["MAQUETTE_WORKLOAD"] {
+        case "path": .path
+        case "polygons": .polygons
+        case "images": .images
+        default: .labels
+        }
+    }()
 
     /// Whether the diorama is placed on a real surface through the camera (iOS only).
     @State private var arActive = false

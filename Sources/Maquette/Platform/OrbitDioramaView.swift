@@ -41,6 +41,9 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
     @Environment(\.dioramaCameraTransition) private var cameraTransition
     @Environment(\.dioramaCameraActionHost) private var readerCameraHost
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #if MAQUETTE_PROFILING
+    @Environment(\.scenePhase) private var profileScenePhase
+    #endif
 
 
     #if os(iOS)
@@ -96,6 +99,12 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
             syncInputs()
             await model.initialLoad(effect: effect)
         }
+        #if MAQUETTE_PROFILING
+        .task(id: profileScenePhase) {
+            guard profileScenePhase == .active else { return }
+            await model.runProfileTour()
+        }
+        #endif
         .onDisappear { model.releaseCameraHost() }
         .onChange(of: cameraFitInsets) { _, _ in syncCameraConfiguration() }
         .onChange(of: cameraLimits) { _, _ in syncCameraConfiguration() }

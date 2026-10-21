@@ -53,3 +53,39 @@ The content harness reports mean, p95 and maximum completed pan/ground-zoom rebu
 including asynchronous geometry and resource updates. Main-actor submission and completion
 costs are separate. Repeat after competing builds/rendering stop and retain all results; a single
 mean cannot establish a 16 ms target. Nominal-input checks also print the observed input cadence.
+
+## Rendered interaction diagnostics
+
+[[map-overlay-frame-profiling]] records the Mac capture and iPad simulator observations from
+2026-10-21. `Fixtures/overlay-profile-2026-10-21.json` preserves the numeric results. Those
+observations do not establish a cross-platform 60 fps pass.
+
+The opt-in driver in `Platform/DioramaProfileTour.swift` is compiled out unless
+`MAQUETTE_PROFILING` is defined. It also requires the runtime environment variable
+`MAQUETTE_PROFILE=1`. It waits for initial content, warms up for eight seconds, then drives ten
+seconds each of pan, ground zoom and camera zoom through the existing intent methods. It emits
+Points of Interest intervals and `ProfileTour` logs with input deadlines, gaps, completed builds
+and hidden overlay record samples. These samples are diagnostics, not frame measurements.
+Deactivating the scene cancels the tour and reverses outstanding movement; reactivation restarts it.
+
+For example, build a separate Release Mac demo:
+
+```sh
+xcodebuild -project Demo/MaquetteDemo.xcodeproj -scheme MaquetteDemo \
+  -configuration Release -destination 'platform=macOS' \
+  -derivedDataPath /tmp/maquette-profile CODE_SIGNING_ALLOWED=NO \
+  PRODUCT_BUNDLE_IDENTIFIER=com.maquette.MaquetteProfile \
+  'OTHER_SWIFT_FLAGS=$(inherited) -D MAQUETTE_PROFILING' ONLY_ACTIVE_ARCH=YES build
+```
+
+Launch the exact binary with `MAQUETTE_PROFILE=1 MAQUETTE_PRESET=performance` and
+`MAQUETTE_WORKLOAD=path|polygons|images` (choose one value). Keep its window active. Attach
+Instruments to its PID, using `Game Performance Overview` plus `Points of Interest` for 60 seconds.
+Attaching by PID avoids Launch Services resolving an older demo with the same executable name.
+Do not build, inspect the UI, or run other captures during the measured phases. Validate phase
+completion and target PID/layer before summarizing counters; exclude canceled intervals.
+
+On a simulator, prefix runtime environment variables with `SIMCTL_CHILD_` when using
+`xcrun simctl launch`. Empty Instruments tables are unavailable measurements, not zero cost.
+Input cadence and simulator results cannot verify physical-device frame rate. Obtain per-frame
+timing and real gesture/hardware captures before declaring the smooth 60 fps goal achieved.

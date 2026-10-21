@@ -9,6 +9,7 @@ final class DioramaOverlayRenderer {
     struct Context: Equatable {
         var terrain: ObjectIdentifier?
         var revision: Int
+        var surfaceID: UUID?
         var anchor: TerrainAnchor?
         var center: Coordinate
         var pan: SIMD2<Float>
@@ -66,14 +67,19 @@ final class DioramaOverlayRenderer {
         guard let root else { return }
         currentProxy = proxy
         guard !inputs.isEmpty else { clear(); return }
-        let current = Context(terrain: root.terrain.map(ObjectIdentifier.init), revision: root.terrain?.surfaceRevision ?? 0,
+        let current = Context(terrain: root.terrain.map(ObjectIdentifier.init), revision: root.terrain?.surfaceRevision ?? root.tiles3D?.surfaceRevision ?? 0,
+            surfaceID: (proxy.projection as? EllipsoidProjection)?.surface?.id,
             anchor: (proxy.projection as? TerrainProjection)?.anchor, center: Coordinate(proxy.configuration.center),
             pan: proxy.projection.panOffset, boundary: proxy.configuration.boundary.vertices,
             datum: proxy.projection.y(forElevation: 0), scale: proxy.projection.y(forElevation: 1), physicalSize: physicalSize)
         if current != context || surfaceTask == nil {
             surfaceTask?.cancel(); context = current
             let buffers = root.terrain?.surfaceBuffers
-            surfaceTask = Task.detached(priority: .userInitiated) { try buffers.map { try OverlaySurfaceMesh(terrain: $0) } }
+            let photorealistic = (proxy.projection as? EllipsoidProjection)?.surface
+            surfaceTask = Task.detached(priority: .userInitiated) {
+                if let buffers { return try OverlaySurfaceMesh(terrain: buffers) }
+                return photorealistic
+            }
         }
         let active = Set(inputs.map(\.id))
         for (id, record) in records where !active.contains(id) {

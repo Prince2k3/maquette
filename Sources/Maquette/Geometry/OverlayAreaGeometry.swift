@@ -58,11 +58,20 @@ enum OverlayAreaGeometry {
         return result
     }
 
-    /// Both subject and clip region are convex triangles. A concave ring is never used as a clip region.
+    /// A triangular subject and convex clip polygon. A concave ring is never used as a clip region.
     static func intersect(_ triangle: OverlayTriangle, with clip: [SIMD2<Double>],
                           epsilon: Double, work: inout OverlayWork) throws -> [OverlayVertex] {
-        var output = triangle.vertices
-        let orientation = OverlayMath.cross(clip[1] - clip[0], clip[2] - clip[0])
+        try intersect(triangle.vertices, with: clip, epsilon: epsilon, work: &work)
+    }
+
+    static func intersect(_ polygon: [OverlayVertex], with clip: [SIMD2<Double>],
+                          epsilon: Double, work: inout OverlayWork) throws -> [OverlayVertex] {
+        var output = polygon
+        guard clip.count >= 3 else { return [] }
+        let origin = clip[0]
+        let orientation = clip.indices.reduce(0.0) { result, index in
+            result + OverlayMath.cross(clip[index] - origin, clip[(index + 1) % clip.count] - origin)
+        }
         guard abs(orientation) > epsilon * epsilon else { return [] }
         let sign = orientation > 0 ? 1.0 : -1.0
         for i in clip.indices {

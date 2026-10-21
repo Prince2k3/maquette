@@ -28,6 +28,25 @@ final class Tiles3DLODManager {
     /// Each tile's geometry as it arrived, kept only while the diorama can pan.
     private var sourceGeometry: [String: Tiles3DSourceGeometry] = [:]
     /// Each tile's drawable buffer, rewritten in place every time the outline moves past it.
+    /// CPU positions mirror exactly the buffers being drawn, in unscaled ENU metres.
+    private var surfaceGeometry: [String: TerrainSolidGenerator.Buffers] = [:]
+    var onSurfaceInvalidated: (@MainActor () -> Void)?
+    private(set) var surfaceRevision = 0 {
+        didSet { if surfaceRevision != oldValue { onSurfaceInvalidated?() } }
+    }
+    private var surfaceVisibleURIs: Set<String> = []
+
+    var visibleSurfaceGeometry: [TerrainSolidGenerator.Buffers] {
+        surfaceVisibleURIs.sorted().compactMap { surfaceGeometry[$0] }
+    }
+
+    private func refreshSurfaceVisibility() {
+        let visible = Set(loadedEntities.compactMap { uri, entity in
+            entity.isEnabled && entity.model != nil ? uri : nil
+        })
+        if visible != surfaceVisibleURIs { surfaceVisibleURIs = visible; surfaceRevision &+= 1 }
+    }
+
     private var tileMeshes: [String: Tiles3DMeshBuffer] = [:]
 
     /// The horizontal extent of every tile held in hand, cut or not, in the geometry's own space.
@@ -719,6 +738,7 @@ final class Tiles3DLODManager {
         entity.isEnabled = false
         parentEntity.addChild(entity)
         loadedEntities[request.uri] = entity
+        surfaceGeometry[request.uri] = loaded.surface
         framesSinceVisible[request.uri] = 0
         if let copyright = loaded.copyright {
             tileCopyrights[request.uri] = copyright
@@ -901,7 +921,13 @@ final class Tiles3DLODManager {
             _ = Tiles3DCutEdgeRegistration.perform
             entity.components.set(Tiles3DCutEdgeComponent(edges: cutEdges))
         }
+        surfaceGeometry[uri] = .init(positions: vertices.map { vertex in
+            let p = entity.transform.matrix * SIMD4<Float>(vertex.position, 1)
+            return SIMD3(p.x, p.y, p.z)
+        }, indices: Array(indices))
+        if entity.isEnabled { surfaceRevision &+= 1 }
         clippedAway.remove(uri)
+        refreshSurfaceVisibility()
     }
 
     /// Leaves a tile loaded but drawing nothing, for when the outline has taken all of it.
@@ -909,7 +935,9 @@ final class Tiles3DLODManager {
         entity.model = nil
         entity.isEnabled = false
         entity.components.remove(Tiles3DCutEdgeComponent.self)
+        surfaceGeometry[uri] = nil
         clippedAway.insert(uri)
+        refreshSurfaceVisibility()
     }
 
     /// Shows exactly the tiles the traversal selected and hides the rest.
@@ -926,6 +954,7 @@ final class Tiles3DLODManager {
                 entity.isEnabled = shouldShow
             }
         }
+        refreshSurfaceVisibility()
         updateAttribution()
     }
 
@@ -1005,6 +1034,7 @@ final class Tiles3DLODManager {
             tileCopyrights.removeValue(forKey: uri)
             sourceGeometry.removeValue(forKey: uri)
             tileMeshes.removeValue(forKey: uri)
+            surfaceGeometry.removeValue(forKey: uri)
             gpuClipper?.discard(uri)
             clippedAway.remove(uri)
             selectedURIs.remove(uri)

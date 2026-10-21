@@ -137,12 +137,17 @@ GeoJSON polygons and `DioramaFeature(feature)` use the same holes-aware renderin
 GeoJSON wrapper names `DioramaAnnotation` and `AnnotationStyle` are now `DioramaFeature` and
 `DioramaFeatureStyle`; `DioramaAnnotation` now declares a custom SwiftUI label.
 
-These overlays conform to raster terrain triangles. Ground-relative placement over photorealistic
-3D Tiles is unavailable: unsupported overlays are omitted with a diagnostic instead of appearing on
-a false flat surface. Absolute-altitude placement remains available. Geometry updates are asynchronous
+These overlays conform to raster terrain triangles and the visible meshes of photorealistic 3D Tiles.
+Photorealistic placement uses the highest surface beneath each horizontal point, including rooftops;
+it cannot infer a street underneath a roof or bridge. Shapes split at triangle boundaries and streaming
+gaps, retaining their image UVs and altitude offsets. Missing surface leaves ground-dependent content
+absent rather than placing it at the datum. Absolute-altitude placement remains available without ground.
+LOD changes replace the surface queries and refresh content. Geometry updates are asynchronous
 and pending shapes are hidden until ready. Fill, color, opacity, selection, and image revision changes
 update existing resources without fetching terrain; shape, altitude, and stroke geometry changes
 rebuild overlay buffers. This does not establish a per-frame overlay performance guarantee.
+See [Photorealistic placement](Sources/Maquette/Maquette.docc/PhotorealisticPlacement.md) for streaming,
+occlusion, and placement limits.
 
 ## Control geographic navigation
 

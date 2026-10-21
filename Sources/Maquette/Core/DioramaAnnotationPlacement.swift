@@ -6,8 +6,6 @@ enum DioramaAnnotationPlacement {
     static func position(for feature: DioramaFeature, projection: any DioramaProjection,
                          configuration: DioramaConfiguration) -> SIMD3<Float>? {
         guard let descriptor = feature.viewAnnotation, descriptor.isValid else { return nil }
-        // Until visible photogrammetry queries ship, do not call its legacy datum fallback ground.
-        guard projection is TerrainProjection || feature.style.altitude == .absolute else { return nil }
         var coordinate = descriptor.coordinate
         if let terrain = projection as? TerrainProjection {
             guard abs(coordinate.latitude) <= 85.0511287798066 else { return nil }

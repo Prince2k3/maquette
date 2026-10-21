@@ -38,6 +38,7 @@ struct Tile3DLoader: Sendable {
         let mesh: Tiles3DMeshBuffer?
         /// The tile's own `asset.copyright`, for the on-screen attribution the provider requires.
         let copyright: String?
+        let surface: TerrainSolidGenerator.Buffers
     }
 
     private let logger = Logger(maquette: "Tile3DLoader")
@@ -164,7 +165,7 @@ struct Tile3DLoader: Sendable {
                 guard let source else { return nil }
                 let placeholder = ModelEntity()
                 placeholder.isEnabled = false
-                return LoadedTile(entity: placeholder, source: source, mesh: nil, copyright: parsed.copyright)
+                return LoadedTile(entity: placeholder, source: source, mesh: nil, copyright: parsed.copyright, surface: .init())
             }
             entityTransform = matrix_identity_float4x4
         } else {
@@ -196,6 +197,10 @@ struct Tile3DLoader: Sendable {
             entity.components.set(Tiles3DCutEdgeComponent(edges: geometry.cutEdges))
         }
 
-        return LoadedTile(entity: entity, source: source, mesh: buffer, copyright: parsed.copyright)
+        return LoadedTile(entity: entity, source: source, mesh: buffer, copyright: parsed.copyright,
+            surface: .init(positions: geometry.vertices.map {
+                let p = entityTransform * SIMD4<Float>($0.position, 1)
+                return SIMD3(p.x, p.y, p.z)
+            }, indices: geometry.indices))
     }
 }

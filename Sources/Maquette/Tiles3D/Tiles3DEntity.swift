@@ -15,6 +15,63 @@ class Tiles3DEntity: Entity {
     /// Scale converting real-world meters to diorama physical meters.
     private let geographicScale: Float
 
+    private(set) var surfaceDiagnostic: OverlayGeometryError?
+    private(set) var surfaceSnapshot: Tiles3DSurfaceSnapshot?
+    private(set) var surfaceRevision = 0
+    var onSurfaceChange: (@MainActor () -> Void)?
+    private var requestedSurfaceKey: SurfaceKey?
+    private var surfaceTask: Task<Void, Never>?
+    private struct SurfaceKey: Equatable {
+        var revision: Int
+        var datum: Float
+        var pan: SIMD2<Float>
+    }
+
+    /// Called synchronously for a visible-set mutation, before traversal can await another fetch.
+    private func invalidateSurface() {
+        guard requestedSurfaceKey != nil || surfaceSnapshot != nil else { return }
+        requestedSurfaceKey = nil
+        surfaceTask?.cancel()
+        surfaceSnapshot = nil
+        surfaceDiagnostic = nil
+        surfaceRevision &+= 1
+        onSurfaceChange?()
+    }
+
+    /// Index only when visible topology or its physical frame changes. Invalidate synchronously
+    /// before the asynchronous build, so no old LOD/datum answer can leak into current content.
+    private func refreshSurface() {
+        let key = SurfaceKey(revision: lodManager.surfaceRevision, datum: Float(groundDatumElevation ?? 0), pan: panOffset)
+        guard key != requestedSurfaceKey else { return }
+        requestedSurfaceKey = key
+        surfaceTask?.cancel()
+        surfaceSnapshot = nil
+        surfaceDiagnostic = nil
+        surfaceRevision &+= 1
+        onSurfaceChange?()
+        let geometry = lodManager.visibleSurfaceGeometry, scale = geographicScale
+        let worker = Task.detached(priority: .userInitiated) {
+            try Tiles3DSurfaceSnapshot(geometry: geometry, scale: scale, datum: key.datum, pan: key.pan)
+        }
+        surfaceTask = Task { [weak self] in
+            do {
+                let snapshot = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+                guard !Task.isCancelled, let self, self.requestedSurfaceKey == key else { return }
+                self.surfaceSnapshot = snapshot
+                self.surfaceRevision &+= 1
+                self.logger.debug("Indexed visible surface: \(snapshot.buffers.indices.count / 3) triangles")
+                self.onSurfaceChange?()
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError), let self, self.requestedSurfaceKey == key else { return }
+                self.surfaceDiagnostic = error as? OverlayGeometryError ?? .invalidSurface
+                self.logger.warning("Photorealistic placement unavailable: \(String(describing: error), privacy: .public)")
+                self.onSurfaceChange?()
+            }
+        }
+    }
+
+    func waitForSurface() async { await surfaceTask?.value }
+
     /// Throttle interval between LOD updates.
     private static let lodUpdateInterval: TimeInterval = 0.2
     private var lastLODUpdateTime: Date?
@@ -139,6 +196,7 @@ class Tiles3DEntity: Entity {
         self.panRange = max(0, panRange)
         super.init()
         self.name = "Tiles3D"
+        lodManager.onSurfaceInvalidated = { [weak self] in self?.invalidateSurface() }
         self.scale = SIMD3<Float>(repeating: geographicScale)
         self.tileContainer.name = Self.containerName
         addChild(tileContainer)
@@ -485,6 +543,7 @@ class Tiles3DEntity: Entity {
         updateCutWall()
         anchorGround()
         updateBase()
+        refreshSurface()
 
         // The cull column has just moved with the outline, so the traversal has a different answer
         // than it did — but nothing else will ask for it. Level of detail is driven from camera
@@ -531,12 +590,16 @@ class Tiles3DEntity: Entity {
         screenHeight: Float,
         fov: Float
     ) async -> Tiles3DLODManager.Refinement {
-        await lodManager.update(
+        let result = await lodManager.update(
             parentEntity: tileContainer,
             cameraPosition: cameraPosition,
             screenHeight: screenHeight,
             fov: fov
         )
+        measureVisibleGeometry()
+        anchorGround()
+        refreshSurface()
+        return result
     }
 
     /// Requests a throttled LOD update. Safe to call every frame — internally
@@ -586,8 +649,6 @@ class Tiles3DEntity: Entity {
                     screenHeight: viewpoint.screenHeight,
                     fov: viewpoint.fov
                 )
-                self.measureVisibleGeometry()
-                self.anchorGround()
                 self.updateBase()
                 self.updateCutWall()
 

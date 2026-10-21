@@ -110,7 +110,9 @@ struct DioramaSelectionTests {
         let initial = DioramaContentGroup {
             DioramaMarker("Old title", coordinate: coordinate, id: "stable").tag(Place.summit)
         }
-        let proxy = DioramaProxy(configuration: configuration)
+        var surfaceProjection = EllipsoidProjection(center: configuration.center, radiusMeters: 1500, physicalSize: 0.8)
+        surfaceProjection.groundSampler = { _, _ in 0 }
+        let proxy = DioramaProxy(configuration: configuration, projection: surfaceProjection)
         root.applyContent(initial, using: proxy, physicalSize: 0.8)
         let original = try #require(root.markerEntities["stable"])
         #expect(original.scale.x == 1.5)
@@ -128,9 +130,12 @@ struct DioramaSelectionTests {
             panOffset: SIMD2(2, 0)
         )
         root.applyContent(changed, using: DioramaProxy(configuration: configuration, projection: offChunk), physicalSize: 0.8)
-        #expect(root.markerEntities.isEmpty)
+        #expect(root.markerEntities["stable"] === original)
+        #expect(!original.isEnabled)
         #expect(state.value == .summit)
         root.applyContent(changed, using: proxy, physicalSize: 0.8)
+        #expect(root.markerEntities["stable"] === original)
+        #expect(original.isEnabled)
         #expect(try #require(root.markerEntities["stable"]).scale.x == 1.5)
     }
 }

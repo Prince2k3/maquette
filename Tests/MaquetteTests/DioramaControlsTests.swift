@@ -204,7 +204,9 @@ struct DioramaControlsTests {
         model.setContent(DioramaContentGroup { DioramaMarker("Fit", coordinate: Self.home.center, id: "fit") })
         guard case .accepted(let fit) = proxy.fit(.contentIDs(["fit"])) else { Issue.record("Expected fit"); return }
         await model.cameraFitTask?.value
-        #expect(proxy.result(for: fit) == .completed(fit, model.resolvedCamera))
+        // This provider deliberately supplies no drawable ground. Content IDs resolve, but a
+        // ground-clamped point cannot manufacture a camera target at the model's datum.
+        #expect(proxy.result(for: fit) == .requiresGroundNavigation(fit))
         #expect(model.store.loadGeneration == generation)
         #expect(await provider.requestCount() == 1)
     }

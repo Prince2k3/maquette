@@ -96,11 +96,13 @@ SwiftUI point. It has no effect on screen labels. Up to 256 attachments are host
 64-label overlap layout does not apply to a volume. Without a head pose, volumetric annotations
 do not promise priority-based screen overlap avoidance.
 
-Ground-clamped and ground-relative annotations over photorealistic 3D Tiles are not supported
-yet and are omitted. An absolute-altitude label remains available with
-`.altitudeReference(.absolute)` and an altitude on its coordinate. Screen labels over 3D Tiles
-also need `.annotationOcclusion(.alwaysVisible)` until photogrammetry occlusion queries are
-available. visionOS absolute labels can use native depth occlusion.
+Ground-clamped and ground-relative annotations over photorealistic 3D Tiles use the highest visible
+mesh beneath the coordinate. A rooftop or bridge is a surface; placement does not infer the road
+underneath it. Anchors with no resident surface stay hidden and return when tiles provide coverage.
+Screen labels use the visible mesh for terrain occlusion, including vertical faces; visionOS labels
+use native depth testing. An absolute-altitude label remains available without ground with
+`.altitudeReference(.absolute)` and an altitude on its coordinate. See <doc:PhotorealisticPlacement>
+for streaming and placement limits.
 
 ## Keep places accessible beyond the scene
 

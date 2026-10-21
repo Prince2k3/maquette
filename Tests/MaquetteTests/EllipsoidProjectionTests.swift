@@ -82,12 +82,12 @@ struct EllipsoidProjectionTests {
         #expect(abs(projection.y(forElevation: 112) - 100 * projection.geographicScale) < 1e-6)
     }
 
-    @Test("Without a ground sampler a coordinate rests on the datum")
-    func groundDefaultsToTheDatum() throws {
+    @Test("Missing photogrammetry has no invented datum surface")
+    func missingSurfaceIsAbsent() {
         let projection = makeProjection()
-        // Deliberately a floor rather than a guess: photogrammetry is triangle soup, so until
-        // something can raycast it, a pin lands at the tray's top rather than vanishing.
-        #expect(try #require(projection.position(for: Coordinate(Self.center))).y == 0)
+        #expect(projection.position(for: Coordinate(Self.center)) == nil)
+        #expect(projection.position(for: Coordinate(Self.center), altitude: .relativeToGround) == nil)
+        #expect(projection.position(for: Coordinate(Self.center), altitude: .absolute) != nil)
     }
 
     @Test("A ground sampler is used when one is supplied")

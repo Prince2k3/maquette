@@ -357,7 +357,7 @@ struct DioramaProxy: Sendable {
     ///     applied before anything has loaded gets — falls back to an ``EllipsoidProjection`` built
     ///     from the configuration alone. That is the same frame the photorealistic path uses and
     ///     needs nothing but a centre and a scale, so it is a correct horizontal answer rather than
-    ///     a placeholder; only the height is unknown, and it resolves to the datum.
+    ///     a placeholder; surface-dependent placement remains unavailable until geometry arrives.
     public init(configuration: DioramaConfiguration, projection: (any DioramaProjection)? = nil) {
         self.configuration = configuration
         self.physicalSize = configuration.physicalSize
@@ -366,6 +366,16 @@ struct DioramaProxy: Sendable {
             radiusMeters: configuration.radiusMeters,
             physicalSize: configuration.physicalSize
         )
+    }
+
+    /// Capabilities describe the resident query implementation, never complete geographic coverage.
+    var canClampToSurface: Bool {
+        if let ellipsoid = projection as? EllipsoidProjection { return ellipsoid.surface?.isEmpty == false || ellipsoid.groundSampler != nil }
+        return projection is TerrainProjection
+    }
+    var canDrapeAreas: Bool {
+        if let ellipsoid = projection as? EllipsoidProjection { return ellipsoid.surface?.isEmpty == false }
+        return projection is TerrainProjection
     }
 
     /// Converts a geographic coordinate to a 3D position in the diorama's local coordinate space.

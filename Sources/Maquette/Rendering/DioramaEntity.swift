@@ -265,17 +265,17 @@ class DioramaEntity: Entity {
     }
 
     private func reconcilePins(_ plans: [OverlayPlan], using proxy: DioramaProxy, physicalSize: Float) {
-        var nextApplied: [String: (annotation: DioramaFeature, coordinate: Coordinate)] = [:]
+        var nextApplied = appliedPins
+        var active = Set<String>()
 
         for plan in plans {
             guard case .pin(let key, let coordinate, let annotation) = plan else { continue }
-            nextApplied[key] = (annotation, coordinate)
+            active.insert(key)
 
-            // A pin the diorama has no ground for right now is culled — it may pan back in later,
-            // at which point it is recreated from the same plan.
+            // Residency and the outline can temporarily hide a pin without changing content
+            // identity. Keep its last applied style until it can actually be rendered again.
             guard let position = proxy.position(for: coordinate, altitude: annotation.style.altitude) else {
-                markerEntities[key]?.removeFromParent()
-                markerEntities[key] = nil
+                markerEntities[key]?.isEnabled = false
                 continue
             }
 
@@ -288,6 +288,7 @@ class DioramaEntity: Entity {
                 let marker = MarkerEntity(tint: annotation.style.tint, physicalSize: physicalSize)
                 addMarker(marker, identifier: key, position: position)
             }
+            nextApplied[key] = (annotation, coordinate)
             let identity = DioramaMarkerIdentity(
                 annotationID: annotation.selectionAnnotationID ?? annotation.id, tag: annotation.selectionTag
             )
@@ -299,11 +300,11 @@ class DioramaEntity: Entity {
         }
 
         // Identities that vanished from the content take their entities with them.
-        for (key, marker) in markerEntities where nextApplied[key] == nil {
+        for (key, marker) in markerEntities where !active.contains(key) {
             marker.removeFromParent()
             markerEntities[key] = nil
         }
-        appliedPins = nextApplied
+        appliedPins = nextApplied.filter { active.contains($0.key) }
     }
 
     private func applyRoutePreview(

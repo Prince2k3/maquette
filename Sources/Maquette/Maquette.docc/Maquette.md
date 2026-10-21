@@ -92,6 +92,7 @@ DioramaView(
 ### Data sources
 
 - <doc:Providers>
+- <doc:PhotorealisticPlacement>
 - <doc:Attribution>
 - ``ImagerySource``
 - ``ElevationSource``

@@ -1222,6 +1222,12 @@ final class DioramaStore {
             guard let self, self.loadGeneration == generation else { return }
             self.tilesAttribution = text
         }
+        tiles3DEntity.onSurfaceChange = { [weak self, weak tiles3DEntity] in
+            guard let self, self.loadGeneration == generation,
+                  let tiles3DEntity, (self.dioramaEntity as? DioramaEntity)?.tiles3D === tiles3DEntity else { return }
+            self.refreshPhotorealisticDatum()
+            self.applyContent(self.appliedContent)
+        }
         // The same two operations the entity itself applies — rotate into the local ENU frame about
         // the centre, then scale — so a coordinate lands in the frame the geometry arrived in.
         projection = EllipsoidProjection(
@@ -1239,10 +1245,11 @@ final class DioramaStore {
     /// rebuilding it.
     private func refreshPhotorealisticDatum() {
         guard var ellipsoid = projection as? EllipsoidProjection,
-              let datum = (dioramaEntity as? DioramaEntity)?.tiles3D?.groundDatumElevation
+              let tiles = (dioramaEntity as? DioramaEntity)?.tiles3D
         else { return }
-        guard datum != ellipsoid.datumElevation else { return }
-        ellipsoid.datumElevation = datum
+        ellipsoid.datumElevation = tiles.groundDatumElevation ?? 0
+        ellipsoid.panOffset = panOffset
+        ellipsoid.surface = tiles.surfaceSnapshot?.surface
         projection = ellipsoid
     }
 

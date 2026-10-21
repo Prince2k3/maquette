@@ -70,12 +70,17 @@ final class OrbitAnnotationCoordinator {
                   let ray = context.ray(through: screenPoint, in: .local, to: .scene),
                   simd_dot(scenePoint - ray.origin, ray.direction) > 0 else { continue }
             if descriptor.occlusion == .terrain {
-                guard let terrain = root.terrain, indexedTerrain === terrain else { continue }
-                let buffers = [terrain.surfaceBuffers, terrain.wallBuffers, terrain.bottomBuffers].compactMap { $0 }
-                guard indices.count == buffers.count else { continue }
                 let origin = root.convert(position: ray.origin, from: nil)
                 let tolerance = model.store.configuration.physicalSize * 0.0002
-                if zip(indices, buffers).contains(where: { $0.0.occludes(from: origin, to: local, positions: $0.1.positions, tolerance: tolerance) }) { continue }
+                if let terrain = root.terrain {
+                    guard indexedTerrain === terrain else { continue }
+                    let buffers = [terrain.surfaceBuffers, terrain.wallBuffers, terrain.bottomBuffers].compactMap { $0 }
+                    guard indices.count == buffers.count else { continue }
+                    if zip(indices, buffers).contains(where: { $0.0.occludes(from: origin, to: local, positions: $0.1.positions, tolerance: tolerance) }) { continue }
+                } else {
+                    guard let snapshot = root.tiles3D?.surfaceSnapshot else { continue }
+                    if snapshot.occlusion.occludes(from: origin, to: local, tolerance: tolerance) { continue }
+                }
             }
             let frame = DioramaAnnotationLayout.frame(at: screenPoint, size: record.measuredSize,
                 anchorX: descriptor.anchor.x, anchorY: descriptor.anchor.y, offset: descriptor.offset)

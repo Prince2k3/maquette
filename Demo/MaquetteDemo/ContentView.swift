@@ -1,4 +1,5 @@
 import CoreLocation
+import CoreGraphics
 import Maquette
 import SwiftUI
 
@@ -403,6 +404,9 @@ struct ContentView: View {
             cameraPosition: $position,
             selection: $selectedAnnotation
         ) {
+            if ["photoreal", "photoreal-trail", "photoreal-pan"].contains(preset.id) {
+                photorealPlacementContent
+            }
             if preset.id == "camera" {
                 DioramaAnnotation("Camera viewpoint", coordinate: Turf.destination(from: preset.region.center, meters: annotationMoved ? 250 : 0, bearing: 0), id: "camera-viewpoint") {
                     StatefulAnnotationCard(selected: selectedAnnotation == .cameraLabel)
@@ -493,6 +497,65 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    /// All six content types use the same streamed surface; gaps remain empty until tiles arrive.
+    @DioramaContentBuilder private var photorealPlacementContent: some DioramaContent {
+        let center = preset.region.center
+        DioramaMarker("Visible mesh", coordinate: preset.region.center, id: "mesh-pin")
+            .tint(.orange)
+        DioramaMarker("Mesh +100 m", coordinate: center.at(altitude: 100), tint: .pink,
+                      altitude: .relativeToGround, id: "mesh-offset-pin")
+        DioramaAnnotation("Surface anchor", coordinate: Turf.destination(from: center, meters: 100, bearing: 0), id: "mesh-label") {
+            Text("Visible mesh anchor")
+                .font(.caption.weight(.semibold))
+                .padding(8)
+                .background(.regularMaterial, in: Capsule())
+        }
+        .annotationOcclusion(.alwaysVisible)
+        DioramaPolyline(coordinates: [
+            Turf.destination(from: center, meters: 450, bearing: 240),
+            center,
+            Turf.destination(from: center, meters: 450, bearing: 60)
+        ], id: "mesh-line")
+        .stroke(.yellow, style: DioramaStrokeStyle(width: .geographicMeters(12), lineCap: .round))
+        DioramaPolygon(Polygon([
+            Turf.destination(from: center, meters: 150, bearing: 120),
+            Turf.destination(from: center, meters: 150, bearing: 180),
+            Turf.destination(from: center, meters: 150, bearing: 240)
+        ]), id: "mesh-area")
+        .fill(.green.opacity(0.3))
+        .stroke(.green, width: .geographicMeters(8))
+        DioramaCircle(center: Turf.destination(from: center, meters: 250, bearing: 90), radius: 100, id: "mesh-circle")
+            .fill(.cyan.opacity(0.3))
+            .stroke(.cyan, width: .geographicMeters(8))
+        if let image = Self.meshSurveyImage {
+            DioramaImageOverlay(image: image, bounds: GeographicBounds(
+                west: center.longitude - 0.0025, south: center.latitude + 0.0015,
+                east: center.longitude - 0.0015, north: center.latitude + 0.0025
+            ), id: "mesh-image").opacity(0.6)
+        }
+    }
+
+    /// A tiny north-up survey grid makes draped UV orientation visible without another fetch.
+    private static let meshSurveyImage: DioramaImageResource? = {
+        guard let context = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8,
+                                      bytesPerRow: 256, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.setFillColor(CGColor(red: 0.85, green: 0.3, blue: 0.85, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+        context.setStrokeColor(CGColor(gray: 1, alpha: 1))
+        context.setLineWidth(2)
+        for coordinate in stride(from: 0, through: 64, by: 16) {
+            context.move(to: CGPoint(x: coordinate, y: 0)); context.addLine(to: CGPoint(x: coordinate, y: 64))
+            context.move(to: CGPoint(x: 0, y: coordinate)); context.addLine(to: CGPoint(x: 64, y: coordinate))
+        }
+        context.strokePath()
+        context.setFillColor(CGColor(red: 1, green: 0.8, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 48, width: 16, height: 16))
+        guard let image = context.makeImage() else { return nil }
+        return DioramaImageResource(id: "demo-mesh-survey", revision: "1", image: image,
+                                    attribution: "Maquette demo survey grid")
+    }()
 
     private var buildingsToggle: some View {
         Toggle("Buildings", isOn: $buildingsVisible)

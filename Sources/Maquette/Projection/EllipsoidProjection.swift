@@ -29,16 +29,9 @@ struct EllipsoidProjection: DioramaProjection {
     /// How far the model has been slid beneath its outline, in diorama metres.
     public var panOffset: SIMD2<Float> = .zero
 
-    /// The height of the model's surface beneath a drawn point, in diorama metres, when something
-    /// can answer that.
-    ///
-    /// Photogrammetry is triangle soup rather than a height field, so there is no cheap analytic
-    /// answer the way there is on the raster path — finding the surface means intersecting a
-    /// vertical ray with the loaded meshes. Until something supplies that, a coordinate resolves to
-    /// the datum: the lowest ground on screen, which is the tray's top and the one height the model
-    /// is guaranteed to reach. That is deliberately a floor rather than a guess — a pin at street
-    /// level in San Francisco lands in the street, and one over Coit Tower lands at its foot rather
-    /// than halfway up it.
+    /// Immutable index of the actual enabled LOD triangles, in the content's physical frame.
+    var surface: OverlaySurfaceMesh?
+    /// Optional test/custom sampler; absence never implies a datum-height surface.
     public var groundSampler: (@Sendable (Float, Float) -> Float?)?
 
     public init(
@@ -62,7 +55,7 @@ struct EllipsoidProjection: DioramaProjection {
     }
 
     public func surfaceY(atX x: Float, z: Float) -> Float? {
-        groundSampler?(x, z) ?? 0
+        surface?.surfaceY(atX: x, z: z) ?? groundSampler?(x, z)
     }
 
     public func y(forElevation meters: Double) -> Float {

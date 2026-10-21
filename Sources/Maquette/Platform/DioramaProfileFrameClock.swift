@@ -10,18 +10,22 @@ import AppKit
 /// that RealityKit presented a distinct frame. Never queue a burst of stale input callbacks.
 @MainActor
 final class DioramaProfileFrameClock: NSObject {
-    var onFrame: (@MainActor () -> Void)?
+    // Return true only when the waiting tour needs to end its phase.
+    var onFrame: (@MainActor () -> Bool)?
     var onSceneFrame: (@MainActor () -> Void)?
-    let usesSceneUpdates = ProcessInfo.processInfo.environment["MAQUETTE_PROFILE_DRIVER"] != "displayLink"
+    let usesSceneUpdates: Bool
     let frames: AsyncStream<Void>
     private let continuation: AsyncStream<Void>.Continuation
     private var displayLink: CADisplayLink?
+    private var isStopped = false
+    private(set) var completionWakeups = 0
     private var lastCallbackTime: CFTimeInterval?
     private(set) var sourceIntervals: [Double] = []
     private(set) var periods: [Double] = []
     private(set) var lateness: [Double] = []
 
-    override init() {
+    init(sceneUpdates: Bool = ProcessInfo.processInfo.environment["MAQUETTE_PROFILE_DRIVER"] != "displayLink") {
+        usesSceneUpdates = sceneUpdates
         let stream = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         frames = stream.stream
         continuation = stream.continuation
@@ -41,17 +45,23 @@ final class DioramaProfileFrameClock: NSObject {
         recordCallback()
         sourceIntervals.append((link.targetTimestamp - link.timestamp) * 1000)
         lateness.append(max(0, CACurrentMediaTime() - link.targetTimestamp) * 1000)
-        onFrame?()
-        continuation.yield(())
+        deliverInput()
     }
 
     func sceneFrame(deltaTime: TimeInterval) {
+        guard !isStopped else { return }
         onSceneFrame?()
         guard usesSceneUpdates else { return }
         recordCallback()
         sourceIntervals.append(deltaTime * 1000)
-        onFrame?()
-        continuation.yield(())
+        deliverInput()
+    }
+
+    private func deliverInput() {
+        if onFrame?() == true {
+            completionWakeups += 1
+            continuation.yield(())
+        }
     }
 
     private func recordCallback() {
@@ -61,6 +71,8 @@ final class DioramaProfileFrameClock: NSObject {
     }
 
     func stop() {
+        guard !isStopped else { return }
+        isStopped = true
         onFrame = nil
         onSceneFrame = nil
         displayLink?.invalidate()

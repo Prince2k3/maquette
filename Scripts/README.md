@@ -92,7 +92,9 @@ use consecutive monotonic timestamps; the source's target/frame interval is logg
 with the same excursion and period as the default sine trajectory. Keep both results: the sine
 tour deliberately slows through the existing small-motion deadband at each turnaround.
 Preparation p50/p95/max, deadband skips, queued requests and geometry/refit signposts help classify
-publication shortfalls. See [[map-ground-update-cadence-investigation]] for the captures. `missed` is the shortfall from 600 nominal callbacks,
+publication shortfalls. The phase waiter wakes only at completion (`completionWakeups=1`), rather
+than scheduling another main-actor task on every scene update. `OverlayInstall` and `TerrainPublish`
+signposts separate actual buffer publication from geometry-to-main-actor scheduling delay. See [[map-ground-update-cadence-investigation]] for the captures. `missed` is the shortfall from 600 nominal callbacks,
 not a count of separately measured deadline violations. Callbacks and record snapshots do not
 establish presented-frame cadence; the prior timer-driven stress captures remain historical data.
 Deactivating the scene cancels the tour and reverses outstanding movement; reactivation restarts it.

@@ -48,6 +48,78 @@ enum OverlayTriangleIntersection {
 
     static func clip(_ source: OverlayTriangle, a: SIMD2<Double>, b: SIMD2<Double>, c: SIMD2<Double>, d: SIMD2<Double>? = nil,
                      epsilon: Double, work: inout OverlayWork) throws -> Polygon {
+        // A terrain-clamped ribbon normally carries constant UV/altitude attributes. Moving
+        // those through every intermediate cut wastes most of each clipping vertex's storage.
+        if source.a.uv == source.b.uv, source.a.uv == source.c.uv,
+           source.a.altitude == source.b.altitude, source.a.altitude == source.c.altitude {
+            return try clipPoints(source, a: a, b: b, c: c, d: d, epsilon: epsilon, work: &work)
+        }
+        return try clipGeneral(source, a: a, b: b, c: c, d: d, epsilon: epsilon, work: &work)
+    }
+
+    private static func clipPoints(_ source: OverlayTriangle, a: SIMD2<Double>, b: SIMD2<Double>, c: SIMD2<Double>, d: SIMD2<Double>? = nil,
+                     epsilon: Double, work: inout OverlayWork) throws -> Polygon {
+        let area = OverlayMath.cross(b - a, c - a)
+        guard abs(area) > epsilon * epsilon else { return Polygon() }
+        let sign = area > 0 ? 1.0 : -1.0
+        return try withUnsafeTemporaryAllocation(of: SIMD2<Double>.self, capacity: 16) { storage in
+            storage.initialize(repeating: .zero)
+            defer { storage.deinitialize() }
+            var input = storage.baseAddress!, output = storage.baseAddress!.advanced(by: 8)
+            var count = 0
+            func append(_ vertex: SIMD2<Double>, to buffer: UnsafeMutablePointer<SIMD2<Double>>, count: inout Int) {
+                if count > 0, simd_distance(buffer[count - 1], vertex) <= epsilon { return }
+                // A triangle/rectangle intersection has at most seven corners.
+                precondition(count < 8)
+                buffer[count] = vertex
+                count += 1
+            }
+            append(source.a.point, to: input, count: &count)
+            append(source.b.point, to: input, count: &count)
+            append(source.c.point, to: input, count: &count)
+            let edgeCount = d == nil ? 3 : 4
+            for edge in 0..<edgeCount {
+                guard count >= 3 else { return Polygon() }
+                let origin = edge == 0 ? a : edge == 1 ? b : edge == 2 ? c : d!
+                let direction = (edge == 0 ? b : edge == 1 ? c : edge == 2 ? (d ?? a) : a) - origin
+                var sides = SIMD8<Double>.zero
+                var allInside = true, allOutside = true
+                for i in 0..<count {
+                    try work.spend()
+                    let side = sign * OverlayMath.cross(direction, input[i] - origin)
+                    sides[i] = side
+                    allInside = allInside && side >= 0
+                    allOutside = allOutside && side < 0
+                }
+                if allOutside { return Polygon() }
+                if allInside {
+                    while count > 1, simd_distance(input[0], input[count - 1]) <= epsilon { count -= 1 }
+                    continue
+                }
+                var outputCount = 0
+                var previous = input[count - 1]
+                var previousSide = sides[count - 1]
+                for i in 0..<count {
+                    let current = input[i], side = sides[i]
+                    if (side >= 0) != (previousSide >= 0) {
+                        append(previous + (current - previous) * (previousSide / (previousSide - side)), to: output, count: &outputCount)
+                    }
+                    if side >= 0 { append(current, to: output, count: &outputCount) }
+                    previous = current; previousSide = side
+                }
+                while outputCount > 1, simd_distance(output[0], output[outputCount - 1]) <= epsilon { outputCount -= 1 }
+                swap(&input, &output)
+                count = outputCount
+            }
+            var polygon = Polygon()
+            for i in 0..<count { polygon[i] = .init(point: input[i], uv: source.a.uv, altitude: source.a.altitude) }
+            polygon.count = count
+            return polygon
+        }
+    }
+
+    private static func clipGeneral(_ source: OverlayTriangle, a: SIMD2<Double>, b: SIMD2<Double>, c: SIMD2<Double>, d: SIMD2<Double>? = nil,
+                     epsilon: Double, work: inout OverlayWork) throws -> Polygon {
         let area = OverlayMath.cross(b - a, c - a)
         guard abs(area) > epsilon * epsilon else { return Polygon() }
         let sign = area > 0 ? 1.0 : -1.0

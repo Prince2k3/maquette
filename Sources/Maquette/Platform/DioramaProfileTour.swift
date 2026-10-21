@@ -73,7 +73,7 @@ extension OrbitDioramaModel {
                     let now = clock.now
                     let elapsed = start.duration(to: now)
                     let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-                    guard seconds < 10 else { return }
+                    guard seconds < 10 else { return true }
                     if let renderer {
                         for record in renderer.records.values {
                             overlaySamples += 1
@@ -107,6 +107,7 @@ extension OrbitDioramaModel {
                     last = now; tick += 1
                     let inputDuration = inputStart.duration(to: clock.now)
                     inputExecutionMs.append(Double(inputDuration.components.seconds) * 1000 + Double(inputDuration.components.attoseconds) / 1e15)
+                    return false
                 }
                 while let _ = await frames.next() {
                     try Task.checkCancellation()
@@ -118,6 +119,7 @@ extension OrbitDioramaModel {
                     return
                 }
                 frameClock.stop()
+                logger.notice("PROFILE completionWakeups=\(frameClock.completionWakeups) phase=\(String(describing: name), privacy: .public)")
                 logger.notice("PROFILE sceneFrames=\(sceneFrames) distinctGroundSceneFrames=\(distinctSceneFrames) driver=\(frameClock.usesSceneUpdates ? "scene" : "displayLink", privacy: .public) phase=\(String(describing: name), privacy: .public)")
                 logger.notice("PROFILE thresholdSkips=\(self.store.profileGroundThresholdSkips - skipsAtStart) deferrals=\(self.store.profileGroundDeferrals - deferralsAtStart) phase=\(String(describing: name), privacy: .public)")
                 logger.notice("PROFILE distinctGroundBins=\(distinctSceneBins.map(String.init).joined(separator: ","), privacy: .public) phase=\(String(describing: name), privacy: .public)")

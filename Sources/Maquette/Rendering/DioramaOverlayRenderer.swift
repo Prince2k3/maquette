@@ -70,6 +70,7 @@ import SwiftUI
     #if MAQUETTE_PROFILING
     private nonisolated static let profileSignposter = OSSignposter(logger: Logger(maquette: "PointsOfInterest"))
     private var loggedPanInvalidations = 0
+    private var profileReconciliationPriorities: Set<UInt8> = []
     private var profileFrameStart = ContinuousClock.now
     private(set) var profileFrameDurations: [Double] = []
     #endif
@@ -237,6 +238,12 @@ import SwiftUI
                 geometryTaskCount += 1
             }
             record.task = Task { [weak self, weak record] in
+                #if MAQUETTE_PROFILING
+                let priority = Task.currentPriority.rawValue
+                if let self, self.profileReconciliationPriorities.insert(priority).inserted {
+                    Self.logger.notice("PROFILE reconciliationPriority=\(priority)")
+                }
+                #endif
                 do {
                     // Cancellation belongs to the active-key job cache: removing one of several
                     // identical footprints must not cancel geometry still needed by another.
@@ -282,10 +289,21 @@ import SwiftUI
         profileFrameDurations.append(profileFrameStart.duration(to: .now).milliseconds)
         #endif
         panPresentationCount += 1
+        #if MAQUETTE_PROFILING
+        let publish = Self.profileSignposter.beginInterval("TerrainPublish", id: Self.profileSignposter.makeSignpostID())
+        let completion = root?.finishPanPresentation()
+        Self.profileSignposter.endInterval("TerrainPublish", publish)
+        completion?(true)
+        #else
         root?.finishPanPresentation()?(true)
+        #endif
     }
 
     private func install(_ layers: [DioramaOverlayLayer], on record: Record, key: Key) throws {
+        #if MAQUETTE_PROFILING
+        let interval = Self.profileSignposter.beginInterval("OverlayInstall", id: Self.profileSignposter.makeSignpostID())
+        defer { Self.profileSignposter.endInterval("OverlayInstall", interval) }
+        #endif
         let kinds = Set(layers.map(\.kind))
         for (kind, part) in record.layers where !kinds.contains(kind) { part.model.removeFromParent(); record.layers[kind] = nil }
         for layer in layers {

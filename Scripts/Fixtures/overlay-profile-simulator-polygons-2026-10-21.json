@@ -1,0 +1,3002 @@
+{
+  "baseCommit": "a7d58dc",
+  "target": "60 distinct scene-observed ground changes in each second",
+  "strictSimulatorAcceptance": false,
+  "agentChangedPowerSettings": false,
+  "userChangedLowPowerMode": true,
+  "initialPowerProfiles": "Battery Power:\n Sleep On Power Button 1\n powermode            1\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             0\n hibernatefile        /var/vm/sleepimage\n displaysleep         3\n womp                 0\n networkoversleep     0\n sleep                3\n tcpkeepalive         1\n lessbright           1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n powermode            0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                0\n tcpkeepalive         1\n disksleep            10\n",
+  "postUserChangePowerProfiles": "Battery Power:\n Sleep On Power Button 1\n powermode            0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             0\n hibernatefile        /var/vm/sleepimage\n displaysleep         3\n womp                 0\n networkoversleep     0\n sleep                3\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n powermode            0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                0\n tcpkeepalive         1\n disksleep            10\n",
+  "sourceChecksums": {
+    "Sources/Maquette/Geometry/OverlayConvexArea.swift": "7688ce2b03bb2de20070b4ea18e7e89bbf94ecc362bef5baa1bbcc80448ac775",
+    "Sources/Maquette/Geometry/OverlaySurfaceMesh.swift": "7d993e09f786d81740cba5e739d6c5335c15dcf874edc18d02d674f75e7aa20b",
+    "Sources/Maquette/Rendering/DioramaOverlayGeometry.swift": "4f32eb89fb2115dfcf0ca2a992005be2e55193fbd9a7ec5d1840dc410f9d759d",
+    "Tests/MaquetteTests/OverlayConvexAreaTests.swift": "571c33581479df1795fc79fdb3a219508946a8f246b6d2dbc2fadd575bd8d5f2",
+    "Tests/MaquetteTests/OverlaySurfaceGeometryTests.swift": "7a4a310a597386e3898c2e85613d91319aa4309ac22748bdc167f695857f6b97",
+    "Tests/MaquetteTests/DioramaOverlayRenderingTests.swift": "9bcc67e958c3b371967803ec0bd7059ca862f584b10cfed61123fe096a74fb95",
+    "Sources/Maquette/Platform/DioramaProfileTour.swift": "bc0936978791e54d488eb163a16706770ec0c696b7a023c5d17a76e7ea54f5f6",
+    "Demo/MaquetteDemo/PerformanceWorkload.swift": "5865533776b8176cc4fa0f7d69333cb73a56cf7e30d6ea3d51ba59658fa963db"
+  },
+  "captures": [
+    {
+      "name": "before",
+      "instrument": "Time Profiler + Points of Interest",
+      "powerContext": "Session began on battery with Low Power Mode enabled. Last run precedes the user report of disabling it; exact transition timing is not established.",
+      "data": {
+        "prefix": "/tmp/maquette-poly60-before",
+        "pid": "93424",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 587,
+            "missed": 13,
+            "maxInputGapMs": 56.233708,
+            "overlaySamples": 14675,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 14700,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 588,
+            "meshUploads": 14700,
+            "completionWakeups": 1,
+            "sceneFrames": 587,
+            "distinctGroundSceneFrames": 550,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              56,
+              57,
+              49,
+              58,
+              56,
+              54,
+              60,
+              53,
+              54,
+              53
+            ],
+            "sourceFrameIntervalP50Ms": 16.670834,
+            "callbackPeriodP50Ms": 16.691917,
+            "callbackPeriodMaxMs": 56.2365,
+            "prepareP50Ms": 10.431708,
+            "prepareP95Ms": 15.011541,
+            "prepareMaxMs": 33.839625,
+            "inputExecutionP95Ms": 0.016583,
+            "inputExecutionMaxMs": 4.283917,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 588,
+                "p50": 0.764,
+                "p95": 0.915083,
+                "max": 0.984625
+              },
+              "OverlayGeometry": {
+                "count": 14700,
+                "p50": 2.28,
+                "p95": 4.499125,
+                "max": 8.087958
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 14700,
+                "p50": 0.131834,
+                "p95": 0.192625,
+                "max": 0.822958
+              },
+              "TerrainPublish": {
+                "count": 588,
+                "p50": 0.432458,
+                "p95": 0.520209,
+                "max": 0.825166
+              }
+            }
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 371,
+            "missed": 229,
+            "maxInputGapMs": 36.311334,
+            "overlaySamples": 9275,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 9250,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 370,
+            "meshUploads": 9250,
+            "completionWakeups": 1,
+            "sceneFrames": 371,
+            "distinctGroundSceneFrames": 369,
+            "driver": "scene",
+            "thresholdSkips": 1,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              38,
+              36,
+              40,
+              38,
+              37,
+              39,
+              35,
+              35,
+              35,
+              36
+            ],
+            "sourceFrameIntervalP50Ms": 33.3285,
+            "callbackPeriodP50Ms": 33.301958,
+            "callbackPeriodMaxMs": 36.311167,
+            "prepareP50Ms": 13.465291,
+            "prepareP95Ms": 15.586375,
+            "prepareMaxMs": 23.342125,
+            "inputExecutionP95Ms": 2.31125,
+            "inputExecutionMaxMs": 2.747583,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 370,
+                "p50": 0.618875,
+                "p95": 0.733291,
+                "max": 0.891292
+              },
+              "OverlayGeometry": {
+                "count": 9250,
+                "p50": 1.998583,
+                "p95": 4.807458,
+                "max": 7.859542
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 9250,
+                "p50": 0.118333,
+                "p95": 0.218166,
+                "max": 1.925792
+              },
+              "TerrainPublish": {
+                "count": 370,
+                "p50": 0.365,
+                "p95": 0.440833,
+                "max": 0.536917
+              }
+            }
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 600,
+            "missed": 0,
+            "maxInputGapMs": 17.369083,
+            "overlaySamples": 15000,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "completionWakeups": 1,
+            "sceneFrames": 600,
+            "distinctGroundSceneFrames": 0,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "sourceFrameIntervalP50Ms": 16.667292,
+            "callbackPeriodP50Ms": 16.6655,
+            "callbackPeriodMaxMs": 17.369125,
+            "inputExecutionP95Ms": 0.057583,
+            "inputExecutionMaxMs": 0.130541,
+            "workerDurationsMs": {},
+            "mainActorDurationsMs": {}
+          }
+        ],
+        "environment": {
+          "lowPower": false,
+          "thermalState": 0
+        },
+        "trajectory": "linear"
+      },
+      "cpu": {
+        "windowNs": {
+          "Begin": 22509697791,
+          "End": 32515242500
+        },
+        "samples": 25031,
+        "topSelfSampleWeightsMs": [
+          [
+            "OverlayWork.spend(_:)",
+            1387.0
+          ],
+          [
+            "specialized __RawDictionaryStorage.find<A>(_:hashValue:)",
+            1195.0
+          ],
+          [
+            "_platform_memmove",
+            897.0
+          ],
+          [
+            "madvise",
+            838.0
+          ],
+          [
+            "specialized Array._getElement(_:wasNativeTypeChecked:matchingSubscriptCheck:)",
+            715.0
+          ],
+          [
+            "specialized static OverlaySurfaceMesh.append(_:lift:mesh:work:height:)",
+            692.0
+          ],
+          [
+            "_xzm_free_tc",
+            606.0
+          ],
+          [
+            "_xzm_malloc_tc",
+            584.0
+          ],
+          [
+            "OverlayAreaCoverage.contains(_:work:)",
+            580.0
+          ],
+          [
+            "OverlaySpatialIndex.visitRasterCandidates(for:work:body:)",
+            555.0
+          ],
+          [
+            "swift_allocObject",
+            515.0
+          ],
+          [
+            "OverlayConvexArea.Plane.range(in:)",
+            495.0
+          ],
+          [
+            "xzm_malloc_zone_size",
+            482.0
+          ],
+          [
+            "specialized static Hasher._hash(seed:_:)",
+            444.0
+          ],
+          [
+            "OverlayConvexArea.fragments(of:epsilon:work:)",
+            444.0
+          ]
+        ],
+        "overlayInclusiveSampleWeightsMs": [
+          [
+            "closure #14 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+            18221.0
+          ],
+          [
+            "static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            18184.0
+          ],
+          [
+            "specialized static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            18174.0
+          ],
+          [
+            "specialized draped #1 (_:kind:rings:) in static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            14427.0
+          ],
+          [
+            "OverlaySurfaceMesh.drapeArea(_:rings:altitude:lift:elevationToY:)",
+            13816.0
+          ],
+          [
+            "OverlayConvexArea.fragments(of:epsilon:work:)",
+            4819.0
+          ],
+          [
+            "static OverlayPolygonTessellator.triangulate(rings:work:)",
+            3357.0
+          ],
+          [
+            "static OverlayPolygonTessellator.triangulate(rings:limits:)",
+            3317.0
+          ],
+          [
+            "specialized static OverlayPolygonTessellator.triangulate(rings:work:)",
+            3174.0
+          ],
+          [
+            "OverlaySpatialIndex.rasterCandidates(for:work:)",
+            3159.0
+          ],
+          [
+            "OverlayAreaCoverage.touches(a:b:c:epsilon:work:)",
+            3149.0
+          ],
+          [
+            "OverlaySpatialIndex.visitRasterCandidates(for:work:body:)",
+            2914.0
+          ],
+          [
+            "OverlayWork.spend(_:)",
+            1400.0
+          ],
+          [
+            "static OverlayConvexArea.clip(_:plane:inside:epsilon:work:)",
+            1397.0
+          ],
+          [
+            "closure #15 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+            1378.0
+          ],
+          [
+            "DioramaOverlayRenderer.finishPanIfReady()",
+            1362.0
+          ],
+          [
+            "OverlayAreaCoverage.contains(_:work:)",
+            1315.0
+          ],
+          [
+            "DioramaOverlayRenderer.install(_:on:key:)",
+            1196.0
+          ],
+          [
+            "static OverlayPolygonTessellator.validated(_:work:)",
+            1195.0
+          ],
+          [
+            "specialized static OverlayPolygonTessellator.validated(_:work:)",
+            1173.0
+          ],
+          [
+            "static OverlayPolygonTessellator.edgesIntersect(_:other:epsilon:work:)",
+            1034.0
+          ],
+          [
+            "specialized static OverlayPolygonTessellator.edgesIntersect(_:other:epsilon:work:)",
+            944.0
+          ],
+          [
+            "OverlayMeshResource.update(_:)",
+            937.0
+          ],
+          [
+            "OverlayAreaCoverage.init(rings:work:)",
+            875.0
+          ],
+          [
+            "specialized OverlayAreaCoverage.init(rings:work:)",
+            821.0
+          ]
+        ]
+      },
+      "hostPower": "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=23068771)\t65%; discharging; 3:48 remaining present: true\nNow drawing from 'Battery Power'\n -InternalBattery-0 (id=23068771)\t64%; discharging; 3:28 remaining present: true\n",
+      "sourceVariant": "base commit a7d58dc"
+    },
+    {
+      "name": "after-tree",
+      "instrument": "Time Profiler + Points of Interest",
+      "powerContext": "Session began on battery with Low Power Mode enabled. Last run precedes the user report of disabling it; exact transition timing is not established.",
+      "data": {
+        "prefix": "/tmp/maquette-poly60-after-tree",
+        "pid": "96092",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 597,
+            "missed": 3,
+            "maxInputGapMs": 53.8985,
+            "overlaySamples": 14925,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 14950,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 598,
+            "meshUploads": 14950,
+            "completionWakeups": 1,
+            "sceneFrames": 597,
+            "distinctGroundSceneFrames": 596,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              56,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60
+            ],
+            "sourceFrameIntervalP50Ms": 16.666749,
+            "callbackPeriodP50Ms": 16.665333,
+            "callbackPeriodMaxMs": 53.900167,
+            "prepareP50Ms": 8.525084,
+            "prepareP95Ms": 8.813041,
+            "prepareMaxMs": 27.34625,
+            "inputExecutionP95Ms": 0.011167,
+            "inputExecutionMaxMs": 6.304417,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 598,
+                "p50": 0.617792,
+                "p95": 0.624709,
+                "max": 1.435583
+              },
+              "OverlayGeometry": {
+                "count": 14950,
+                "p50": 1.767041,
+                "p95": 3.722791,
+                "max": 10.208333
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 14950,
+                "p50": 0.106833,
+                "p95": 0.14625,
+                "max": 0.688333
+              },
+              "TerrainPublish": {
+                "count": 598,
+                "p50": 0.349958,
+                "p95": 0.363875,
+                "max": 0.848083
+              }
+            }
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 397,
+            "missed": 203,
+            "maxInputGapMs": 35.188167,
+            "overlaySamples": 9925,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 9925,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 397,
+            "meshUploads": 9925,
+            "completionWakeups": 1,
+            "sceneFrames": 397,
+            "distinctGroundSceneFrames": 396,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              39,
+              37,
+              40,
+              40,
+              40,
+              40,
+              40,
+              40,
+              40,
+              40
+            ],
+            "sourceFrameIntervalP50Ms": 33.317249,
+            "callbackPeriodP50Ms": 32.584625,
+            "callbackPeriodMaxMs": 35.187917,
+            "prepareP50Ms": 12.012458,
+            "prepareP95Ms": 13.060625,
+            "prepareMaxMs": 18.247,
+            "inputExecutionP95Ms": 1.902667,
+            "inputExecutionMaxMs": 5.025375,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 397,
+                "p50": 0.622084,
+                "p95": 0.634417,
+                "max": 1.114458
+              },
+              "OverlayGeometry": {
+                "count": 9925,
+                "p50": 1.918833,
+                "p95": 4.565166,
+                "max": 6.203125
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 9925,
+                "p50": 0.114958,
+                "p95": 0.173917,
+                "max": 1.766667
+              },
+              "TerrainPublish": {
+                "count": 397,
+                "p50": 0.349125,
+                "p95": 0.423875,
+                "max": 0.496625
+              }
+            }
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 600,
+            "missed": 0,
+            "maxInputGapMs": 17.337959,
+            "overlaySamples": 15000,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "completionWakeups": 1,
+            "sceneFrames": 600,
+            "distinctGroundSceneFrames": 0,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "sourceFrameIntervalP50Ms": 16.666375,
+            "callbackPeriodP50Ms": 16.665833,
+            "callbackPeriodMaxMs": 17.337875,
+            "inputExecutionP95Ms": 0.02675,
+            "inputExecutionMaxMs": 0.249041,
+            "workerDurationsMs": {},
+            "mainActorDurationsMs": {}
+          }
+        ],
+        "environment": {
+          "lowPower": false,
+          "thermalState": 0
+        },
+        "trajectory": "linear"
+      },
+      "cpu": {
+        "windowNs": {
+          "Begin": 22090225333,
+          "End": 32107988333
+        },
+        "samples": 26245,
+        "topSelfSampleWeightsMs": [
+          [
+            "specialized OverlayConvexArea.classify(_:box:epsilon:work:)",
+            1330.0
+          ],
+          [
+            "_platform_memmove",
+            1050.0
+          ],
+          [
+            "specialized OverlayConvexArea.PlaneTree.interval(_:box:epsilon:)",
+            865.0
+          ],
+          [
+            "specialized Array._getElement(_:wasNativeTypeChecked:matchingSubscriptCheck:)",
+            823.0
+          ],
+          [
+            "specialized static OverlaySurfaceMesh.append(_:lift:mesh:work:height:)",
+            815.0
+          ],
+          [
+            "madvise",
+            791.0
+          ],
+          [
+            "xzm_malloc_zone_size",
+            695.0
+          ],
+          [
+            "_xzm_free_tc",
+            609.0
+          ],
+          [
+            "__xzm_xzone_free_to_freelist_chunk",
+            573.0
+          ],
+          [
+            "_xzm_xzone_malloc_tiny",
+            559.0
+          ],
+          [
+            "_xzm_malloc_tc",
+            543.0
+          ],
+          [
+            "swift_allocObject",
+            505.0
+          ],
+          [
+            "protocol witness for SIMDStorage.subscript.getter in conformance Double.SIMD4Storage",
+            474.0
+          ],
+          [
+            "specialized static FloatingPoint.minimum(_:_:)",
+            452.0
+          ],
+          [
+            "bool swift::RefCounts<swift::RefCountBitsT<(swift::RefCountInlinedness)1>>::doDecrementSlow<(swift::PerformDeinit)1>(swift::RefCountBitsT<(swift::RefCountInlinedness)1>, unsigned int)",
+            451.0
+          ]
+        ],
+        "overlayInclusiveSampleWeightsMs": [
+          [
+            "closure #14 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+            19980.0
+          ],
+          [
+            "static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            19938.0
+          ],
+          [
+            "specialized static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            19929.0
+          ],
+          [
+            "specialized draped #1 (_:kind:rings:) in static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            15667.0
+          ],
+          [
+            "OverlaySurfaceMesh.drapeArea(_:rings:altitude:lift:elevationToY:)",
+            15166.0
+          ],
+          [
+            "OverlayConvexArea.intersection(of:epsilon:work:)",
+            11778.0
+          ],
+          [
+            "OverlayConvexArea.classify(_:box:epsilon:work:)",
+            8073.0
+          ],
+          [
+            "specialized OverlayConvexArea.classify(_:box:epsilon:work:)",
+            7552.0
+          ],
+          [
+            "static OverlayPolygonTessellator.triangulate(rings:work:)",
+            3854.0
+          ],
+          [
+            "static OverlayPolygonTessellator.triangulate(rings:limits:)",
+            3826.0
+          ],
+          [
+            "specialized static OverlayPolygonTessellator.triangulate(rings:work:)",
+            3651.0
+          ],
+          [
+            "specialized visit #1 (_:work:) in OverlayConvexArea.classify(_:box:epsilon:work:)",
+            3193.0
+          ],
+          [
+            "specialized OverlayConvexArea.PlaneTree.interval(_:box:epsilon:)",
+            2919.0
+          ],
+          [
+            "OverlayConvexArea.PlaneTree.interval(_:box:epsilon:)",
+            2597.0
+          ],
+          [
+            "static OverlayPolygonTessellator.validated(_:work:)",
+            1799.0
+          ],
+          [
+            "specialized static OverlayPolygonTessellator.validated(_:work:)",
+            1769.0
+          ],
+          [
+            "static OverlayConvexArea.clip(_:plane:inside:epsilon:work:)",
+            1695.0
+          ],
+          [
+            "static OverlayPolygonTessellator.edgesIntersect(_:other:epsilon:work:)",
+            1535.0
+          ],
+          [
+            "specialized static OverlayPolygonTessellator.edgesIntersect(_:other:epsilon:work:)",
+            1417.0
+          ],
+          [
+            "closure #15 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+            1397.0
+          ],
+          [
+            "DioramaOverlayRenderer.finishPanIfReady()",
+            1381.0
+          ],
+          [
+            "DioramaOverlayRenderer.install(_:on:key:)",
+            1205.0
+          ],
+          [
+            "OverlayMeshResource.update(_:)",
+            976.0
+          ],
+          [
+            "specialized static OverlaySurfaceMesh.append(_:lift:mesh:work:height:)",
+            869.0
+          ],
+          [
+            "specialized emit #1 (_:) in OverlaySurfaceMesh.drapeArea(_:rings:altitude:lift:elevationToY:)",
+            789.0
+          ]
+        ]
+      },
+      "hostPower": "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=23068771)\t61%; discharging; 3:17 remaining present: true\nNow drawing from 'Battery Power'\n -InternalBattery-0 (id=23068771)\t60%; discharging; 3:17 remaining present: true\n",
+      "sourceVariant": "ordered plane hierarchy and consolidated convex classification"
+    },
+    {
+      "name": "after-direct",
+      "instrument": "Time Profiler + Points of Interest",
+      "powerContext": "Session began on battery with Low Power Mode enabled. Last run precedes the user report of disabling it; exact transition timing is not established.",
+      "data": {
+        "prefix": "/tmp/maquette-poly60-after-direct",
+        "pid": "98072",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 580,
+            "missed": 20,
+            "maxInputGapMs": 41.010333,
+            "overlaySamples": 14500,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 14450,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 578,
+            "meshUploads": 14450,
+            "completionWakeups": 1,
+            "sceneFrames": 580,
+            "distinctGroundSceneFrames": 564,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              55,
+              60,
+              60,
+              56,
+              49,
+              52,
+              60,
+              52,
+              60,
+              60
+            ],
+            "sourceFrameIntervalP50Ms": 16.667875,
+            "callbackPeriodP50Ms": 16.673417,
+            "callbackPeriodMaxMs": 41.010417,
+            "prepareP50Ms": 8.864333,
+            "prepareP95Ms": 15.445958,
+            "prepareMaxMs": 28.352167,
+            "inputExecutionP95Ms": 0.016833,
+            "inputExecutionMaxMs": 3.690333,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 579,
+                "p50": 0.643917,
+                "p95": 0.964208,
+                "max": 2.049958
+              },
+              "OverlayGeometry": {
+                "count": 14475,
+                "p50": 1.832125,
+                "p95": 3.867625,
+                "max": 15.416334
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 14450,
+                "p50": 0.112584,
+                "p95": 0.215416,
+                "max": 0.742042
+              },
+              "TerrainPublish": {
+                "count": 578,
+                "p50": 0.354792,
+                "p95": 0.506,
+                "max": 0.8385
+              }
+            }
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 394,
+            "missed": 206,
+            "maxInputGapMs": 35.417833,
+            "overlaySamples": 9850,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 9850,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 394,
+            "meshUploads": 9850,
+            "completionWakeups": 1,
+            "sceneFrames": 394,
+            "distinctGroundSceneFrames": 393,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              38,
+              35,
+              40,
+              40,
+              40,
+              40,
+              40,
+              40,
+              40,
+              40
+            ],
+            "sourceFrameIntervalP50Ms": 33.320915,
+            "callbackPeriodP50Ms": 33.281292,
+            "callbackPeriodMaxMs": 35.418292,
+            "prepareP50Ms": 12.198375,
+            "prepareP95Ms": 13.4065,
+            "prepareMaxMs": 21.4115,
+            "inputExecutionP95Ms": 1.976834,
+            "inputExecutionMaxMs": 4.973292,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 394,
+                "p50": 0.613084,
+                "p95": 0.636417,
+                "max": 0.983
+              },
+              "OverlayGeometry": {
+                "count": 9850,
+                "p50": 1.693084,
+                "p95": 3.949167,
+                "max": 7.744625
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 9850,
+                "p50": 0.112791,
+                "p95": 0.185292,
+                "max": 1.939791
+              },
+              "TerrainPublish": {
+                "count": 394,
+                "p50": 0.3465,
+                "p95": 0.44025,
+                "max": 0.530917
+              }
+            }
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 599,
+            "missed": 1,
+            "maxInputGapMs": 33.364416,
+            "overlaySamples": 14975,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "completionWakeups": 1,
+            "sceneFrames": 599,
+            "distinctGroundSceneFrames": 0,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "sourceFrameIntervalP50Ms": 16.666042,
+            "callbackPeriodP50Ms": 16.663917,
+            "callbackPeriodMaxMs": 33.365458,
+            "inputExecutionP95Ms": 0.047208,
+            "inputExecutionMaxMs": 0.216458,
+            "workerDurationsMs": {},
+            "mainActorDurationsMs": {}
+          }
+        ],
+        "environment": {
+          "lowPower": false,
+          "thermalState": 0
+        },
+        "trajectory": "linear"
+      },
+      "cpu": {
+        "windowNs": {
+          "Begin": 22892476291,
+          "End": 32903929541
+        },
+        "samples": 23471,
+        "topSelfSampleWeightsMs": [
+          [
+            "specialized OverlayConvexArea.classify(_:box:epsilon:work:)",
+            1330.0
+          ],
+          [
+            "specialized OverlayConvexArea.PlaneTree.interval(_:box:epsilon:)",
+            913.0
+          ],
+          [
+            "_platform_memmove",
+            824.0
+          ],
+          [
+            "specialized static OverlaySurfaceMesh.append(_:lift:mesh:work:height:)",
+            816.0
+          ],
+          [
+            "specialized Array._getElement(_:wasNativeTypeChecked:matchingSubscriptCheck:)",
+            698.0
+          ],
+          [
+            "__xzm_xzone_free_to_freelist_chunk",
+            665.0
+          ],
+          [
+            "xzm_malloc_zone_size",
+            529.0
+          ],
+          [
+            "_xzm_xzone_malloc_tiny",
+            522.0
+          ],
+          [
+            "specialized static FloatingPoint.minimum(_:_:)",
+            497.0
+          ],
+          [
+            "madvise",
+            496.0
+          ],
+          [
+            "protocol witness for SIMDStorage.subscript.getter in conformance Double.SIMD4Storage",
+            493.0
+          ],
+          [
+            "_xzm_free_tc",
+            483.0
+          ],
+          [
+            "_xzm_malloc_tc",
+            474.0
+          ],
+          [
+            "specialized static FloatingPoint.maximum(_:_:)",
+            404.0
+          ],
+          [
+            "specialized max<A>(_:_:)",
+            385.0
+          ]
+        ],
+        "overlayInclusiveSampleWeightsMs": [
+          [
+            "closure #14 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+            17076.0
+          ],
+          [
+            "static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            17055.0
+          ],
+          [
+            "specialized static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            17049.0
+          ],
+          [
+            "specialized area #1 (_:) in static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            16810.0
+          ],
+          [
+            "OverlaySurfaceMesh.drapeConvexArea(rings:altitude:lift:elevationToY:)",
+            16617.0
+          ],
+          [
+            "OverlaySurfaceMesh.drapePreparedArea(_:rings:convex:first:altitude:lift:elevationToY:work:)",
+            14697.0
+          ],
+          [
+            "OverlayConvexArea.intersection(of:epsilon:work:)",
+            11877.0
+          ],
+          [
+            "OverlayConvexArea.classify(_:box:epsilon:work:)",
+            8043.0
+          ],
+          [
+            "specialized OverlayConvexArea.classify(_:box:epsilon:work:)",
+            7542.0
+          ],
+          [
+            "specialized visit #1 (_:work:) in OverlayConvexArea.classify(_:box:epsilon:work:)",
+            3125.0
+          ],
+          [
+            "specialized OverlayConvexArea.PlaneTree.interval(_:box:epsilon:)",
+            2975.0
+          ],
+          [
+            "OverlayConvexArea.PlaneTree.interval(_:box:epsilon:)",
+            2674.0
+          ],
+          [
+            "static OverlayConvexArea.clip(_:plane:inside:epsilon:work:)",
+            1647.0
+          ],
+          [
+            "closure #15 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+            1402.0
+          ],
+          [
+            "DioramaOverlayRenderer.finishPanIfReady()",
+            1377.0
+          ],
+          [
+            "DioramaOverlayRenderer.install(_:on:key:)",
+            1221.0
+          ],
+          [
+            "static OverlayPolygonTessellator.validated(_:work:)",
+            1142.0
+          ],
+          [
+            "specialized static OverlayPolygonTessellator.validated(_:work:)",
+            1134.0
+          ],
+          [
+            "static OverlayPolygonTessellator.edgesIntersect(_:other:epsilon:work:)",
+            1025.0
+          ],
+          [
+            "OverlayMeshResource.update(_:)",
+            963.0
+          ],
+          [
+            "specialized static OverlayPolygonTessellator.edgesIntersect(_:other:epsilon:work:)",
+            955.0
+          ],
+          [
+            "specialized static OverlaySurfaceMesh.append(_:lift:mesh:work:height:)",
+            906.0
+          ],
+          [
+            "specialized emit #1 (_:) in OverlaySurfaceMesh.drapePreparedArea(_:rings:convex:first:altitude:lift:elevationToY:work:)",
+            855.0
+          ],
+          [
+            "DioramaStore.setGroundScale(_:)",
+            779.0
+          ],
+          [
+            "static OverlayConvexArea.split(_:plane:epsilon:work:)",
+            711.0
+          ]
+        ]
+      },
+      "hostPower": "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=23068771)\t59%; discharging; 4:27 remaining present: true\nNow drawing from 'Battery Power'\n -InternalBattery-0 (id=23068771)\t58%; discharging; 4:07 remaining present: true\n",
+      "sourceVariant": "hierarchy plus validated direct convex fill"
+    },
+    {
+      "name": "after-fan",
+      "instrument": "Time Profiler + Points of Interest",
+      "powerContext": "Session began on battery with Low Power Mode enabled. Last run precedes the user report of disabling it; exact transition timing is not established.",
+      "data": {
+        "prefix": "/tmp/maquette-poly60-after-fan",
+        "pid": "99589",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 594,
+            "missed": 6,
+            "maxInputGapMs": 50.472541,
+            "overlaySamples": 14850,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 14825,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 593,
+            "meshUploads": 14825,
+            "completionWakeups": 1,
+            "sceneFrames": 594,
+            "distinctGroundSceneFrames": 589,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              57,
+              52,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60
+            ],
+            "sourceFrameIntervalP50Ms": 16.666792,
+            "callbackPeriodP50Ms": 16.668792,
+            "callbackPeriodMaxMs": 50.472417,
+            "prepareP50Ms": 7.993333,
+            "prepareP95Ms": 8.957875,
+            "prepareMaxMs": 53.80425,
+            "inputExecutionP95Ms": 0.013791,
+            "inputExecutionMaxMs": 3.471875,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 594,
+                "p50": 0.61475,
+                "p95": 0.657833,
+                "max": 2.795875
+              },
+              "OverlayGeometry": {
+                "count": 14850,
+                "p50": 1.486541,
+                "p95": 3.16975,
+                "max": 15.841167
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 14825,
+                "p50": 0.103167,
+                "p95": 0.168833,
+                "max": 0.770375
+              },
+              "TerrainPublish": {
+                "count": 593,
+                "p50": 0.357333,
+                "p95": 0.415917,
+                "max": 0.847125
+              }
+            }
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 393,
+            "missed": 207,
+            "maxInputGapMs": 37.495,
+            "overlaySamples": 9825,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 9825,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 393,
+            "meshUploads": 9825,
+            "completionWakeups": 1,
+            "sceneFrames": 393,
+            "distinctGroundSceneFrames": 392,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              39,
+              33,
+              40,
+              40,
+              40,
+              40,
+              40,
+              40,
+              40,
+              40
+            ],
+            "sourceFrameIntervalP50Ms": 33.328958,
+            "callbackPeriodP50Ms": 33.26375,
+            "callbackPeriodMaxMs": 37.494917,
+            "prepareP50Ms": 12.567,
+            "prepareP95Ms": 14.697917,
+            "prepareMaxMs": 25.683334,
+            "inputExecutionP95Ms": 1.969791,
+            "inputExecutionMaxMs": 5.177333,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 393,
+                "p50": 0.610458,
+                "p95": 0.619625,
+                "max": 1.550833
+              },
+              "OverlayGeometry": {
+                "count": 9825,
+                "p50": 1.615958,
+                "p95": 3.767541,
+                "max": 5.646708
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 9825,
+                "p50": 0.110083,
+                "p95": 0.201083,
+                "max": 1.905792
+              },
+              "TerrainPublish": {
+                "count": 393,
+                "p50": 0.353458,
+                "p95": 0.387709,
+                "max": 0.487125
+              }
+            }
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 600,
+            "missed": 0,
+            "maxInputGapMs": 17.397417,
+            "overlaySamples": 15000,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "completionWakeups": 1,
+            "sceneFrames": 600,
+            "distinctGroundSceneFrames": 0,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "sourceFrameIntervalP50Ms": 16.664917,
+            "callbackPeriodP50Ms": 16.661625,
+            "callbackPeriodMaxMs": 17.397292,
+            "inputExecutionP95Ms": 0.030584,
+            "inputExecutionMaxMs": 0.263084,
+            "workerDurationsMs": {},
+            "mainActorDurationsMs": {}
+          }
+        ],
+        "environment": {
+          "lowPower": false,
+          "thermalState": 0
+        },
+        "trajectory": "linear"
+      },
+      "cpu": {
+        "windowNs": {
+          "Begin": 21839611250,
+          "End": 31855912833
+        },
+        "samples": 23187,
+        "topSelfSampleWeightsMs": [
+          [
+            "_platform_memmove",
+            845.0
+          ],
+          [
+            "specialized OverlayConvexArea.classify(_:box:epsilon:work:)",
+            786.0
+          ],
+          [
+            "specialized OverlayConvexArea.PlaneTree.interval(_:box:epsilon:)",
+            781.0
+          ],
+          [
+            "specialized Array._getElement(_:wasNativeTypeChecked:matchingSubscriptCheck:)",
+            673.0
+          ],
+          [
+            "xzm_malloc_zone_size",
+            644.0
+          ],
+          [
+            "__xzm_xzone_free_to_freelist_chunk",
+            640.0
+          ],
+          [
+            "_xzm_xzone_malloc_tiny",
+            584.0
+          ],
+          [
+            "_xzm_free_tc",
+            556.0
+          ],
+          [
+            "specialized IndexingIterator.next()",
+            497.0
+          ],
+          [
+            "madvise",
+            489.0
+          ],
+          [
+            "_xzm_malloc_tc",
+            482.0
+          ],
+          [
+            "specialized static FloatingPoint.minimum(_:_:)",
+            473.0
+          ],
+          [
+            "bool swift::RefCounts<swift::RefCountBitsT<(swift::RefCountInlinedness)1>>::doDecrementSlow<(swift::PerformDeinit)1>(swift::RefCountBitsT<(swift::RefCountInlinedness)1>, unsigned int)",
+            401.0
+          ],
+          [
+            "protocol witness for SIMDStorage.subscript.getter in conformance Double.SIMD4Storage",
+            390.0
+          ],
+          [
+            "swift_release",
+            383.0
+          ]
+        ],
+        "overlayInclusiveSampleWeightsMs": [
+          [
+            "closure #14 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+            16363.0
+          ],
+          [
+            "static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            16336.0
+          ],
+          [
+            "specialized static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            16333.0
+          ],
+          [
+            "specialized area #1 (_:) in static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            16152.0
+          ],
+          [
+            "OverlaySurfaceMesh.drapeConvexArea(rings:altitude:lift:elevationToY:)",
+            16147.0
+          ],
+          [
+            "OverlaySurfaceMesh.drapePreparedArea(_:rings:convex:first:altitude:lift:elevationToY:work:)",
+            14335.0
+          ],
+          [
+            "OverlayConvexArea.intersection(of:epsilon:work:)",
+            11599.0
+          ],
+          [
+            "OverlayConvexArea.classify(_:box:epsilon:work:)",
+            7654.0
+          ],
+          [
+            "specialized OverlayConvexArea.classify(_:box:epsilon:work:)",
+            7274.0
+          ],
+          [
+            "specialized visit #1 (_:work:) in OverlayConvexArea.classify(_:box:epsilon:work:)",
+            3723.0
+          ],
+          [
+            "specialized OverlayConvexArea.PlaneTree.interval(_:box:epsilon:)",
+            2571.0
+          ],
+          [
+            "OverlayConvexArea.PlaneTree.interval(_:box:epsilon:)",
+            2322.0
+          ],
+          [
+            "static OverlayConvexArea.clip(_:plane:inside:epsilon:work:)",
+            1756.0
+          ],
+          [
+            "closure #15 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+            1376.0
+          ],
+          [
+            "DioramaOverlayRenderer.finishPanIfReady()",
+            1359.0
+          ],
+          [
+            "static OverlayPolygonTessellator.validated(_:work:)",
+            1198.0
+          ],
+          [
+            "DioramaOverlayRenderer.install(_:on:key:)",
+            1191.0
+          ],
+          [
+            "specialized static OverlayPolygonTessellator.validated(_:work:)",
+            1169.0
+          ],
+          [
+            "static OverlayPolygonTessellator.edgesIntersect(_:other:epsilon:work:)",
+            1057.0
+          ],
+          [
+            "specialized static OverlayPolygonTessellator.edgesIntersect(_:other:epsilon:work:)",
+            967.0
+          ],
+          [
+            "OverlayMeshResource.update(_:)",
+            925.0
+          ],
+          [
+            "DioramaStore.setGroundScale(_:)",
+            774.0
+          ],
+          [
+            "static OverlayConvexArea.split(_:plane:epsilon:work:)",
+            683.0
+          ],
+          [
+            "specialized static OverlayConvexArea.split(_:plane:epsilon:work:)",
+            621.0
+          ],
+          [
+            "specialized emitInterior #1 () in OverlaySurfaceMesh.drapePreparedArea(_:rings:convex:first:altitude:lift:elevationToY:work:)",
+            586.0
+          ]
+        ]
+      },
+      "hostPower": "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=23068771)\t57%; discharging; 3:27 remaining present: true\nNow drawing from 'Battery Power'\n -InternalBattery-0 (id=23068771)\t56%; discharging; 3:17 remaining present: true\n",
+      "sourceVariant": "direct fill, certified interior rectangle and shared boundary fans; before final common vertex guard"
+    },
+    {
+      "name": "final-region",
+      "instrument": "Time Profiler + Points of Interest",
+      "powerContext": "Session began on battery with Low Power Mode enabled. Last run precedes the user report of disabling it; exact transition timing is not established.",
+      "data": {
+        "prefix": "/tmp/maquette-poly60-final-region",
+        "pid": "1342",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 600,
+            "missed": 0,
+            "maxInputGapMs": 24.443833,
+            "overlaySamples": 15000,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 14975,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 599,
+            "meshUploads": 14975,
+            "completionWakeups": 1,
+            "sceneFrames": 600,
+            "distinctGroundSceneFrames": 597,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              57,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60
+            ],
+            "sourceFrameIntervalP50Ms": 16.666749,
+            "callbackPeriodP50Ms": 16.665875,
+            "callbackPeriodMaxMs": 24.449208,
+            "prepareP50Ms": 7.862833,
+            "prepareP95Ms": 8.57225,
+            "prepareMaxMs": 18.640041,
+            "inputExecutionP95Ms": 0.014625,
+            "inputExecutionMaxMs": 1.945417,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 600,
+                "p50": 0.622958,
+                "p95": 0.657292,
+                "max": 0.759166
+              },
+              "OverlayGeometry": {
+                "count": 15000,
+                "p50": 1.297916,
+                "p95": 2.477333,
+                "max": 7.78125
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 14975,
+                "p50": 0.102708,
+                "p95": 0.139125,
+                "max": 0.801583
+              },
+              "TerrainPublish": {
+                "count": 599,
+                "p50": 0.344083,
+                "p95": 0.359375,
+                "max": 2.12475
+              }
+            }
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 385,
+            "missed": 215,
+            "maxInputGapMs": 35.824208,
+            "overlaySamples": 9625,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 9625,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 385,
+            "meshUploads": 9625,
+            "completionWakeups": 1,
+            "sceneFrames": 385,
+            "distinctGroundSceneFrames": 384,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              39,
+              34,
+              39,
+              39,
+              40,
+              39,
+              39,
+              40,
+              40,
+              35
+            ],
+            "sourceFrameIntervalP50Ms": 33.288959,
+            "callbackPeriodP50Ms": 33.286167,
+            "callbackPeriodMaxMs": 35.821542,
+            "prepareP50Ms": 13.06225,
+            "prepareP95Ms": 14.546,
+            "prepareMaxMs": 20.243083,
+            "inputExecutionP95Ms": 1.991584,
+            "inputExecutionMaxMs": 5.064917,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 385,
+                "p50": 0.624334,
+                "p95": 0.639166,
+                "max": 1.071042
+              },
+              "OverlayGeometry": {
+                "count": 9625,
+                "p50": 1.35875,
+                "p95": 2.882834,
+                "max": 5.135458
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 9625,
+                "p50": 0.1095,
+                "p95": 0.197959,
+                "max": 1.634708
+              },
+              "TerrainPublish": {
+                "count": 385,
+                "p50": 0.342958,
+                "p95": 0.359541,
+                "max": 0.468334
+              }
+            }
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 600,
+            "missed": 0,
+            "maxInputGapMs": 16.91675,
+            "overlaySamples": 15000,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "completionWakeups": 1,
+            "sceneFrames": 600,
+            "distinctGroundSceneFrames": 0,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "sourceFrameIntervalP50Ms": 16.666375,
+            "callbackPeriodP50Ms": 16.665417,
+            "callbackPeriodMaxMs": 16.916625,
+            "inputExecutionP95Ms": 0.048042,
+            "inputExecutionMaxMs": 0.13025,
+            "workerDurationsMs": {},
+            "mainActorDurationsMs": {}
+          }
+        ],
+        "environment": {
+          "lowPower": false,
+          "thermalState": 0
+        },
+        "trajectory": "linear"
+      },
+      "cpu": {
+        "windowNs": {
+          "Begin": 22185470958,
+          "End": 32213682541
+        },
+        "samples": 20398,
+        "topSelfSampleWeightsMs": [
+          [
+            "madvise",
+            969.0
+          ],
+          [
+            "_platform_memmove",
+            748.0
+          ],
+          [
+            "specialized Array._getElement(_:wasNativeTypeChecked:matchingSubscriptCheck:)",
+            660.0
+          ],
+          [
+            "xzm_malloc_zone_size",
+            572.0
+          ],
+          [
+            "_xzm_free_tc",
+            493.0
+          ],
+          [
+            "OverlayWork.spend(_:)",
+            477.0
+          ],
+          [
+            "_xzm_xzone_malloc_tiny",
+            471.0
+          ],
+          [
+            "_xzm_malloc_tc",
+            455.0
+          ],
+          [
+            "OverlayConvexArea.Plane.range(in:)",
+            445.0
+          ],
+          [
+            "__xzm_xzone_free_to_freelist_chunk",
+            416.0
+          ],
+          [
+            "bool swift::RefCounts<swift::RefCountBitsT<(swift::RefCountInlinedness)1>>::doDecrementSlow<(swift::PerformDeinit)1>(swift::RefCountBitsT<(swift::RefCountInlinedness)1>, unsigned int)",
+            372.0
+          ],
+          [
+            "specialized _ArrayBuffer._consumeAndCreateNew(bufferIsUnique:minimumCapacity:growForAppend:)",
+            371.0
+          ],
+          [
+            "swift_release",
+            358.0
+          ],
+          [
+            "swift_allocObject",
+            344.0
+          ],
+          [
+            "specialized UnsafeMutablePointer<>.initialize(to:)",
+            288.0
+          ]
+        ],
+        "overlayInclusiveSampleWeightsMs": [
+          [
+            "closure #14 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+            13599.0
+          ],
+          [
+            "static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            13569.0
+          ],
+          [
+            "specialized static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            13562.0
+          ],
+          [
+            "specialized area #1 (_:) in static DioramaOverlayGeometryBuilder.build(shape:style:proxy:surface:physicalSize:)",
+            13284.0
+          ],
+          [
+            "OverlaySurfaceMesh.drapeConvexArea(rings:altitude:lift:elevationToY:)",
+            13282.0
+          ],
+          [
+            "OverlaySurfaceMesh.drapePreparedArea(_:rings:convex:first:altitude:lift:elevationToY:work:)",
+            11276.0
+          ],
+          [
+            "OverlayConvexArea.intersection(of:region:epsilon:work:)",
+            6704.0
+          ],
+          [
+            "OverlayConvexArea.classify(_:box:region:epsilon:work:)",
+            2661.0
+          ],
+          [
+            "specialized OverlayConvexArea.classify(_:box:region:epsilon:work:)",
+            2183.0
+          ],
+          [
+            "static OverlayConvexArea.clip(_:plane:inside:epsilon:work:)",
+            1636.0
+          ],
+          [
+            "OverlayConvexArea.region(for:epsilon:work:)",
+            1594.0
+          ],
+          [
+            "OverlayConvexArea.classify(_:box:epsilon:strictInterior:work:)",
+            1550.0
+          ],
+          [
+            "specialized OverlayConvexArea.classify(_:box:epsilon:strictInterior:work:)",
+            1483.0
+          ],
+          [
+            "closure #15 in DioramaOverlayRenderer.apply(_:proxy:physicalSize:)",
+            1337.0
+          ],
+          [
+            "DioramaOverlayRenderer.finishPanIfReady()",
+            1318.0
+          ],
+          [
+            "static OverlayPolygonTessellator.validated(_:work:)",
+            1166.0
+          ],
+          [
+            "DioramaOverlayRenderer.install(_:on:key:)",
+            1161.0
+          ],
+          [
+            "specialized static OverlayPolygonTessellator.validated(_:work:)",
+            1148.0
+          ],
+          [
+            "static OverlayPolygonTessellator.edgesIntersect(_:other:epsilon:work:)",
+            1028.0
+          ],
+          [
+            "specialized static OverlayPolygonTessellator.edgesIntersect(_:other:epsilon:work:)",
+            930.0
+          ],
+          [
+            "OverlayMeshResource.update(_:)",
+            919.0
+          ],
+          [
+            "specialized visit #1 (_:work:) in OverlayConvexArea.classify(_:box:epsilon:strictInterior:work:)",
+            839.0
+          ],
+          [
+            "static OverlayConvexArea.split(_:plane:epsilon:work:)",
+            675.0
+          ],
+          [
+            "DioramaStore.setGroundScale(_:)",
+            672.0
+          ],
+          [
+            "specialized static OverlayConvexArea.split(_:plane:epsilon:work:)",
+            620.0
+          ]
+        ]
+      },
+      "hostPower": "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=23068771)\t55%; discharging; 3:37 remaining present: true\nNow drawing from 'Battery Power'\n -InternalBattery-0 (id=23068771)\t54%; discharging; 3:37 remaining present: true\n",
+      "sourceVariant": "regional classifier with strict hole predicates; before cached-bounds-only grouping"
+    },
+    {
+      "name": "poly60-off-unattached",
+      "instrument": "In-app scene counters, no Instruments attachment",
+      "powerContext": "After user disabled Low Power Mode; full host power source snapshots retained below.",
+      "data": {
+        "prefix": "/tmp/maquette-cadence-ipad-poly60-off-unattached",
+        "pid": "2127",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 597,
+            "missed": 3,
+            "maxInputGapMs": 50.806083,
+            "overlaySamples": 14925,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 14950,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 598,
+            "meshUploads": 14950,
+            "completionWakeups": 1,
+            "sceneFrames": 597,
+            "distinctGroundSceneFrames": 596,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              56,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60
+            ],
+            "sourceFrameIntervalP50Ms": 16.666874,
+            "callbackPeriodP50Ms": 16.666125,
+            "callbackPeriodMaxMs": 50.812125,
+            "prepareP50Ms": 5.878459,
+            "prepareP95Ms": 6.666334,
+            "prepareMaxMs": 28.455208,
+            "inputExecutionP95Ms": 0.015333,
+            "inputExecutionMaxMs": 6.315209
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 585,
+            "missed": 15,
+            "maxInputGapMs": 35.354709,
+            "overlaySamples": 14625,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 14550,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 582,
+            "meshUploads": 14550,
+            "completionWakeups": 1,
+            "sceneFrames": 585,
+            "distinctGroundSceneFrames": 581,
+            "driver": "scene",
+            "thresholdSkips": 3,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              58,
+              47,
+              59,
+              60,
+              60,
+              58,
+              60,
+              59,
+              60,
+              60
+            ],
+            "sourceFrameIntervalP50Ms": 16.666792,
+            "callbackPeriodP50Ms": 16.668667,
+            "callbackPeriodMaxMs": 35.354917,
+            "prepareP50Ms": 9.350459,
+            "prepareP95Ms": 10.421666,
+            "prepareMaxMs": 16.923,
+            "inputExecutionP95Ms": 1.403792,
+            "inputExecutionMaxMs": 4.4965
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 600,
+            "missed": 0,
+            "maxInputGapMs": 17.026334,
+            "overlaySamples": 15000,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "completionWakeups": 1,
+            "sceneFrames": 600,
+            "distinctGroundSceneFrames": 0,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "sourceFrameIntervalP50Ms": 16.665917,
+            "callbackPeriodP50Ms": 16.663667,
+            "callbackPeriodMaxMs": 17.025708,
+            "inputExecutionP95Ms": 0.046,
+            "inputExecutionMaxMs": 0.2105
+          }
+        ],
+        "environment": {
+          "lowPower": false,
+          "thermalState": 0
+        },
+        "trajectory": "linear"
+      },
+      "hostPower": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t53%; charging; (no estimate) present: true\nNow drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t54%; charging; 1:12 remaining present: true\n",
+      "sourceVariant": "regional classifier before cached-bounds-only grouping"
+    },
+    {
+      "name": "poly60-final-polygons",
+      "instrument": "In-app scene counters, no Instruments attachment",
+      "powerContext": "After user disabled Low Power Mode; full host power source snapshots retained below.",
+      "data": {
+        "prefix": "/tmp/maquette-cadence-ipad-poly60-final-polygons",
+        "pid": "5320",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 597,
+            "missed": 3,
+            "maxInputGapMs": 49.8185,
+            "overlaySamples": 14925,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 14950,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 598,
+            "meshUploads": 14950,
+            "completionWakeups": 1,
+            "sceneFrames": 597,
+            "distinctGroundSceneFrames": 596,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              56,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60
+            ],
+            "sourceFrameIntervalP50Ms": 16.666541,
+            "callbackPeriodP50Ms": 16.664333,
+            "callbackPeriodMaxMs": 49.827667,
+            "prepareP50Ms": 6.316459,
+            "prepareP95Ms": 7.529917,
+            "prepareMaxMs": 32.542334,
+            "inputExecutionP95Ms": 0.0205,
+            "inputExecutionMaxMs": 3.681834
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 426,
+            "missed": 174,
+            "maxInputGapMs": 36.272458,
+            "overlaySamples": 10650,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 10650,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 426,
+            "meshUploads": 10650,
+            "completionWakeups": 1,
+            "sceneFrames": 426,
+            "distinctGroundSceneFrames": 425,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              57,
+              40,
+              43,
+              43,
+              42,
+              40,
+              40,
+              40,
+              40,
+              40
+            ],
+            "sourceFrameIntervalP50Ms": 16.667625,
+            "callbackPeriodP50Ms": 16.6805,
+            "callbackPeriodMaxMs": 36.272375,
+            "prepareP50Ms": 11.010375,
+            "prepareP95Ms": 12.613292,
+            "prepareMaxMs": 18.321583,
+            "inputExecutionP95Ms": 1.539791,
+            "inputExecutionMaxMs": 1.750458
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 600,
+            "missed": 0,
+            "maxInputGapMs": 17.433209,
+            "overlaySamples": 15000,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "completionWakeups": 1,
+            "sceneFrames": 600,
+            "distinctGroundSceneFrames": 0,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "sourceFrameIntervalP50Ms": 16.666749,
+            "callbackPeriodP50Ms": 16.665542,
+            "callbackPeriodMaxMs": 17.433042,
+            "inputExecutionP95Ms": 0.046875,
+            "inputExecutionMaxMs": 0.119958
+          }
+        ],
+        "environment": {
+          "lowPower": false,
+          "thermalState": 0
+        },
+        "trajectory": "linear"
+      },
+      "hostPower": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t67%; charging; 1:06 remaining present: true\nNow drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t68%; charging; 1:09 remaining present: true\n",
+      "sourceVariant": "final source snapshot checksums"
+    },
+    {
+      "name": "native-polygons",
+      "instrument": "Metal Performance Overview + Points of Interest",
+      "powerContext": "AC power, Low Power Mode off after user change",
+      "data": {
+        "prefix": "/tmp/maquette-cadence-mac-poly60-off-polygons",
+        "pid": "2910",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 902,
+            "missed": 0,
+            "maxInputGapMs": 23.2765,
+            "fullBins": 9,
+            "seconds": 9.009139835000001,
+            "meanFPS": 90.35268852613306,
+            "minFPS": 87.670856048,
+            "maxFPS": 93.322802349,
+            "skippedFrames": 0.0,
+            "overlaySamples": 22550,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 22500,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 900,
+            "meshUploads": 22500,
+            "completionWakeups": 1,
+            "sceneFrames": 902,
+            "distinctGroundSceneFrames": 862,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              81,
+              88,
+              91,
+              90,
+              88,
+              84,
+              83,
+              82,
+              87,
+              88
+            ],
+            "sourceFrameIntervalP50Ms": 10.340666,
+            "callbackPeriodP50Ms": 10.331042,
+            "callbackPeriodMaxMs": 23.27625,
+            "prepareP50Ms": 8.882166,
+            "prepareP95Ms": 15.3855,
+            "prepareMaxMs": 22.083667,
+            "inputExecutionP95Ms": 0.009916,
+            "inputExecutionMaxMs": 0.13175,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 902,
+                "p50": 0.420083,
+                "p95": 0.445875,
+                "max": 1.632
+              },
+              "OverlayGeometry": {
+                "count": 22550,
+                "p50": 0.794667,
+                "p95": 1.765291,
+                "max": 4.127292
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 22500,
+                "p50": 0.064042,
+                "p95": 0.084375,
+                "max": 0.386667
+              },
+              "TerrainPublish": {
+                "count": 900,
+                "p50": 0.23925,
+                "p95": 0.266542,
+                "max": 0.581084
+              }
+            }
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 800,
+            "missed": 0,
+            "maxInputGapMs": 23.25725,
+            "fullBins": 9,
+            "seconds": 8.999810749,
+            "meanFPS": 79.77945530106966,
+            "minFPS": 77.280383643,
+            "maxFPS": 82.165828164,
+            "skippedFrames": 0.0,
+            "overlaySamples": 20000,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 20000,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 800,
+            "meshUploads": 20000,
+            "completionWakeups": 1,
+            "sceneFrames": 800,
+            "distinctGroundSceneFrames": 799,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              83,
+              81,
+              80,
+              81,
+              81,
+              80,
+              79,
+              78,
+              79,
+              77
+            ],
+            "sourceFrameIntervalP50Ms": 12.481208,
+            "callbackPeriodP50Ms": 12.484917,
+            "callbackPeriodMaxMs": 23.258875,
+            "prepareP50Ms": 11.102667,
+            "prepareP95Ms": 13.229,
+            "prepareMaxMs": 18.864292,
+            "inputExecutionP95Ms": 1.130709,
+            "inputExecutionMaxMs": 4.266166,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 800,
+                "p50": 0.416125,
+                "p95": 0.442708,
+                "max": 1.057959
+              },
+              "OverlayGeometry": {
+                "count": 20000,
+                "p50": 0.798708,
+                "p95": 1.8545,
+                "max": 5.292459
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 20000,
+                "p50": 0.070167,
+                "p95": 0.108,
+                "max": 0.910125
+              },
+              "TerrainPublish": {
+                "count": 800,
+                "p50": 0.236916,
+                "p95": 0.268875,
+                "max": 0.390791
+              }
+            }
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 932,
+            "missed": 0,
+            "maxInputGapMs": 25.464417,
+            "fullBins": 9,
+            "seconds": 8.994240625,
+            "meanFPS": 92.72600473634238,
+            "minFPS": 88.58157275,
+            "maxFPS": 99.804463469,
+            "skippedFrames": 0.0,
+            "overlaySamples": 23300,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "completionWakeups": 1,
+            "sceneFrames": 932,
+            "distinctGroundSceneFrames": 0,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "sourceFrameIntervalP50Ms": 10.164917,
+            "callbackPeriodP50Ms": 10.169167,
+            "callbackPeriodMaxMs": 25.465125,
+            "inputExecutionP95Ms": 0.025042,
+            "inputExecutionMaxMs": 0.251041,
+            "workerDurationsMs": {},
+            "mainActorDurationsMs": {}
+          }
+        ],
+        "environment": {
+          "lowPower": false,
+          "thermalState": 0
+        },
+        "trajectory": "linear"
+      },
+      "hostPower": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t59%; charging; 1:04 remaining present: true\nNow drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t61%; charging; 1:03 remaining present: true\n",
+      "sourceVariant": "final source snapshot checksums"
+    },
+    {
+      "name": "native-path",
+      "instrument": "Metal Performance Overview + Points of Interest",
+      "powerContext": "AC power, Low Power Mode off after user change",
+      "data": {
+        "prefix": "/tmp/maquette-cadence-mac-poly60-off-path",
+        "pid": "3889",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 1193,
+            "missed": 0,
+            "maxInputGapMs": 16.230042,
+            "fullBins": 9,
+            "seconds": 9.00185517,
+            "meanFPS": 119.64200452781995,
+            "minFPS": 118.863801138,
+            "maxFPS": 120.128468572,
+            "skippedFrames": 0.0,
+            "overlaySamples": 1193,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 1177,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 1177,
+            "meshUploads": 1177,
+            "completionWakeups": 1,
+            "sceneFrames": 1193,
+            "distinctGroundSceneFrames": 1154,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              111,
+              117,
+              104,
+              114,
+              111,
+              119,
+              119,
+              119,
+              120,
+              120
+            ],
+            "sourceFrameIntervalP50Ms": 8.328542,
+            "callbackPeriodP50Ms": 8.328708,
+            "callbackPeriodMaxMs": 16.230125,
+            "prepareP50Ms": 7.191125,
+            "prepareP95Ms": 8.845208,
+            "prepareMaxMs": 14.638583,
+            "inputExecutionP95Ms": 0.007042,
+            "inputExecutionMaxMs": 0.08,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 1179,
+                "p50": 0.406458,
+                "p95": 0.431833,
+                "max": 2.047416
+              },
+              "OverlayGeometry": {
+                "count": 1179,
+                "p50": 5.088042,
+                "p95": 5.634916,
+                "max": 9.926292
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 1177,
+                "p50": 0.342084,
+                "p95": 0.39925,
+                "max": 1.344542
+              },
+              "TerrainPublish": {
+                "count": 1177,
+                "p50": 0.242916,
+                "p95": 0.271042,
+                "max": 0.8555
+              }
+            },
+            "geometryToInstallGapMs": {
+              "count": 1177,
+              "p50": 1.698042,
+              "p95": 3.741625,
+              "max": 8.593542
+            }
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 924,
+            "missed": 0,
+            "maxInputGapMs": 22.609917,
+            "fullBins": 9,
+            "seconds": 9.004817916,
+            "meanFPS": 92.61708541638757,
+            "minFPS": 84.27731234,
+            "maxFPS": 101.43538636,
+            "skippedFrames": 0.0,
+            "overlaySamples": 924,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 924,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 924,
+            "meshUploads": 924,
+            "completionWakeups": 1,
+            "sceneFrames": 924,
+            "distinctGroundSceneFrames": 923,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              92,
+              102,
+              94,
+              94,
+              98,
+              95,
+              92,
+              85,
+              86,
+              85
+            ],
+            "sourceFrameIntervalP50Ms": 10.216792,
+            "callbackPeriodP50Ms": 10.229458,
+            "callbackPeriodMaxMs": 22.610875,
+            "prepareP50Ms": 8.953667,
+            "prepareP95Ms": 13.331125,
+            "prepareMaxMs": 19.170125,
+            "inputExecutionP95Ms": 0.964958,
+            "inputExecutionMaxMs": 4.366292,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 924,
+                "p50": 0.404542,
+                "p95": 0.430583,
+                "max": 1.398084
+              },
+              "OverlayGeometry": {
+                "count": 924,
+                "p50": 3.915167,
+                "p95": 4.128958,
+                "max": 8.996666
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 924,
+                "p50": 0.354042,
+                "p95": 0.400333,
+                "max": 1.018542
+              },
+              "TerrainPublish": {
+                "count": 924,
+                "p50": 0.246458,
+                "p95": 0.270208,
+                "max": 0.661792
+              }
+            },
+            "geometryToInstallGapMs": {
+              "count": 924,
+              "p50": 4.212583,
+              "p95": 8.685375,
+              "max": 14.181875
+            }
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 890,
+            "missed": 0,
+            "maxInputGapMs": 26.828167,
+            "fullBins": 9,
+            "seconds": 9.00047675,
+            "meanFPS": 88.66196796105477,
+            "minFPS": 82.243090945,
+            "maxFPS": 96.973307684,
+            "skippedFrames": 0.0,
+            "overlaySamples": 890,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "completionWakeups": 1,
+            "sceneFrames": 890,
+            "distinctGroundSceneFrames": 0,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "sourceFrameIntervalP50Ms": 10.07875,
+            "callbackPeriodP50Ms": 10.08175,
+            "callbackPeriodMaxMs": 26.8285,
+            "inputExecutionP95Ms": 0.023459,
+            "inputExecutionMaxMs": 0.120291,
+            "workerDurationsMs": {},
+            "mainActorDurationsMs": {}
+          }
+        ],
+        "environment": {
+          "lowPower": false,
+          "thermalState": 0
+        },
+        "trajectory": "linear"
+      },
+      "hostPower": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t61%; charging; 1:03 remaining present: true\nNow drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t63%; charging; 0:57 remaining present: true\n",
+      "sourceVariant": "final source snapshot checksums"
+    },
+    {
+      "name": "native-images",
+      "instrument": "Metal Performance Overview + Points of Interest",
+      "powerContext": "AC power, Low Power Mode off after user change",
+      "data": {
+        "prefix": "/tmp/maquette-cadence-mac-poly60-off-images",
+        "pid": "4122",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 1140,
+            "missed": 0,
+            "maxInputGapMs": 22.111375,
+            "fullBins": 9,
+            "seconds": 8.994305581999999,
+            "meanFPS": 113.96099467355637,
+            "minFPS": 101.194079989,
+            "maxFPS": 119.961417209,
+            "skippedFrames": 0.0,
+            "overlaySamples": 4560,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 4564,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 1141,
+            "meshUploads": 1141,
+            "completionWakeups": 1,
+            "sceneFrames": 1140,
+            "distinctGroundSceneFrames": 1134,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              115,
+              119,
+              119,
+              119,
+              116,
+              116,
+              116,
+              107,
+              107,
+              100
+            ],
+            "sourceFrameIntervalP50Ms": 8.296208,
+            "callbackPeriodP50Ms": 8.299708,
+            "callbackPeriodMaxMs": 22.1115,
+            "prepareP50Ms": 7.135375,
+            "prepareP95Ms": 10.515625,
+            "prepareMaxMs": 20.886458,
+            "inputExecutionP95Ms": 0.006417,
+            "inputExecutionMaxMs": 0.160792,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 1142,
+                "p50": 0.420084,
+                "p95": 0.434292,
+                "max": 1.534833
+              },
+              "OverlayGeometry": {
+                "count": 1142,
+                "p50": 1.248,
+                "p95": 1.382917,
+                "max": 1.668583
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 4564,
+                "p50": 0.00575,
+                "p95": 0.351166,
+                "max": 0.893125
+              },
+              "TerrainPublish": {
+                "count": 1141,
+                "p50": 0.254958,
+                "p95": 0.268334,
+                "max": 0.588917
+              }
+            }
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 832,
+            "missed": 0,
+            "maxInputGapMs": 20.42825,
+            "fullBins": 9,
+            "seconds": 9.005305001,
+            "meanFPS": 83.06215068366241,
+            "minFPS": 79.847883102,
+            "maxFPS": 87.417364022,
+            "skippedFrames": 0.0,
+            "overlaySamples": 3328,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 3328,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 832,
+            "meshUploads": 832,
+            "completionWakeups": 1,
+            "sceneFrames": 832,
+            "distinctGroundSceneFrames": 831,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              85,
+              88,
+              86,
+              82,
+              82,
+              83,
+              83,
+              81,
+              80,
+              81
+            ],
+            "sourceFrameIntervalP50Ms": 11.219083,
+            "callbackPeriodP50Ms": 11.21525,
+            "callbackPeriodMaxMs": 20.428125,
+            "prepareP50Ms": 9.882375,
+            "prepareP95Ms": 14.680125,
+            "prepareMaxMs": 19.093334,
+            "inputExecutionP95Ms": 0.996709,
+            "inputExecutionMaxMs": 4.360459,
+            "workerDurationsMs": {
+              "SurfaceRefit": {
+                "count": 832,
+                "p50": 0.420459,
+                "p95": 0.438125,
+                "max": 1.4885
+              },
+              "OverlayGeometry": {
+                "count": 832,
+                "p50": 1.548584,
+                "p95": 1.908458,
+                "max": 2.695667
+              }
+            },
+            "mainActorDurationsMs": {
+              "OverlayInstall": {
+                "count": 3328,
+                "p50": 0.005875,
+                "p95": 0.419084,
+                "max": 1.285583
+              },
+              "TerrainPublish": {
+                "count": 832,
+                "p50": 0.256333,
+                "p95": 0.269958,
+                "max": 0.369333
+              }
+            }
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 815,
+            "missed": 0,
+            "maxInputGapMs": 22.501084,
+            "fullBins": 9,
+            "seconds": 8.998819254,
+            "meanFPS": 81.23287917064884,
+            "minFPS": 75.948710269,
+            "maxFPS": 87.669392156,
+            "skippedFrames": 0.0,
+            "overlaySamples": 3260,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "completionWakeups": 1,
+            "sceneFrames": 815,
+            "distinctGroundSceneFrames": 0,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "sourceFrameIntervalP50Ms": 12.010667,
+            "callbackPeriodP50Ms": 12.010167,
+            "callbackPeriodMaxMs": 22.502125,
+            "inputExecutionP95Ms": 0.030458,
+            "inputExecutionMaxMs": 0.167583,
+            "workerDurationsMs": {},
+            "mainActorDurationsMs": {}
+          }
+        ],
+        "environment": {
+          "lowPower": false,
+          "thermalState": 0
+        },
+        "trajectory": "linear"
+      },
+      "hostPower": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t63%; charging; 0:57 remaining present: true\nNow drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t65%; charging; 1:04 remaining present: true\n",
+      "sourceVariant": "final source snapshot checksums"
+    },
+    {
+      "name": "poly60-final-path",
+      "instrument": "In-app scene counters, no Instruments attachment",
+      "powerContext": "AC power, Low Power Mode off; competing system activity observed around these runs.",
+      "data": {
+        "prefix": "/tmp/maquette-cadence-ipad-poly60-final-path",
+        "pid": "6713",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 599,
+            "missed": 1,
+            "maxInputGapMs": 32.868375,
+            "overlaySamples": 599,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 599,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 599,
+            "meshUploads": 599,
+            "completionWakeups": 1,
+            "sceneFrames": 599,
+            "distinctGroundSceneFrames": 597,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              57,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60
+            ],
+            "sourceFrameIntervalP50Ms": 16.666833,
+            "callbackPeriodP50Ms": 16.665917,
+            "callbackPeriodMaxMs": 32.86875,
+            "prepareP50Ms": 6.313625,
+            "prepareP95Ms": 6.664041,
+            "prepareMaxMs": 14.515167,
+            "inputExecutionP95Ms": 0.016458,
+            "inputExecutionMaxMs": 1.504625
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 599,
+            "missed": 1,
+            "maxInputGapMs": 33.179291,
+            "overlaySamples": 599,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 599,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 599,
+            "meshUploads": 599,
+            "completionWakeups": 1,
+            "sceneFrames": 599,
+            "distinctGroundSceneFrames": 598,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              58,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60
+            ],
+            "sourceFrameIntervalP50Ms": 16.666958,
+            "callbackPeriodP50Ms": 16.66775,
+            "callbackPeriodMaxMs": 33.180292,
+            "prepareP50Ms": 7.85075,
+            "prepareP95Ms": 8.946292,
+            "prepareMaxMs": 11.735166,
+            "inputExecutionP95Ms": 1.329417,
+            "inputExecutionMaxMs": 5.316584
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 600,
+            "missed": 0,
+            "maxInputGapMs": 17.409334,
+            "overlaySamples": 600,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "completionWakeups": 1,
+            "sceneFrames": 600,
+            "distinctGroundSceneFrames": 0,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "sourceFrameIntervalP50Ms": 16.665291,
+            "callbackPeriodP50Ms": 16.66425,
+            "callbackPeriodMaxMs": 17.409292,
+            "inputExecutionP95Ms": 0.046792,
+            "inputExecutionMaxMs": 0.126541
+          }
+        ],
+        "environment": {
+          "lowPower": false,
+          "thermalState": 0
+        },
+        "trajectory": "linear"
+      },
+      "hostPower": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t72%; charging; 1:00 remaining present: true\nNow drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t74%; charging; 0:54 remaining present: true\n",
+      "hostLoadBefore": "  772 116.1 /usr/libexec/spotlightknowledged.updater\n 6678  89.5 /System/Library/Frameworks/AddressBook.framework/Versions/A/Helpers/AddressBookSourceSync.app/Contents/MacOS/AddressBookSourceSync\n  408  46.2 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n 6654  44.7 /private/tmp/saffron-workspace-uitest/Build/Products/Debug/Saffron.app/Contents/MacOS/Saffron\n 6698  18.5 /usr/libexec/mlhostd\n 6697  17.5 /usr/libexec/proactiveeventtrackerd\n  680  15.3 /System/Applications/Mail.app/Contents/MacOS/Mail\n83505  14.3 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/155.0.8059.80/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)\n 6650  12.4 /private/tmp/saffron-workspace-uitest/Build/Products/Debug/SaffronWorkspaceUITests-Runner.app/Contents/MacOS/SaffronWorkspaceUITests-Runner\n83260   9.8 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/155.0.8059.80/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)\n",
+      "sourceVariant": "final source snapshot checksums"
+    },
+    {
+      "name": "poly60-final-images",
+      "instrument": "In-app scene counters, no Instruments attachment",
+      "powerContext": "AC power, Low Power Mode off; competing system activity observed around these runs.",
+      "data": {
+        "prefix": "/tmp/maquette-cadence-ipad-poly60-final-images",
+        "pid": "6959",
+        "phases": [
+          {
+            "phase": "Pan",
+            "ticks": 600,
+            "missed": 0,
+            "maxInputGapMs": 21.442209,
+            "overlaySamples": 2400,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 2404,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 601,
+            "meshUploads": 601,
+            "completionWakeups": 1,
+            "sceneFrames": 600,
+            "distinctGroundSceneFrames": 599,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              59,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60
+            ],
+            "sourceFrameIntervalP50Ms": 16.666874,
+            "callbackPeriodP50Ms": 16.665458,
+            "callbackPeriodMaxMs": 21.442208,
+            "prepareP50Ms": 4.333375,
+            "prepareP95Ms": 4.952916,
+            "prepareMaxMs": 8.152709,
+            "inputExecutionP95Ms": 0.015292,
+            "inputExecutionMaxMs": 5.443416
+          },
+          {
+            "phase": "GroundZoom",
+            "ticks": 599,
+            "missed": 1,
+            "maxInputGapMs": 33.163,
+            "overlaySamples": 2396,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 2396,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 599,
+            "meshUploads": 599,
+            "completionWakeups": 1,
+            "sceneFrames": 599,
+            "distinctGroundSceneFrames": 598,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              58,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60,
+              60
+            ],
+            "sourceFrameIntervalP50Ms": 16.667375,
+            "callbackPeriodP50Ms": 16.667333,
+            "callbackPeriodMaxMs": 33.163292,
+            "prepareP50Ms": 7.721625,
+            "prepareP95Ms": 8.616416,
+            "prepareMaxMs": 14.536375,
+            "inputExecutionP95Ms": 1.338209,
+            "inputExecutionMaxMs": 4.710708
+          },
+          {
+            "phase": "CameraZoom",
+            "ticks": 600,
+            "missed": 0,
+            "maxInputGapMs": 17.391,
+            "overlaySamples": 2400,
+            "hiddenOverlaySamples": 0,
+            "completedBuilds": 0,
+            "incoherentSurfaceSamples": 0,
+            "panPresentations": 0,
+            "meshUploads": 0,
+            "completionWakeups": 1,
+            "sceneFrames": 600,
+            "distinctGroundSceneFrames": 0,
+            "driver": "scene",
+            "thresholdSkips": 0,
+            "deferrals": 0,
+            "distinctGroundBins": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "sourceFrameIntervalP50Ms": 16.667459,
+            "callbackPeriodP50Ms": 16.66525,
+            "callbackPeriodMaxMs": 17.3905,
+            "inputExecutionP95Ms": 0.044042,
+            "inputExecutionMaxMs": 0.2345
+          }
+        ],
+        "environment": {
+          "lowPower": false,
+          "thermalState": 0
+        },
+        "trajectory": "linear"
+      },
+      "hostPower": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t74%; charging; 0:54 remaining present: true\nNow drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t75%; charging; 0:51 remaining present: true\n",
+      "hostLoadBefore": "  772  99.8 /usr/libexec/spotlightknowledged.updater\n  408  17.9 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n83505  16.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/155.0.8059.80/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)\n83260  15.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/155.0.8059.80/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)\n  719  12.7 /Applications/Pixelmator Pro.app/Contents/MacOS/Pixelmator Pro\n 6654   3.6 /private/tmp/saffron-workspace-uitest/Build/Products/Debug/Saffron.app/Contents/MacOS/Saffron\n89465   3.2 /usr/libexec/testmanagerd\n90128   3.0 /System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTEncoderXPCService.xpc/Contents/MacOS/VTEncoderXPCService\n83506   2.4 /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex\n  581   2.4 /System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/com.apple.DriverKit-AppleBCMWLAN\n",
+      "sourceVariant": "final source snapshot checksums"
+    }
+  ],
+  "unavailableCaptures": [
+    {
+      "prefix": "/tmp/maquette-poly60-off-polygons",
+      "reason": "Instruments attach timed out after95seconds; no completed phase data; excluded from performance acceptance."
+    },
+    {
+      "prefix": "/tmp/maquette-poly60-off-final-polygons",
+      "reason": "Second Instruments attach timed out after 95 seconds. No accepted CPU trace; excluded from acceptance."
+    }
+  ],
+  "postFinalSimulatorRunLoad": {
+    "observation": "Post-run snapshot, not proof of load throughout the trace",
+    "corespotlightdCPUPercent": 196.3,
+    "spotlightknowledgedUpdaterCPUPercent": 82.0,
+    "powerSource": "AC",
+    "lowPowerMode": false
+  },
+  "benchmarkLog": " (32.03 sec)\n\udbc1\udfc8  Test run started.\n\udbc0\udd35  Testing Library Version: 2084\n\udbc0\udd35  Target Platform: arm64e-apple-macos14.0\n\udbc1\udfc8  Suite \"Map content release benchmarks\" started.\n\udbc1\udfc8  Test \"Separate surface preparation, draping and GPU buffer work\" started.\nSTAGES image: prepare 14.513833 ms; drape 1.792833 ms; warm buffers 0.149708 ms; vertices 49393\nSTAGES refit 0.397292 ms; path footprint 1.560708 ms; path drape 2.30825 ms\nSTAGES one polygon: prepare 0.273208 ms; drape 0.774708 ms; buffer 0.037375 ms; vertices 4112\n\udbc4\udc5b  Test \"Separate surface preparation, draping and GPU buffer work\" passed after 0.146 seconds.\n\udbc1\udfc8  Test \"100 native label factories, reconciliation and layout\" started.\nCONTENT labels: 100 hosted candidates; 64 visible cap; 0.13647916999999998 ms/reconcile+factories+layout; zero registry record replacements. SwiftUI layout/render excluded.\n\udbc4\udc5b  Test \"100 native label factories, reconciliation and layout\" passed after 0.014 seconds.\n\udbc1\udfc8  Test \"10,000-point path\" started.\nCONTENT main actor completion mean 0.35156655 ms\nCONTENT GPU geometry: 1 resources; 68166 unique vertices\nCONTENT zoom mean 5.201320900000001 ms; nominal 16ms-input main actor p95 1.219708 ms; overlays completed before next input 30/30; retained jobs 1\nCONTENT nominal 16ms input: observed interval p95 20.982083 ms\nCONTENT completed pan p95/max 5.443/5.512208 ms; zoom p95/max 5.456916/5.456916 ms\nCONTENT path 10000 points: initial 27.531708 ms; pan rebuild mean 5.24336675 ms; output vertices 68166; uploads 0; zero record replacements; terrain mesh retained.\nCONTENT RSS MiB: before Optional(186.203125); warm Optional(193.953125); cycle range Optional(193.984375)...Optional(195.453125). Process resident samples include allocator caches; exclude GPU/heap attribution and do not prove bounded long-run memory.\n\udbc4\udc5b  Test \"10,000-point path\" passed after 0.822 seconds.\n\udbc1\udfc8  Test \"10,000 polygon vertices including holes\" started.\nCONTENT main actor completion mean 1.10079115 ms\nCONTENT GPU geometry: 25 resources; 108456 unique vertices\nCONTENT zoom mean 5.1062417 ms; nominal 16ms-input main actor p95 1.359583 ms; overlays completed before next input 30/30; retained jobs 25\nCONTENT nominal 16ms input: observed interval p95 21.4195 ms\nCONTENT completed pan p95/max 6.350958/6.423625 ms; zoom p95/max 5.4505/5.4505 ms\nCONTENT 25 polygons 10000 vertices 25 holes: initial 30.979583 ms; pan rebuild mean 5.4587604 ms; output vertices 108456; uploads 0; zero record replacements; terrain mesh retained.\nCONTENT RSS MiB: before Optional(199.859375); warm Optional(212.125); cycle range Optional(217.65625)...Optional(240.453125). Process resident samples include allocator caches; exclude GPU/heap attribution and do not prove bounded long-run memory.\n\udbc4\udc5b  Test \"10,000 polygon vertices including holes\" passed after 0.832 seconds.\n\udbc1\udfc8  Test \"Four 2048-pixel images retain uploads across pan and reconciliation\" started.\nCONTENT main actor completion mean 0.36617495 ms\nCONTENT GPU geometry: 1 resources; 49393 unique vertices\nCONTENT zoom mean 3.011021 ms; nominal 16ms-input main actor p95 1.296583 ms; overlays completed before next input 30/30; retained jobs 1\nCONTENT nominal 16ms input: observed interval p95 21.377292 ms\nCONTENT completed pan p95/max 3.528333/3.765458 ms; zoom p95/max 3.600875/3.600875 ms\nCONTENT 4 images 2048x2048 RGBA: initial 63.020083 ms; pan rebuild mean 3.2684355 ms; output vertices 197572; uploads 4; zero record replacements; terrain mesh retained.\nCONTENT RSS MiB: before Optional(271.984375); warm Optional(371.3125); cycle range Optional(373.40625)...Optional(375.3125). Process resident samples include allocator caches; exclude GPU/heap attribution and do not prove bounded long-run memory.\n\udbc4\udc5b  Test \"Four 2048-pixel images retain uploads across pan and reconciliation\" passed after 0.802 seconds.\n\udbc4\udc5b  Suite \"Map content release benchmarks\" passed after 2.618 seconds.\n\udbc4\udc5b  Test run with 5 tests in 1 suite passed after 2.618 seconds.\n",
+  "validation": {
+    "debug": {
+      "internal": 851,
+      "publicAPI": 21,
+      "passed": true
+    },
+    "release": {
+      "internal": 851,
+      "publicAPI": 21,
+      "passed": true
+    },
+    "benchmarkCases": 5,
+    "asan": {
+      "passed": true,
+      "tests": 10
+    },
+    "builds": {
+      "macOS15": "passed",
+      "iOS18Simulator": "passed",
+      "visionOS2Simulator": "passed"
+    }
+  },
+  "nativeGroundUpdateAcceptance": true,
+  "simulatorPhysicalHardwareVerification": false,
+  "sourceChecksumScope": "Final source only. Intermediate uncommitted iterations are identified by sourceVariant; their exact source checksums were not recorded.",
+  "finalPowerProfiles": "Battery Power:\n Sleep On Power Button 1\n powermode            0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             0\n hibernatefile        /var/vm/sleepimage\n displaysleep         3\n womp                 0\n networkoversleep     0\n sleep                3\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n powermode            0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                0\n tcpkeepalive         1\n disksleep            10\n",
+  "finalHostPower": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=23068771)\t79%; charging; 0:44 remaining present: true\n",
+  "powerProfilesUnchangedSinceUserChange": true
+}

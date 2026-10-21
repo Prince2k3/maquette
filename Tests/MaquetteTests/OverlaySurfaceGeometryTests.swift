@@ -32,6 +32,50 @@ struct OverlaySurfaceGeometryTests {
         }
     }
 
+    @Test func clippedConvexFaceSharesFanCorners() throws {
+        var buffers = TerrainSolidGenerator.Buffers()
+        buffers.positions = [.init(0, 0, 0), .init(2, 2, 0), .init(0, 0, 2)]
+        buffers.indices = [0, 2, 1]
+        let ring = [SIMD2<Double>(-1, -1), .init(1, -1), .init(1, 3), .init(-1, 3)]
+            .map { OverlayVertex(point: $0, uv: .init(0.2, 0.8), altitude: 7) }
+        let surface = try OverlaySurfaceMesh(terrain: buffers)
+        let mesh = try #require(try surface.drapeConvexArea(rings: [ring], altitude: .relativeToGround,
+            lift: 0.001, elevationToY: { $0 * 2 - 100 }))
+        #expect(mesh.indices.count == 6)
+        #expect(mesh.positions.count == 4)
+        #expect(mesh.uvs.allSatisfy { $0 == SIMD2<Float>(0.2, 0.8) })
+        #expect(mesh.positions.allSatisfy { abs($0.y - $0.x - 14.001) < 1e-5 })
+        var area: Float = 0
+        for i in stride(from: 0, to: mesh.indices.count, by: 3) {
+            let a = mesh.positions[Int(mesh.indices[i])], b = mesh.positions[Int(mesh.indices[i + 1])]
+            let c = mesh.positions[Int(mesh.indices[i + 2])]
+            area += simd_cross(b - a, c - a).y / 2
+        }
+        #expect(abs(area - 1.5) < 1e-6)
+    }
+
+    @Test func directConvexFillRetainsValidationAndAttributeFallbacks() throws {
+        func ring(_ radius: Double, center: SIMD2<Double> = .zero) -> [OverlayVertex] {
+            [SIMD2(-radius, -radius), .init(radius, -radius), .init(radius, radius), .init(-radius, radius)]
+                .map { .init(point: center + $0) }
+        }
+        let surface = try OverlaySurfaceMesh(terrain: ridge())
+        #expect(throws: OverlayGeometryError.invalidHole) {
+            try surface.drapeConvexArea(rings: [ring(2), ring(0.5, center: .init(3, 3))],
+                altitude: .clampToGround, lift: 0, elevationToY: { $0 })
+        }
+        // A star can have consistent local turns while its non-adjacent edges cross.
+        let pentagon = (0..<5).map { i in SIMD2(cos(Double(i) * 2 * .pi / 5), sin(Double(i) * 2 * .pi / 5)) }
+        let star = [0, 2, 4, 1, 3].map { OverlayVertex(point: pentagon[$0]) }
+        #expect(throws: OverlayGeometryError.selfIntersection) {
+            try surface.drapeConvexArea(rings: [star], altitude: .clampToGround, lift: 0, elevationToY: { $0 })
+        }
+        var varying = ring(2)
+        varying[1].uv.x = 1
+        #expect(try surface.drapeConvexArea(rings: [varying], altitude: .clampToGround, lift: 0, elevationToY: { $0 }) == nil)
+        #expect(try surface.drapeConvexArea(rings: [ring(2)], altitude: .absolute, lift: 0, elevationToY: { $0 }) == nil)
+    }
+
     @Test(arguments: [4, 7, 37, 300])
     func convexRingCutsKeepHolesWindingAndRelief(count: Int) throws {
         func ring(_ count: Int, center: SIMD2<Double>, radius: Double) -> [OverlayVertex] {
@@ -57,6 +101,11 @@ struct OverlaySurfaceGeometryTests {
                     return sum + Double(simd_cross(b - a, c - a).y) / 2
                 }
             }
+            let direct = try #require(try surface.drapeConvexArea(rings: rings, altitude: .relativeToGround,
+                lift: 0, elevationToY: { $0 * 2 - 100 }))
+            #expect(direct.positions == mesh.positions)
+            #expect(direct.indices == mesh.indices)
+            #expect(direct.uvs == mesh.uvs)
             #expect(abs(area(mesh) - area(reference)) < 2e-5)
             for i in stride(from: 0, to: mesh.indices.count, by: 3) {
                 let a = mesh.positions[Int(mesh.indices[i])], b = mesh.positions[Int(mesh.indices[i + 1])], c = mesh.positions[Int(mesh.indices[i + 2])]

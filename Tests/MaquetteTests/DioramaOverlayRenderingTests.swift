@@ -39,6 +39,30 @@ enum OverlayRenderFixture {
 @Suite("Diorama overlay reconciliation")
 @MainActor
 struct DioramaOverlayRenderingTests {
+    @Test func convexFillBudgetsResidentOutputInsteadOfUnusedTessellation() throws {
+        let (root, proxy) = try OverlayRenderFixture.make(resolution: 2)
+        let projection = try #require(proxy.projection as? TerrainProjection)
+        let buffers = try #require(root.terrain?.surfaceBuffers)
+        let cap = buffers.indices.count / 3
+        let surface = try OverlaySurfaceMesh(terrain: buffers, limits: .init(maxTriangles: cap))
+        let ring = LinearRing((0..<300).map { i in
+            let angle = Double(i) / 300 * 2 * Double.pi
+            return projection.anchor.coordinate(forDioramaX: cos(angle) * 0.8, z: sin(angle) * 0.8)
+        })
+        let layers = try DioramaOverlayGeometryBuilder.build(shape: .polygon(.init(exterior: ring)),
+            style: .init(), proxy: proxy, surface: surface, physicalSize: 1)
+        let mesh = try #require(layers.first?.mesh)
+        #expect(mesh.indices.count == buffers.indices.count)
+        var area: Float = 0
+        for i in stride(from: 0, to: mesh.indices.count, by: 3) {
+            let a = mesh.positions[Int(mesh.indices[i])], b = mesh.positions[Int(mesh.indices[i + 1])]
+            let c = mesh.positions[Int(mesh.indices[i + 2])]
+            area += simd_cross(b - a, c - a).y / 2
+        }
+        #expect(abs(area - 1) < 1e-5)
+        #expect(mesh.positions.allSatisfy { abs($0.y - 0.002) < 1e-5 })
+    }
+
     @Test func identicalFootprintsShareWorkWithoutSharingMaterialsOrCancellation() async throws {
         let (root, proxy) = try OverlayRenderFixture.make()
         let bounds = try #require(GeographicBounds(enclosing: OverlayRenderFixture.polygon(proxy).exterior!.coordinates))

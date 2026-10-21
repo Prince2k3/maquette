@@ -268,11 +268,45 @@ struct OverlaySurfaceMesh: Sendable {
         }
         var work = preparedWork
         try work.checkTriangles(source.count)
-        let coverage = try OverlayAreaCoverage(rings: rings, work: &work)
+        try work.spend(rings.reduce(0) { $0 + $1.count })
         let convex = OverlayConvexArea(rings)
+        return try drapePreparedArea(source, rings: rings, convex: convex, first: first,
+            altitude: altitude, lift: lift, elevationToY: elevationToY, work: &work)
+    }
+
+    /// The resident raster already carries the exact chunk outline. A validated convex fill
+    /// can intersect it directly, without generating and clipping unused source triangles.
+    func drapeConvexArea(rings: [[OverlayVertex]], altitude: AltitudeReference, lift: Double,
+                         elevationToY: (Double) -> Double) throws -> OverlayMesh? {
+        try Task.checkCancellation()
+        guard !resolvesOverlaps, altitude != .absolute else { return nil }
+        var work = preparedWork
+        var count = 0
+        for ring in rings {
+            guard ring.count <= work.limits.maxInputVertices - count else { throw OverlayGeometryError.budgetExceeded }
+            count += ring.count
+            guard ring.allSatisfy(\.isFinite) else { throw OverlayGeometryError.nonFiniteInput }
+        }
+        guard lift.isFinite else { throw OverlayGeometryError.nonFiniteInput }
+        guard let first = rings.first?.first,
+              rings.allSatisfy({ $0.allSatisfy {
+                  $0.uv == first.uv && (altitude == .clampToGround || $0.altitude == first.altitude)
+              } }), let convex = OverlayConvexArea(rings) else { return nil }
+        let validated = try OverlayPolygonTessellator.validated(rings, work: &work)
+        try work.spend(count)
+        return try drapePreparedArea([], rings: validated, convex: convex, first: first,
+            altitude: altitude, lift: lift, elevationToY: elevationToY, work: &work)
+    }
+
+    private func drapePreparedArea(_ source: [OverlayTriangle], rings: [[OverlayVertex]],
+                                   convex: OverlayConvexArea?, first: OverlayVertex,
+                                   altitude: AltitudeReference, lift: Double,
+                                   elevationToY: (Double) -> Double, work: inout OverlayWork) throws -> OverlayMesh {
+        let coverage = try convex == nil ? OverlayAreaCoverage(rings: rings, work: &work) : nil
         let sourceIndex = try convex == nil ? OverlaySpatialIndex(bounds: source.map(\.bounds), work: &work) : nil
         var mesh = OverlayMesh()
-        let candidates = try index.candidates(for: coverage.bounds, work: &work)
+        let vertexLimit = min(work.limits.maxTriangles, Int(UInt32.max) / 3) * 3
+        let candidates = try index.candidates(for: convex?.exteriorBounds ?? coverage!.bounds, work: &work)
         mesh.reserveCapacity(min(work.limits.maxTriangles, candidates.count * 2) * 3)
         // Constant unlit fills share original resident corners across interior faces. Boundary
         // fragments retain their exact clipped vertices; no absent terrain face gains indices.
@@ -284,13 +318,25 @@ struct OverlaySurfaceMesh: Sendable {
             let p = SIMD3<Float>(Float(position.x), Float(y + lift), Float(position.z))
             let uv = SIMD2<Float>(first.uv)
             guard p.x.isFinite, p.y.isFinite, p.z.isFinite, uv.x.isFinite, uv.y.isFinite else { throw OverlayGeometryError.nonFiniteInput }
-            guard mesh.positions.count < Int(UInt32.max) else { throw OverlayGeometryError.budgetExceeded }
+            guard mesh.positions.count < vertexLimit else { throw OverlayGeometryError.budgetExceeded }
             let result = UInt32(mesh.positions.count)
             interiorVertices[source] = result
             mesh.positions.append(p); mesh.uvs.append(uv); mesh.normals.append(.init(0, 1, 0))
             return result
         }
-        for candidate in candidates {
+        var region: OverlayConvexArea.Region?
+        var regionEnd = 0
+        for (offset, candidate) in candidates.enumerated() {
+            if let convex, offset == regionEnd {
+                regionEnd = min(candidates.count, offset + 16)
+                var bounds = triangles[candidate].bounds
+                for i in (offset + 1)..<regionEnd {
+                    try work.spend()
+                    let next = triangles[candidates[i]].bounds
+                    bounds.lo = simd_min(bounds.lo, next.lo); bounds.hi = simd_max(bounds.hi, next.hi)
+                }
+                region = try convex.region(for: bounds, epsilon: epsilon, work: &work)
+            }
             let ground = surfaceTriangle(at: candidate)
             let a = SIMD2(ground.a.x, ground.a.z), b = SIMD2(ground.b.x, ground.b.z), c = SIMD2(ground.c.x, ground.c.z)
             func emit(_ fragment: OverlayTriangle) throws {
@@ -299,33 +345,58 @@ struct OverlaySurfaceMesh: Sendable {
                     return altitude == .relativeToGround ? y + elevationToY(vertex.altitude) - elevationToY(0) : y
                 }
             }
-            if try !coverage.touches(a: a, b: b, c: c, epsilon: epsilon, work: &work) {
-                if try coverage.contains((a + b + c) / 3, work: &work) {
-                    try work.spend(3)
-                    try work.checkTriangles(mesh.indices.count / 3 + 1)
-                    let face = sourceFaces[candidate]
-                    let ia = try interiorVertex(sourceIndices[face], position: ground.a)
-                    let ib = try interiorVertex(sourceIndices[face + 1], position: ground.b)
-                    let ic = try interiorVertex(sourceIndices[face + 2], position: ground.c)
-                    mesh.indices.append(ia)
-                    if OverlayMath.cross(b - a, c - a) <= 0 {
-                        mesh.indices.append(ib); mesh.indices.append(ic)
-                    } else {
-                        mesh.indices.append(ic); mesh.indices.append(ib)
-                    }
+            func emitInterior() throws {
+                try work.spend(3)
+                try work.checkTriangles(mesh.indices.count / 3 + 1)
+                let face = sourceFaces[candidate]
+                let ia = try interiorVertex(sourceIndices[face], position: ground.a)
+                let ib = try interiorVertex(sourceIndices[face + 1], position: ground.b)
+                let ic = try interiorVertex(sourceIndices[face + 2], position: ground.c)
+                mesh.indices.append(ia)
+                if OverlayMath.cross(b - a, c - a) <= 0 {
+                    mesh.indices.append(ib); mesh.indices.append(ic)
+                } else {
+                    mesh.indices.append(ic); mesh.indices.append(ib)
                 }
-                continue
             }
             if let convex {
                 let triangle = OverlayTriangle(a: .init(point: a, uv: first.uv, altitude: first.altitude),
                     b: .init(point: b, uv: first.uv, altitude: first.altitude), c: .init(point: c, uv: first.uv, altitude: first.altitude))
-                for polygon in try convex.fragments(of: triangle, epsilon: epsilon, work: &work) {
-                    for i in 1..<(polygon.count - 1) {
-                        let fragment = OverlayTriangle(a: polygon[0], b: polygon[i], c: polygon[i + 1])
-                        guard abs(OverlayMath.cross(fragment.b.point - fragment.a.point, fragment.c.point - fragment.a.point)) > epsilon * epsilon else { continue }
-                        try emit(fragment)
+                switch try convex.intersection(of: triangle, region: region, epsilon: epsilon, work: &work) {
+                case .empty: break
+                case .whole: try emitInterior()
+                case .clipped(let polygons):
+                    for polygon in polygons {
+                        // Each convex fragment lies on one resident plane. Share exact fan
+                        // corners, using the same unlit up normal as interior raster faces.
+                        try work.spend(polygon.count)
+                        guard polygon.count <= vertexLimit, mesh.positions.count <= vertexLimit - polygon.count else { throw OverlayGeometryError.budgetExceeded }
+                        let base = UInt32(mesh.positions.count)
+                        let relativeY = altitude == .relativeToGround ? elevationToY(first.altitude) - elevationToY(0) : 0
+                        for vertex in polygon {
+                            let y = ground.boundedHeight(at: vertex.point) + relativeY + lift
+                            let p = SIMD3<Float>(Float(vertex.point.x), Float(y), Float(vertex.point.y))
+                            let uv = SIMD2<Float>(vertex.uv)
+                            guard p.x.isFinite, p.y.isFinite, p.z.isFinite, uv.x.isFinite, uv.y.isFinite else { throw OverlayGeometryError.nonFiniteInput }
+                            mesh.positions.append(p); mesh.uvs.append(uv); mesh.normals.append(.init(0, 1, 0))
+                        }
+                        for i in 1..<(polygon.count - 1) {
+                            let area = OverlayMath.cross(polygon[i].point - polygon[0].point, polygon[i + 1].point - polygon[0].point)
+                            guard abs(area) > epsilon * epsilon else { continue }
+                            let b = base + UInt32(area < 0 ? i : i + 1), c = base + UInt32(area < 0 ? i + 1 : i)
+                            let cross = simd_cross(SIMD3<Double>(mesh.positions[Int(b)]) - SIMD3<Double>(mesh.positions[Int(base)]),
+                                                   SIMD3<Double>(mesh.positions[Int(c)]) - SIMD3<Double>(mesh.positions[Int(base)]))
+                            guard cross.y > 0 else { continue }
+                            try work.spend()
+                            try work.checkTriangles(mesh.indices.count / 3 + 1)
+                            mesh.indices.append(base); mesh.indices.append(b); mesh.indices.append(c)
+                        }
                     }
                 }
+                continue
+            }
+            if try !coverage!.touches(a: a, b: b, c: c, epsilon: epsilon, work: &work) {
+                if try coverage!.contains((a + b + c) / 3, work: &work) { try emitInterior() }
                 continue
             }
             for sourceID in try sourceIndex!.rasterCandidates(for: ground.bounds, work: &work) {

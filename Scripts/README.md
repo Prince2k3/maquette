@@ -125,3 +125,9 @@ On a simulator, prefix runtime environment variables with `SIMCTL_CHILD_` when u
 `xcrun simctl launch`. Empty Instruments tables are unavailable measurements, not zero cost.
 Input cadence and simulator results cannot verify physical-device frame rate. Obtain per-frame
 timing and real gesture/hardware captures before declaring the smooth 60 fps goal achieved.
+
+[[map-simulator-polygon-optimization]] records direct convex raster fills, conservative regional
+clipping and indexed boundary fans. `Fixtures/overlay-profile-simulator-polygons-2026-10-21.json`
+retains intermediate controls, native layer FPS, simulator counters, power-context changes and
+validation. Native and simulator acceptance are reported separately; the user disabled Low Power
+Mode during the session, and later captures must not be compared as a code-only improvement.

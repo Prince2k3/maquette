@@ -50,6 +50,15 @@ enum DioramaOverlayGeometryBuilder {
             }
             if !mesh.indices.isEmpty { result.append(.init(kind: kind, mesh: mesh)) }
         }
+        func area(_ rings: [[OverlayVertex]]) throws {
+            if let mesh = try ground.drapeConvexArea(rings: rings, altitude: style.altitude, lift: lift,
+                elevationToY: { Double(projection.y(forElevation: $0)) }) {
+                if !mesh.indices.isEmpty { result.append(.init(kind: .fill, mesh: mesh)) }
+            } else {
+                let source = try OverlayPolygonTessellator.triangulate(rings: rings)
+                try draped(OverlayAreaGeometry.clip(source, boundary: boundary), kind: .fill, rings: rings)
+            }
+        }
         func coordinate(at vertex: OverlayVertex, fallback: Coordinate) -> Coordinate {
             if let raster = projection as? TerrainProjection {
                 return raster.anchor.coordinate(forDioramaX: vertex.point.x + Double(raster.panOffset.x),
@@ -93,15 +102,13 @@ enum DioramaOverlayGeometryBuilder {
             try stroke(vertices, coordinates: coordinates, closed: false)
         case .polygon(let polygon):
             let rings = try polygon.rings.map { try geographic.project($0.coordinates) }
-            let source = try OverlayPolygonTessellator.triangulate(rings: rings)
-            try draped(OverlayAreaGeometry.clip(source, boundary: boundary), kind: .fill, rings: rings)
+            try area(rings)
             if style.stroke != nil {
                 for (ring, vertices) in zip(polygon.rings, rings) { try stroke(vertices, coordinates: ring.coordinates, closed: true) }
             }
         case .circle(let center, let radius):
             var ring = try geographic.circle(center: center, radius: radius, maximumError: max(1e-7, Double(physicalSize) * 0.0002))
-            let source = try OverlayPolygonTessellator.triangulate(rings: [ring])
-            try draped(OverlayAreaGeometry.clip(source, boundary: boundary), kind: .fill, rings: [ring])
+            try area([ring])
             if style.stroke != nil, let first = ring.first {
                 ring.append(first)
                 try stroke(ring, coordinates: ring.map { coordinate(at: $0, fallback: center) }, closed: true)

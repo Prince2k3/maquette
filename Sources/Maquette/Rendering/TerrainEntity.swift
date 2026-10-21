@@ -193,12 +193,9 @@ class TerrainEntity: Entity {
     ) {
         guard var geometry, self.heightField != nil else { return }
 
-        let sameMapping = heightField.anchor == self.heightField?.anchor
-            && heightField.elevationScale == self.heightField?.elevationScale
-            && heightField.baselineElevation == self.heightField?.baselineElevation
-            && (newGroundScale == nil || newGroundScale == groundScale)
-            && (newPanOffset == nil || newPanOffset == panOffset)
-        isPanPresentationDeferred = sameMapping && (parent as? DioramaEntity)?.overlayRenderer.canDeferPanPresentation == true
+        // A mapping change needs the same complete-frame handoff as a pan: retain the
+        // displayed buffers until overlays have been rebuilt against this CPU candidate.
+        isPanPresentationDeferred = (parent as? DioramaEntity)?.overlayRenderer.canDeferPanPresentation == true
         self.heightField = heightField
         if let newPanOffset {
             self.panOffset = newPanOffset

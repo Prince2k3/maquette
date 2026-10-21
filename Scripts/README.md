@@ -65,6 +65,9 @@ observations do not establish a cross-platform 60 fps pass.
 The driver also samples agreement with the presented terrain revision and counts coherent pan
 presentations separately from input iterations and layer FPS.
 
+[[map-overlay-ground-zoom-visibility-fix]] records the subsequent mapping-change handoff and repeat
+captures. `Fixtures/overlay-profile-ground-zoom-fix-2026-10-21.json` preserves those results.
+
 The opt-in driver in `Platform/DioramaProfileTour.swift` is compiled out unless
 `MAQUETTE_PROFILING` is defined. It also requires the runtime environment variable
 `MAQUETTE_PROFILE=1`. It waits for initial content, warms up for eight seconds, then drives ten

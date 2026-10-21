@@ -116,7 +116,7 @@ final class DioramaStore {
     private func notifyGroundChange() {
         if !groundChangesSuspended { groundDidChange?() }
     }
-    var hasPendingPan: Bool { isFlushingPan || panTailTask != nil || panResampler.hasUnappliedMovement || pendingPanTarget != nil || (dioramaEntity as? DioramaEntity)?.terrain?.isPanPresentationDeferred == true }
+    var hasPendingPan: Bool { isFlushingPan || panTailTask != nil || panResampler.hasUnappliedMovement || pendingGroundInput.pan != nil || pendingGroundInput.scale != nil || (dioramaEntity as? DioramaEntity)?.terrain?.isPanPresentationDeferred == true }
 
     private let tileCache = TileCache()
     private let logger = Logger(maquette: "DioramaStore")
@@ -1279,12 +1279,13 @@ final class DioramaStore {
     private var panTailTask: Task<Void, Never>?
     private var panRevision = 0
     // One absolute target accumulates input while a coherent frame is being prepared.
-    private var pendingPanTarget: SIMD2<Float>?
+    private var pendingGroundInput = PendingGroundInput()
 
     /// Drops pending gesture samples without invalidating the current scene or a loading task.
     func cancelPendingPan() {
         panRevision += 1
-        pendingPanTarget = nil
+        pendingGroundInput.pan = nil
+        pendingGroundInput.scale = nil
         panTailTask?.cancel()
         panTailTask = nil
         panResampler = PanPathResampler()
@@ -1342,7 +1343,7 @@ final class DioramaStore {
     private func flushPan() {
         let step = panResampler.step(now: ProcessInfo.processInfo.systemUptime)
         if step != .zero {
-            setPanOffset((pendingPanTarget ?? panOffset) + step)
+            setPanOffset((pendingGroundInput.pan ?? panOffset) + step)
         }
 
         guard panResampler.hasUnappliedMovement else { return }
@@ -1378,7 +1379,7 @@ final class DioramaStore {
     public func setPanOffset(_ offset: SIMD2<Float>) {
         guard configuration.panRange > 0 else { return }
         if (dioramaEntity as? DioramaEntity)?.terrain?.isPanPresentationDeferred == true {
-            pendingPanTarget = offset
+            pendingGroundInput.pan = offset
             return
         }
 
@@ -1477,12 +1478,23 @@ final class DioramaStore {
             root.buildings?.setPanOffset(self.panOffset)
             if reapply { self.reapplyEffect() } else { self.refreshEffect() }
             self.routePreviewEntity = root.routePreview
+            self.updatePresentedWater(on: root)
             self.recutBuildingsIfNeeded()
             guard self.panRevision == revision else { return }
-            let target = self.pendingPanTarget
-            self.pendingPanTarget = nil
-            if drainQueuedPan, let target { self.setPanOffset(target) }
+            let input = self.pendingGroundInput
+            self.pendingGroundInput = PendingGroundInput()
+            guard drainQueuedPan else { return }
+            let previousScale = self.groundScale
+            if let scale = input.scale { self.setGroundScale(scale) }
+            if let target = input.pan(from: previousScale, to: self.groundScale) { self.setPanOffset(target) }
         }
+    }
+
+    /// Sea level and effects follow the displayed candidate, rather than running ahead of it.
+    private func updatePresentedWater(on root: DioramaEntity) {
+        guard let water = root.waterPlane, let field = terrainField else { return }
+        water.position.y = WaterPlaneEntity.surfaceY(boundary: configuration.boundary,
+            baselineElevation: field.baselineElevation, elevationScale: field.elevationScale)
     }
 
     // MARK: - Rolling Fetch
@@ -1740,10 +1752,14 @@ final class DioramaStore {
 
         let limits = groundScaleLimits
         let target = min(max(scale, limits.lowerBound), limits.upperBound)
+        if (dioramaEntity as? DioramaEntity)?.terrain?.isPanPresentationDeferred == true {
+            pendingGroundInput.scale = target
+            return
+        }
         guard abs(target / groundScale - 1) > 1e-4 else { return }
 
         let started = ContinuousClock.now
-        pendingPanTarget = nil
+        pendingGroundInput.pan = nil
         let offset = panOffset * (groundScale / target)
         guard let mapping = applyMapping(scale: target, zoom: template.zoom) else { return }
 
@@ -1769,19 +1785,13 @@ final class DioramaStore {
             panOffset: offset,
             groundScale: target
         )
-        // Sea level is an elevation like any other, so it rides the elevation scale down. Moving the
-        // plane rather than rebuilding it is enough: it is cut to the outline, which has not moved —
-        // and the height goes through the same rule the load path used, so the lift that keeps the
-        // water off a flat seabed does not get left behind by a zoom.
-        if let water = entity?.waterPlane {
-            water.position.y = WaterPlaneEntity.surfaceY(
-                boundary: configuration.boundary,
-                baselineElevation: mapping.baselineElevation,
-                elevationScale: mapping.elevationScale
-            )
-        }
         projection?.panOffset = offset
-        refreshEffect()
+        if let entity, entity.terrain?.isPanPresentationDeferred == true {
+            deferPanPresentation(on: entity)
+        } else {
+            if let entity { updatePresentedWater(on: entity) }
+            refreshEffect()
+        }
 
         // The projection reads the same surface the chunk was just re-sampled from, so it is handed
         // `zoomed` rather than a field rebuilt from its parts. Going through
@@ -1887,7 +1897,7 @@ final class DioramaStore {
     /// Zooms the ground by a multiplier, which is what a pinch produces.
     public func zoomGround(by factor: Float) {
         guard factor > 0 else { return }
-        setGroundScale(groundScale * factor)
+        setGroundScale(pendingGroundInput.zoomTarget(from: groundScale, by: factor))
     }
 
     // MARK: - Tile Re-levelling

@@ -102,6 +102,7 @@ import SwiftUI
             datum: proxy.projection.y(forElevation: 0), scale: proxy.projection.y(forElevation: 1), physicalSize: physicalSize)
         var previous = context
         previous?.pan = current.pan; previous?.revision = current.revision
+        previous?.anchor = current.anchor; previous?.datum = current.datum; previous?.scale = current.scale
         let wasDeferred = root.terrain?.isPanPresentationDeferred == true
         let coherentPan = wasDeferred && previous == current
         var supersededCompletion: ((Bool) -> Void)?

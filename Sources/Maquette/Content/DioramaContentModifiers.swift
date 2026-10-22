@@ -167,9 +167,9 @@ extension DioramaContentItem {
     }
 }
 
-// Calling SwiftUI's unconstrained initializer here keeps the specialized content-builder
-// overloads below from recursively selecting themselves.
-private func makeForEach<Data: RandomAccessCollection, ID: Hashable, Content>(
+// Use the View-constrained initializer available in every supported SDK. Keeping the
+// helper generic over View also prevents our diorama-builder overload from recursing.
+private func makeForEach<Data: RandomAccessCollection, ID: Hashable, Content: View>(
     _ data: Data, id: KeyPath<Data.Element, ID>, content: @escaping (Data.Element) -> Content
 ) -> ForEach<Data, ID, Content> {
     ForEach(data, id: id, content: content)
@@ -180,13 +180,17 @@ private func makeForEach<Data: RandomAccessCollection, ID: Hashable, Content>(
 /// Declare `ForEach` inside a diorama builder, or pass an element closure annotated with
 /// `@DioramaContentBuilder`. A `ForEach` explicitly specialized to another content type,
 /// such as `DioramaMarker`, is not diorama content because SwiftUI does not expose its ID key path.
-public struct DioramaForEachContent: DioramaContent, Sendable {
+public nonisolated struct DioramaForEachContent: DioramaContent, Sendable, View {
+    public typealias Body = Never
     let group: DioramaContentGroup
 
     init(group: DioramaContentGroup) { self.group = group }
 
     /// The flattened items carrying their typed collection identity.
     public var items: [DioramaContentItem] { group.items }
+
+    /// Primitive content is resolved through its items rather than a view body.
+    public var body: Never { return fatalError("Primitive content is resolved internally") }
 }
 
 extension ForEach: DioramaContent where Content == DioramaForEachContent {

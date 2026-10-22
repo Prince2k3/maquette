@@ -62,7 +62,7 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
         self.makeGestures = makeGestures
     }
 
-    var body: some View {
+    private var viewport: some View {
         GeometryReader { geometry in
             realityContent
                 .overlay { OrbitAnnotationHost(model: model, coordinator: annotations) }
@@ -77,9 +77,12 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
                     model.updateEntityScale()
                 }
         }
+    }
+
+    private var styledScene: some View {
         // An effect that draws its own light needs darkness behind it, or the contours are no
         // longer the brightest thing on screen.
-        .background(effect.backgroundColor ?? .clear)
+        viewport.background(effect.backgroundColor ?? .clear)
         .dioramaLoadingOverlay(
             state: model.overlayState,
             streamingProgress: model.store.streamingProgress
@@ -91,6 +94,10 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
             if model.usesAutomaticCamera { model.frameAutomaticCamera() }
         }))
         .dioramaAttribution(model.store.contentAttribution)
+    }
+
+    private var sceneLifecycle: some View {
+        styledScene
         .task(id: globeStyle) {
             guard let globeStyle else { return }
             await model.adoptGlobeStyle(globeStyle)
@@ -106,6 +113,10 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
         }
         #endif
         .onDisappear { model.releaseCameraHost() }
+    }
+
+    var body: some View {
+        sceneLifecycle
         .onChange(of: cameraFitInsets) { _, _ in syncCameraConfiguration() }
         .onChange(of: cameraLimits) { _, _ in syncCameraConfiguration() }
         .onChange(of: cameraTransition) { _, _ in syncCameraConfiguration() }

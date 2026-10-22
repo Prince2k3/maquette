@@ -32,4 +32,15 @@ struct DioramaForEachAPITests {
         #expect(keyed.items.count == 1)
         #expect(helper.items.count == 2)
     }
+
+    @Test func collectionModifiersRemainDioramaContent() {
+        let content = DioramaContentGroup {
+            ForEach([1, 2], id: \.self) { _ in
+                DioramaMarker(coordinate: Coordinate(latitude: 36, longitude: -112))
+            }
+            .opacity(0.5)
+            .tag("places")
+        }
+        #expect(content.items.count == 2)
+    }
 }

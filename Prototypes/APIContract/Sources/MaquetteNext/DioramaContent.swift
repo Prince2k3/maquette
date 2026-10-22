@@ -191,12 +191,14 @@ extension DioramaFillableContent {
 extension DioramaModifiedContent: DioramaStrokableContent where Content: DioramaStrokableContent {}
 extension DioramaModifiedContent: DioramaFillableContent where Content: DioramaFillableContent {}
 
-public struct DioramaForEachContent: DioramaContent, PrimitiveContent {
+public struct DioramaForEachContent: DioramaContent, PrimitiveContent, View {
+    public typealias Body = Never
+    public var body: Never { return fatalError("Primitive content is resolved internally") }
     let content: ResolvedContent
     func resolve() -> ResolvedContent { content }
 }
 
-private func nativeForEach<Data: RandomAccessCollection, ID: Hashable, Content>(
+private func nativeForEach<Data: RandomAccessCollection, ID: Hashable, Content: View>(
     _ data: Data, id: KeyPath<Data.Element, ID>, content: @escaping (Data.Element) -> Content
 ) -> ForEach<Data, ID, Content> { ForEach(data, id: id, content: content) }
 

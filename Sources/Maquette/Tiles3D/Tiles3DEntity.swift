@@ -14,6 +14,8 @@ class Tiles3DEntity: Entity {
 
     /// Scale converting real-world meters to diorama physical meters.
     private let geographicScale: Float
+    typealias WallUpload = @MainActor (Tiles3DMeshBuffer, Tiles3DShallowClosure.Geometry) throws -> Tiles3DMeshBuffer.Outcome
+    private let wallUpload: WallUpload
 
     private(set) var surfaceDiagnostic: OverlayGeometryError?
     private(set) var surfaceSnapshot: Tiles3DSurfaceSnapshot?
@@ -21,7 +23,15 @@ class Tiles3DEntity: Entity {
     var onSurfaceChange: (@MainActor () -> Void)?
     private var requestedSurfaceKey: SurfaceKey?
     private var surfaceTask: Task<Void, Never>?
-    private struct SurfaceKey: Equatable {
+    private var panTask: Task<Void, Never>?
+    private var panVersion = 0
+    private(set) var isPanPresentationDeferred = false
+    var onPanPresented: (@MainActor () -> Void)?
+
+    func waitForPanPresentation() async {
+        while let task = panTask { await task.value }
+    }
+    private struct SurfaceKey: Equatable, Sendable {
         var revision: Int
         var datum: Float
         var pan: SIMD2<Float>
@@ -32,10 +42,19 @@ class Tiles3DEntity: Entity {
         guard requestedSurfaceKey != nil || surfaceSnapshot != nil else { return }
         requestedSurfaceKey = nil
         surfaceTask?.cancel()
+        clearPublishedSurface()
+    }
+
+    /// Pending replacement keys are bookkeeping, not new surface availability. Repeated pans
+    /// while no snapshot is available must not rebuild content and annotation view graphs again.
+    private func clearPublishedSurface() {
+        let changed = surfaceSnapshot != nil || surfaceDiagnostic != nil
         surfaceSnapshot = nil
         surfaceDiagnostic = nil
-        surfaceRevision &+= 1
-        onSurfaceChange?()
+        if changed {
+            surfaceRevision &+= 1
+            onSurfaceChange?()
+        }
     }
 
     /// Index only when visible topology or its physical frame changes. Invalidate synchronously
@@ -45,29 +64,43 @@ class Tiles3DEntity: Entity {
         guard key != requestedSurfaceKey else { return }
         requestedSurfaceKey = key
         surfaceTask?.cancel()
-        surfaceSnapshot = nil
-        surfaceDiagnostic = nil
-        surfaceRevision &+= 1
-        onSurfaceChange?()
+        clearPublishedSurface()
         let geometry = lodManager.visibleSurfaceGeometry, scale = geographicScale
-        let worker = Task.detached(priority: .userInitiated) {
-            try Tiles3DSurfaceSnapshot(geometry: geometry, scale: scale, datum: key.datum, pan: key.pan)
-        }
-        surfaceTask = Task { [weak self] in
+        let waitsForPanToSettle = isPanPresentationDeferred
+        // A single worker publishes only successful/current results back on the main actor.
+        // Cancelled builds need no main-actor waiter or completion transaction per pan frame.
+        // Acceleration construction is asynchronous preparation; reserve rendering priority for
+        // the live pan. Utility work can use spare cores without competing for frame deadlines.
+        surfaceTask = Task.detached(priority: .utility) { [weak self] in
             do {
-                let snapshot = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
-                guard !Task.isCancelled, let self, self.requestedSurfaceKey == key else { return }
-                self.surfaceSnapshot = snapshot
-                self.surfaceRevision &+= 1
-                self.logger.debug("Indexed visible surface: \(snapshot.buffers.indices.count / 3) triangles")
-                self.onSurfaceChange?()
+                // Rebuilding a city-wide BVH takes longer than a pan frame. A build per commit
+                // repeatedly spends that work on geometry already superseded before it can be
+                // published. Coalesce only pan replacements; load/LOD queries start immediately.
+                // The old snapshot was invalidated above, so this never answers from stale ground.
+                if waitsForPanToSettle { try await Task.sleep(for: .milliseconds(32)) }
+                let snapshot = try Tiles3DSurfaceSnapshot(geometry: geometry, scale: scale, datum: key.datum, pan: key.pan)
+                try Task.checkCancellation()
+                await self?.publishSurface(snapshot, for: key)
             } catch {
-                guard !Task.isCancelled, !(error is CancellationError), let self, self.requestedSurfaceKey == key else { return }
-                self.surfaceDiagnostic = error as? OverlayGeometryError ?? .invalidSurface
-                self.logger.warning("Photorealistic placement unavailable: \(String(describing: error), privacy: .public)")
-                self.onSurfaceChange?()
+                guard !Task.isCancelled, !(error is CancellationError) else { return }
+                await self?.publishSurfaceFailure(error as? OverlayGeometryError ?? .invalidSurface, for: key)
             }
         }
+    }
+
+    private func publishSurface(_ snapshot: Tiles3DSurfaceSnapshot, for key: SurfaceKey) {
+        guard !Task.isCancelled, requestedSurfaceKey == key else { return }
+        surfaceSnapshot = snapshot
+        surfaceRevision &+= 1
+        logger.debug("Indexed visible surface: \(snapshot.buffers.indices.count / 3) triangles")
+        onSurfaceChange?()
+    }
+
+    private func publishSurfaceFailure(_ error: OverlayGeometryError, for key: SurfaceKey) {
+        guard !Task.isCancelled, requestedSurfaceKey == key else { return }
+        surfaceDiagnostic = error
+        logger.warning("Photorealistic placement unavailable: \(String(describing: error), privacy: .public)")
+        onSurfaceChange?()
     }
 
     func waitForSurface() async { await surfaceTask?.value }
@@ -76,6 +109,12 @@ class Tiles3DEntity: Entity {
     private static let lodUpdateInterval: TimeInterval = 0.2
     private var lastLODUpdateTime: Date?
     private var isLODUpdating = false
+    private var panLODRefreshTask: Task<Void, Never>?
+
+    func waitForPanLODRefresh() async {
+        await panLODRefreshTask?.value
+        while isLODUpdating { await Task.yield() }
+    }
 
     /// Pause between self-driven refinement rounds.
     ///
@@ -184,8 +223,16 @@ class Tiles3DEntity: Entity {
         physicalSize: Float,
         boundary: DioramaBoundary,
         style: Tiles3DStyle = .standard,
-        panRange: Float = 0
+        panRange: Float = 0,
+        meshUpload: @escaping Tiles3DLODManager.MeshUpload = { buffer, vertices, indices, bounds, transfer in
+            try buffer.write(vertices: vertices, indices: indices, bounds: bounds, transfer: transfer)
+        },
+        wallUpload: @escaping WallUpload = { buffer, geometry in
+            try buffer.write(vertices: geometry.mesh.vertices, indices: geometry.mesh.indices,
+                bounds: geometry.mesh.bounds, parts: geometry.parts)
+        }
     ) async throws {
+        self.wallUpload = wallUpload
         let ecefConverter = ECEFConverter(origin: center)
         let geographicScale = physicalSize / Float(radiusMeters * 2.0)
 
@@ -209,7 +256,8 @@ class Tiles3DEntity: Entity {
             radiusMeters: radiusMeters,
             clipPrism: prism,
             panRange: style.clipsToBoundary ? panRange : 0,
-            shallowUnderside: underside
+            shallowUnderside: underside,
+            meshUpload: meshUpload
         )
         self.lodManager.screenSpaceErrorThreshold = style.detailThreshold
         self.geographicScale = geographicScale
@@ -438,7 +486,6 @@ class Tiles3DEntity: Entity {
         }
 
         let earthMaterial = cutWallMaterial
-        let trayMaterial = shallowTrayMaterial
         let geometry: Tiles3DShallowClosure.Geometry
         do {
             guard let built = try Tiles3DShallowClosure.build(edges: edges, lowestY: lowest, prism: prism,
@@ -456,6 +503,11 @@ class Tiles3DEntity: Entity {
             logger.error("Cut wall coverage failed for \(edges.count) cuts: \(String(describing: error), privacy: .public); hiding the complete rim")
             return
         }
+        installCutWall(geometry, floorY: floorY)
+    }
+
+    private func installCutWall(_ geometry: Tiles3DShallowClosure.Geometry, floorY: Float) {
+        let earthMaterial = cutWallMaterial, trayMaterial = shallowTrayMaterial
         let materials: [any RealityKit.Material] = [earthMaterial ?? trayMaterial, trayMaterial]
 
         let buffer: Tiles3DMeshBuffer
@@ -465,19 +517,20 @@ class Tiles3DEntity: Entity {
             buffer = created
             cutWallMesh = created
         } else {
-            logger.error("Could not create the cut wall's buffer; keeping the wall already placed")
+            cutWall?.isEnabled = false; placedWall = nil
+            logger.error("Could not create the cut wall's buffer; hiding the complete rim")
             return
         }
 
         // Written into the buffer the wall is already drawn from, so nothing is taken away and
         // nothing has to be put back — the geometry simply changes underneath. A failed write
-        // leaves the previous wall standing and the signature unmoved, so the next pan tries again.
+        // hides the complete rim, so a new cut can never retain an old wall contour.
         let outcome: Tiles3DMeshBuffer.Outcome
         do {
-            outcome = try buffer.write(vertices: geometry.mesh.vertices, indices: geometry.mesh.indices,
-                bounds: geometry.mesh.bounds, parts: geometry.parts)
+            outcome = try wallUpload(buffer, geometry)
         } catch {
-            logger.error("Could not rebuild the cut wall; keeping the one already placed")
+            cutWall?.isEnabled = false; placedWall = nil
+            logger.error("Could not rebuild the cut wall; hiding the complete rim")
             return
         }
         guard outcome != .empty else {
@@ -569,66 +622,109 @@ class Tiles3DEntity: Entity {
     /// ground ahead of it and drops what is left behind. What bounds it moment to moment is the
     /// geometry actually in hand; see `clampPanOffset`.
     ///
-    /// Unlike the raster path this is not free, and not by a little. A pan moves the outline across
+    /// Unlike the raster path this requires clipping. A pan moves the outline across
     /// the model, so every tile the outline's edge now crosses has to be cut somewhere it was not
     /// cut before — and the cut is what discarded the geometry needed to do it, which is why the
     /// pre-clip geometry is retained. Interior and exterior tiles are untouched, so the cost tracks
-    /// the rim rather than the model: measured on downtown San Francisco at 700 m, 153–185 rim tiles
-    /// out of ~700, taking 85–106 ms on the main actor in a release build. That is a stepped jump,
-    /// not a drag. Treat this as a discrete move rather than something to drive every frame.
-    ///
-    /// A debug build is another matter entirely — the same step measures 2.3–4.1 s there, because
-    /// the clip is arithmetic in a tight loop and unoptimised Swift bounds-checks and retains its way
-    /// through all of it. Panning is only usable in a release build; measure it in one too.
+    /// the rim rather than the model. GPU clipping prepares immutable tile buffers; wall coverage
+    /// runs off the main actor. The previous solid stays visible until the complete replacement
+    /// can be installed together. New input is coalesced by the store while preparation is pending.
+    /// Measure interactive performance in Release: unoptimized clipping arithmetic is much slower.
     public func setPanOffset(_ offset: SIMD2<Float>) {
-        guard canPan, offset != panOffset else { return }
-        panOffset = offset
+        startPan(offset, cancelsPrevious: true)
+    }
 
-        // The container is inside this entity's scale, so a diorama-meter offset has to be divided
-        // back out of it.
-        tileContainer.position = SIMD3<Float>(-offset.x, 0, -offset.y) / max(geographicScale, .ulpOfOne)
-
+    private func startPan(_ offset: SIMD2<Float>, cancelsPrevious: Bool) {
+        guard canPan else { return }
+        if cancelsPrevious { panTask?.cancel() }
+        panVersion &+= 1
+        guard offset != panOffset else {
+            panTask = nil; isPanPresentationDeferred = false
+            onPanPresented?()
+            return
+        }
+        isPanPresentationDeferred = true
+        let version = panVersion
         let moved = DioramaBoundary(vertices: boundary.vertices.map { $0 + offset })
         let prism = BoundaryPrism(boundary: moved, scale: geographicScale)
-        clipPrism = prism
-        lodManager.setClipPrism(prism)
+        let candidate = lodManager.preparePan(to: prism)
+        let depth = shallowBase.earthDepth / geographicScale
+        let trayDepth = shallowBase.trayThickness / geographicScale
+        let includesWalls = cutWallMaterial != nil
+        panTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let result: Result<Tiles3DShallowClosure.Geometry?, any Error>
+            do {
+                let geometry: Tiles3DShallowClosure.Geometry?
+                if let bounds = candidate.bounds {
+                    geometry = try await Tiles3DShallowClosure.buildParallel(edges: candidate.edges, lowestY: bounds.min.y,
+                        prism: candidate.prism, earthDepth: depth, trayDepth: trayDepth, includesWalls: includesWalls)
+                } else { geometry = nil }
+                try Task.checkCancellation()
+                result = .success(geometry)
+            } catch { result = .failure(error) }
+            guard !Task.isCancelled else { return }
+            await self?.finishPan(candidate, offset: offset, version: version, result: result)
+        }
+    }
 
-        // A pan changes the clip frame even before a streamed visibility revision arrives.
-        // Invalidate the cached closure explicitly so it cannot retain the previous cutout.
+    private func finishPan(_ candidate: Tiles3DLODManager.PreparedPan, offset: SIMD2<Float>, version: Int,
+        result: Result<Tiles3DShallowClosure.Geometry?, any Error>) {
+        guard !Task.isCancelled, version == panVersion else { return }
+        guard lodManager.isCurrent(candidate) else {
+            // Retire the old candidate by version without cancelling the task executing its retry.
+            startPan(offset, cancelsPrevious: false)
+            return
+        }
+        // No await inside this transaction: terrain, container, datum and rim reach the renderer
+        // together. Until this point the previous closed solid and its query frame remain valid.
+        panOffset = offset
+        tileContainer.position = SIMD3(-offset.x, 0, -offset.y) / max(geographicScale, .ulpOfOne)
+        clipPrism = candidate.prism
+        _ = lodManager.commitPan(candidate)
+        if lodManager.panUploadFailed { measureVisibleGeometry() }
+        else { measuredBounds = candidate.bounds }
         placedWall = nil
-        measureVisibleGeometry()
-        updateCutWall()
+        if lodManager.panUploadFailed {
+            cutWall?.isEnabled = false
+            logger.error("Pan tile upload failed; hiding the complete rim and measuring installed geometry")
+        } else if let lowest = candidate.bounds?.min.y {
+            let floor = lowest - (shallowBase.earthDepth + shallowBase.trayThickness) / geographicScale
+            switch result {
+            case .success(let geometry):
+                if let geometry { installCutWall(geometry, floorY: floor) }
+                else { cutWall?.isEnabled = false }
+            case .failure(let error):
+                cutWall?.isEnabled = false
+                logger.error("Cut wall coverage failed for \(candidate.edges.count) cuts: \(String(describing: error), privacy: .public); hiding the complete rim")
+            }
+        } else { cutWall?.isEnabled = false }
         anchorGround()
         updateBase()
         refreshSurface()
-
-        // The cull column has just moved with the outline, so the traversal has a different answer
-        // than it did — but nothing else will ask for it. Level of detail is driven from camera
-        // changes, and a pan does not move the camera: the view body that calls `requestLODUpdate`
-        // reads the camera transform, so SwiftUI has no reason to re-run it. Without this the moving
-        // column is inert and the model still runs out in the direction of travel, exactly as it did
-        // when the column was nailed to the origin.
+        isPanPresentationDeferred = false
+        panTask = nil
+        onPanPresented?()
         requestLODRefresh()
-
-        logger.debug("""
-            Pan offset \(offset.x, format: .fixed(precision: 4)), \
-            \(offset.y, format: .fixed(precision: 4)) m \
-            -> container \(self.tileContainer.position.x, format: .fixed(precision: 1)), \
-            \(self.tileContainer.position.z, format: .fixed(precision: 1))
-            """)
     }
 
-    /// Re-runs the traversal because the region of interest moved, rather than the camera.
-    ///
-    /// Bypasses the throttle that `requestLODUpdate` applies to a moving camera. That throttle
-    /// exists to stop a camera flooding the traversal with near-identical requests several times a
-    /// frame; a pan step is a discrete move that genuinely changes which tiles are wanted, and it is
-    /// already far more expensive than a traversal, so there is nothing to protect here. Dropping
-    /// the request instead would silently defer streaming until the next camera move — which on a
-    /// one-finger drag may never come.
+    /// Coalesces nearby pan commits into one traversal of the latest clipping column. The retained
+    /// pan margin supplies immediate geometry; streaming need not rescan the whole tree per frame.
+    /// A scheduled tail always runs even if the gesture stops, independently of camera callbacks.
     private func requestLODRefresh() {
-        lastLODUpdateTime = nil
-        driveRefinement()
+        guard panLODRefreshTask == nil else { return }
+        panLODRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.refinementInterval)
+            // Keep the tail pending if an older round is awaiting network data. Clearing it
+            // before driveRefinement's busy guard would lose the last column after a drag ends.
+            while self?.isLODUpdating == true {
+                try? await Task.sleep(for: Self.refinementInterval)
+                guard !Task.isCancelled else { return }
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.panLODRefreshTask = nil
+            self.lastLODUpdateTime = nil
+            self.driveRefinement()
+        }
     }
 
     @MainActor

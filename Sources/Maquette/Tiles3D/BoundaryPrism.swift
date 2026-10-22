@@ -8,10 +8,10 @@ import simd
 /// single piece, so the common case costs nothing extra; a concave custom outline is split into
 /// convex pieces whose union is the original, which keeps the clip exact rather than notching the
 /// geometry at reflex corners.
-struct BoundaryPrism {
+struct BoundaryPrism: Sendable {
     /// A convex region of the outline, with edges wound so a point inside lies to the right of
     /// every edge direction.
-    struct Piece {
+    struct Piece: Sendable {
         let edges: [(a: SIMD2<Float>, b: SIMD2<Float>)]
         let lowerBound: SIMD2<Float>
         let upperBound: SIMD2<Float>

@@ -46,9 +46,15 @@ class DioramaEntity: Entity {
     lazy var overlayRenderer = DioramaOverlayRenderer(root: self)
     private var pendingPanPlacement: (() -> Void)?
     var panPresentationCompletion: ((Bool) -> Void)?
+    var isPanPresentationDeferred: Bool {
+        terrain?.isPanPresentationDeferred == true || tiles3D?.isPanPresentationDeferred == true
+    }
 
     /// Return the completion so callers drain queued input only after reconciliation is finished.
     func finishPanPresentation(applyPlacement: Bool = true) -> ((Bool) -> Void)? {
+        // Photo tiles and rim own one atomic transaction. Overlay reconciliation cannot consume
+        // its input-draining completion while preparation or commit callbacks are still running.
+        guard tiles3D?.isPanPresentationDeferred != true else { return nil }
         terrain?.commitPanPresentation()
         let placement = pendingPanPlacement, completion = panPresentationCompletion
         pendingPanPlacement = nil; panPresentationCompletion = nil
@@ -228,7 +234,7 @@ class DioramaEntity: Entity {
             self?.reconcilePins(plans, using: proxy, physicalSize: physicalSize)
             self?.applyRoutePreview(routePreviewItem, using: proxy, physicalSize: physicalSize, yOffset: polylineYOffset)
         }
-        if terrain?.isPanPresentationDeferred == true, !overlays.isEmpty {
+        if isPanPresentationDeferred, !overlays.isEmpty {
             pendingPanPlacement = place
         } else {
             pendingPanPlacement = nil

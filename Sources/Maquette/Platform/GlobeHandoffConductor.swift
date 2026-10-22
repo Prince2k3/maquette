@@ -76,15 +76,20 @@ final class GlobeHandoffConductor {
     /// Applies the cross-fade, and keeps a fully faded half out of the render entirely.
     func applyVisibility(store: DioramaStore) {
         if let entity = store.dioramaEntity {
-            let opacity = transition.chunkOpacity
-            entity.isEnabled = opacity > DioramaSceneRig.minimumVisibleOpacity
-            entity.components.set(OpacityComponent(opacity: opacity))
+            Self.applyVisibility(to: entity, opacity: transition.chunkOpacity)
         }
         if let globe = store.globe {
-            let opacity = transition.globeOpacity
-            globe.isEnabled = opacity > DioramaSceneRig.minimumVisibleOpacity
-            globe.components.set(OpacityComponent(opacity: opacity))
+            Self.applyVisibility(to: globe, opacity: transition.globeOpacity)
         }
+    }
+
+    /// Reapplying an unchanged parent component dirties the whole photorealistic subtree.
+    /// A fully opaque entity already has the correct default without an opacity component.
+    static func applyVisibility(to entity: Entity, opacity: Float) {
+        let enabled = opacity > DioramaSceneRig.minimumVisibleOpacity
+        if entity.isEnabled != enabled { entity.isEnabled = enabled }
+        let previous = entity.components[OpacityComponent.self]?.opacity ?? 1
+        if previous != opacity { entity.components.set(OpacityComponent(opacity: opacity)) }
     }
 
     /// Rebuilds the chunk at whatever the globe was spun to.

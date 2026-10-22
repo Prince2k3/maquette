@@ -1,4 +1,5 @@
 import Foundation
+import Metal
 import RealityKit
 import simd
 
@@ -11,7 +12,7 @@ import simd
 /// through `MeshDescriptor` meant writing every vertex three times over — into the descriptor's
 /// separate position, normal and texture-coordinate arrays, back out of them, then into this — for
 /// geometry that is thrown away and rebuilt on the next pan step.
-struct Tiles3DVertex {
+struct Tiles3DVertex: Sendable {
     var px: Float, py: Float, pz: Float
     var nx: Float, ny: Float, nz: Float
     var u: Float, v: Float
@@ -109,7 +110,7 @@ final class Tiles3DMeshBuffer {
     func writeVertices(_ vertices: [Tiles3DVertex]) {
         precondition(vertices.count <= vertexCapacity, "vertex arena outgrew the buffer made for it")
         vertices.withUnsafeBufferPointer { source in
-            mesh.withUnsafeMutableBytes(bufferIndex: 0) { raw in
+            mesh.replaceUnsafeMutableBytes(bufferIndex: 0) { raw in
                 _ = raw.bindMemory(to: Tiles3DVertex.self).update(fromContentsOf: source)
             }
         }
@@ -125,11 +126,11 @@ final class Tiles3DMeshBuffer {
         }
 
         indices.withUnsafeBufferPointer { source in
-            mesh.withUnsafeMutableIndices { raw in
+            mesh.replaceUnsafeMutableIndices { raw in
                 _ = raw.bindMemory(to: UInt32.self).update(fromContentsOf: source)
             }
         }
-        mesh.parts.replaceAll([
+        publish(parts: [
             LowLevelMesh.Part(
                 indexCount: indices.count,
                 topology: .triangle,
@@ -165,7 +166,8 @@ final class Tiles3DMeshBuffer {
         vertices: UnsafeBufferPointer<Tiles3DVertex>,
         indices: UnsafeBufferPointer<UInt32>,
         bounds: BoundingBox,
-        parts: [LowLevelMesh.Part]? = nil
+        parts: [LowLevelMesh.Part]? = nil,
+        transfer: Tiles3DGPUClipper.Transfer? = nil
     ) throws -> Outcome {
         guard !vertices.isEmpty, !indices.isEmpty else { return .empty }
 
@@ -179,15 +181,27 @@ final class Tiles3DMeshBuffer {
             recreated = true
         }
 
-        mesh.withUnsafeMutableBytes(bufferIndex: 0) { raw in
-            _ = raw.bindMemory(to: Tiles3DVertex.self).update(fromContentsOf: vertices)
+        if let transfer {
+            guard let encoder = transfer.command.makeBlitCommandEncoder() else {
+                throw DioramaError.meshGenerationFailed(reason: "Could not encode tile buffer transfer")
+            }
+            let vertexBuffer = mesh.replace(bufferIndex: 0, using: transfer.command)
+            let indexBuffer = mesh.replaceIndices(using: transfer.command)
+            encoder.copy(from: transfer.vertices, sourceOffset: transfer.vertexOffset,
+                to: vertexBuffer, destinationOffset: 0, size: vertices.count * MemoryLayout<Tiles3DVertex>.stride)
+            encoder.copy(from: transfer.indices, sourceOffset: transfer.indexOffset,
+                to: indexBuffer, destinationOffset: 0, size: indices.count * MemoryLayout<UInt32>.stride)
+            encoder.endEncoding()
+        } else {
+            mesh.replaceUnsafeMutableBytes(bufferIndex: 0) { raw in
+                _ = raw.bindMemory(to: Tiles3DVertex.self).update(fromContentsOf: vertices)
+            }
+            mesh.replaceUnsafeMutableIndices { raw in
+                _ = raw.bindMemory(to: UInt32.self).update(fromContentsOf: indices)
+            }
         }
 
-        mesh.withUnsafeMutableIndices { raw in
-            _ = raw.bindMemory(to: UInt32.self).update(fromContentsOf: indices)
-        }
-
-        mesh.parts.replaceAll(parts ?? [
+        publish(parts: parts ?? [
             LowLevelMesh.Part(
                 indexCount: indices.count,
                 topology: .triangle,
@@ -197,4 +211,12 @@ final class Tiles3DMeshBuffer {
         ])
         return recreated ? .regrown : .rewritten
     }
+    /// Keep part slots alive while replacing their exact draw ranges and bounds. Replacing the
+    /// collection removes and re-adds every slot, multiplying resource invalidation per rim tile.
+    private func publish(parts: [LowLevelMesh.Part]) {
+        if mesh.parts.count == parts.count {
+            for index in parts.indices { mesh.parts[index] = parts[index] }
+        } else { mesh.parts.replaceAll(parts) }
+    }
+
 }

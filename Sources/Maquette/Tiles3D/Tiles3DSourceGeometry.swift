@@ -27,24 +27,29 @@ struct Tiles3DSourceGeometry {
     let lowerBound: SIMD2<Float>
     /// The tile's horizontal extent once placed.
     let upperBound: SIMD2<Float>
+    /// Exact projected convex hull, built once. AABB corners often contain empty city-tile space.
+    private let horizontalHull: [SIMD2<Float>]
 
     init(descriptors: [MeshDescriptor], placement: simd_float4x4, material: RealityKit.Material) {
         self.descriptors = descriptors
         self.placement = placement
         self.material = material
 
+        var points: [SIMD2<Float>] = []
         var lower = SIMD2<Float>(repeating: .greatestFiniteMagnitude)
         var upper = SIMD2<Float>(repeating: -.greatestFiniteMagnitude)
         for descriptor in descriptors {
             for position in descriptor.positions.elements {
                 let placed = placement * SIMD4(position.x, position.y, position.z, 1)
                 let point = SIMD2(placed.x, placed.z)
+                points.append(point)
                 lower = simd_min(lower, point)
                 upper = simd_max(upper, point)
             }
         }
         self.lowerBound = lower
         self.upperBound = upper
+        self.horizontalHull = Self.hull(points)
     }
 
     /// Whether moving the outline from one position to another changes how this tile is cut.
@@ -55,7 +60,34 @@ struct Tiles3DSourceGeometry {
     /// actually crosses have a different answer than before, and only those are rebuilt. The rest
     /// ride along on the container's transform without being touched.
     func needsRecut(from old: BoundaryPrism?, to new: BoundaryPrism?) -> Bool {
-        Self.needsRecut(lower: lowerBound, upper: upperBound, from: old, to: new)
+        guard Self.needsRecut(lower: lowerBound, upper: upperBound, from: old, to: new) else { return false }
+        guard !horizontalHull.isEmpty else { return true }
+        let before = old?.containment(ofHull: horizontalHull) ?? .inside
+        let after = new?.containment(ofHull: horizontalHull) ?? .inside
+        return before != after || before == .straddling
+    }
+
+    private static func hull(_ points: [SIMD2<Float>]) -> [SIMD2<Float>] {
+        guard points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return [] }
+        let sorted = points.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+        func turn(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>) -> Double {
+            let ab = SIMD2<Double>(b) - SIMD2<Double>(a), ac = SIMD2<Double>(c) - SIMD2<Double>(a)
+            return ab.x * ac.y - ab.y * ac.x
+        }
+        var lower: [SIMD2<Float>] = [], upper: [SIMD2<Float>] = []
+        for point in sorted {
+            if lower.last == point { continue }
+            while lower.count >= 2, turn(lower[lower.count - 2], lower[lower.count - 1], point) <= 0 { lower.removeLast() }
+            lower.append(point)
+        }
+        guard lower.count > 1 else { return lower }
+        for point in sorted.reversed() {
+            if upper.last == point { continue }
+            while upper.count >= 2, turn(upper[upper.count - 2], upper[upper.count - 1], point) <= 0 { upper.removeLast() }
+            upper.append(point)
+        }
+        lower.removeLast(); upper.removeLast()
+        return lower + upper
     }
 
     /// The decision `needsRecut` makes, in terms of a horizontal extent alone.
@@ -84,6 +116,20 @@ extension BoundaryPrism {
         case outside
         /// The outline's edge crosses it, so a clip would cut it.
         case straddling
+    }
+
+    /// Only convex outlines can certify a whole source hull. For concave outlines a notch may
+    /// cross between hull vertices, so retain the exact clip. Strict separation rejects only cuts
+    /// beyond the clipping tolerance; ambiguous contacts remain on the recut path.
+    func containment(ofHull hull: [SIMD2<Float>]) -> Containment {
+        guard pieces.count == 1, !hull.isEmpty else { return .straddling }
+        if hull.allSatisfy(contains) { return .inside }
+        for edge in pieces[0].edges {
+            let direction = edge.b - edge.a
+            let tolerance = cutEdgeTolerance * simd_length(direction)
+            if hull.allSatisfy({ PolygonClipping.cross(direction, $0 - edge.a) > tolerance }) { return .outside }
+        }
+        return .straddling
     }
 
     /// Where a horizontal box sits relative to the outline, without clipping anything.

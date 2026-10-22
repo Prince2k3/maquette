@@ -50,7 +50,7 @@ enum Tiles3DCutWall {
     ///
     /// Packed into the same vertex layout the tiles use, so the wall reaches the GPU the same way
     /// they do — as a bulk copy into a buffer that outlives the pan step.
-    struct Geometry {
+    struct Geometry: Sendable {
         var vertices: [Tiles3DVertex] = []
         var indices: [UInt32] = []
         /// Accumulated as the wall is emitted, so nothing has to walk it again to find them.

@@ -48,12 +48,23 @@ final class Tiles3DGPUClipper {
             vertices: UnsafeBufferPointer<Tiles3DVertex>,
             indices: UnsafeBufferPointer<UInt32>,
             cutEdges: [Tiles3DCutEdge],
-            bounds: BoundingBox
+            bounds: BoundingBox,
+            transfer: Transfer?
         )
         /// Nothing of this tile survives the outline.
         case empty
         /// The GPU could not finish this tile. The caller has to run the CPU clip for it.
         case unresolved
+    }
+
+    /// Valid for the outcome handler. Copies are encoded on the clip queue after its compute;
+    /// the next batch's scratch writes cannot overtake them. RealityKit waits on this command.
+    struct Transfer {
+        let vertices: any MTLBuffer
+        let indices: any MTLBuffer
+        let vertexOffset: Int
+        let indexOffset: Int
+        let command: any MTLCommandBuffer
     }
 
     /// Vertices of output room reserved per source triangle, before any growth.
@@ -168,6 +179,7 @@ final class Tiles3DGPUClipper {
     func clip(
         _ jobs: [(uri: String, source: Tiles3DSourceGeometry)],
         to prism: BoundaryPrism,
+        transfersToGPU: Bool = false,
         handling handler: (Int, Outcome) -> Void
     ) {
         guard uploadPrism(prism) else {
@@ -182,7 +194,8 @@ final class Tiles3DGPUClipper {
 
         func flush() {
             guard !batch.isEmpty else { return }
-            run(batch, vertices: vertexTotal, indices: indexTotal, cutEdges: cutEdgeTotal, handler: handler)
+            run(batch, vertices: vertexTotal, indices: indexTotal, cutEdges: cutEdgeTotal,
+                transfersToGPU: transfersToGPU, handler: handler)
             batch.removeAll(keepingCapacity: true)
             vertexTotal = 0
             indexTotal = 0
@@ -253,6 +266,7 @@ final class Tiles3DGPUClipper {
         vertices vertexTotal: Int,
         indices indexTotal: Int,
         cutEdges cutEdgeTotal: Int,
+        transfersToGPU: Bool,
         handler: (Int, Outcome) -> Void
     ) {
         // The batch goes out as one dispatch, so everything that used to be encoder state replayed
@@ -342,6 +356,9 @@ final class Tiles3DGPUClipper {
             to: Tiles3DClipKernel.CutEdge.self, capacity: cutEdgeTotal
         )
 
+        let transferCommand = transfersToGPU ? queue.makeCommandBuffer() : nil
+        // Submit before another batch can overwrite shared scratch. All copies use this queue.
+        defer { transferCommand?.commit() }
         for (tile, entry) in batch.enumerated() {
             let base = tile * Tiles3DClipKernel.countersPerTile
             let vertexCount = Int(counters[base + Tiles3DClipKernel.Counter.vertexCount])
@@ -393,7 +410,10 @@ final class Tiles3DGPUClipper {
                     start: indexOut + Int(entry.tile.indexBase), count: indexCount
                 ),
                 cutEdges: cutEdges,
-                bounds: BoundingBox(min: lower, max: upper)
+                bounds: BoundingBox(min: lower, max: upper),
+                transfer: transferCommand.map { Transfer(vertices: vertexScratch, indices: indexScratch,
+                    vertexOffset: Int(entry.tile.vertexBase) * MemoryLayout<Tiles3DVertex>.stride,
+                    indexOffset: Int(entry.tile.indexBase) * MemoryLayout<UInt32>.stride, command: $0) }
             ))
         }
     }

@@ -116,7 +116,7 @@ final class DioramaStore {
     private func notifyGroundChange() {
         if !groundChangesSuspended { groundDidChange?() }
     }
-    var hasPendingPan: Bool { isFlushingPan || panTailTask != nil || panResampler.hasUnappliedMovement || pendingGroundInput.pan != nil || pendingGroundInput.scale != nil || (dioramaEntity as? DioramaEntity)?.terrain?.isPanPresentationDeferred == true }
+    var hasPendingPan: Bool { isFlushingPan || panTailTask != nil || panResampler.hasUnappliedMovement || pendingGroundInput.pan != nil || pendingGroundInput.scale != nil || (dioramaEntity as? DioramaEntity)?.isPanPresentationDeferred == true }
 
     private let tileCache = TileCache()
     private let logger = Logger(maquette: "DioramaStore")
@@ -1000,7 +1000,7 @@ final class DioramaStore {
     /// ground space and the entity's transform is current, so a stale selection is in exactly the
     /// right place and merely a little late at the rim.
     private func recutBuildingsIfNeeded() {
-        guard (dioramaEntity as? DioramaEntity)?.terrain?.isPanPresentationDeferred != true else { return }
+        guard (dioramaEntity as? DioramaEntity)?.isPanPresentationDeferred != true else { return }
         guard buildingsCutTask == nil, let state = buildings, state.style.followsPan else { return }
         guard buildingsVisible, buildingsNeedCutting(state) else { return }
 
@@ -1229,6 +1229,16 @@ final class DioramaStore {
             self.refreshPhotorealisticDatum()
             self.applyContent(self.appliedContent)
         }
+        tiles3DEntity.onPanPresented = { [weak self, weak tiles3DEntity] in
+            guard let self, self.loadGeneration == generation, let tiles3DEntity,
+                  let root = self.dioramaEntity as? DioramaEntity, root.tiles3D === tiles3DEntity else { return }
+            // Take completion before reconciliation, whose overlay callbacks may also finish a
+            // raster transaction. Drain new input only after the committed photo frame is placed.
+            let completion = root.finishPanPresentation(applyPlacement: false)
+            self.refreshPhotorealisticDatum()
+            self.applyContent(self.appliedContent)
+            completion?(true)
+        }
         // The same two operations the entity itself applies — rotate into the local ENU frame about
         // the centre, then scale — so a coordinate lands in the frame the geometry arrived in.
         projection = EllipsoidProjection(
@@ -1249,7 +1259,7 @@ final class DioramaStore {
               let tiles = (dioramaEntity as? DioramaEntity)?.tiles3D
         else { return }
         ellipsoid.datumElevation = tiles.groundDatumElevation ?? 0
-        ellipsoid.panOffset = panOffset
+        ellipsoid.panOffset = tiles.panOffset
         ellipsoid.surface = tiles.surfaceSnapshot?.surface
         projection = ellipsoid
     }
@@ -1382,7 +1392,7 @@ final class DioramaStore {
     /// - Parameter offset: The target offset in diorama meters.
     public func setPanOffset(_ offset: SIMD2<Float>) {
         guard configuration.panRange > 0 else { return }
-        if (dioramaEntity as? DioramaEntity)?.terrain?.isPanPresentationDeferred == true {
+        if (dioramaEntity as? DioramaEntity)?.isPanPresentationDeferred == true {
             pendingGroundInput.pan = offset
             return
         }
@@ -1456,7 +1466,7 @@ final class DioramaStore {
             self.routePreviewEntity = root.routePreview
         }
         let resampled = ContinuousClock.now
-        if root?.terrain?.isPanPresentationDeferred == true {
+        if root?.isPanPresentationDeferred == true {
             if let root { deferPanPresentation(on: root) }
         } else { present() }
         let finished = ContinuousClock.now
@@ -1632,7 +1642,7 @@ final class DioramaStore {
         )
         // New ground means new heights, and the roll has just handed the chunk a fresh surface
         // material — which paints the imagery back over a chunk the effect had darkened.
-        if let root = dioramaEntity as? DioramaEntity, root.terrain?.isPanPresentationDeferred == true {
+        if let root = dioramaEntity as? DioramaEntity, root.isPanPresentationDeferred == true {
             deferPanPresentation(on: root, reapply: true)
         } else { reapplyEffect() }
 
@@ -1744,7 +1754,7 @@ final class DioramaStore {
 
         let limits = groundScaleLimits
         let target = min(max(scale, limits.lowerBound), limits.upperBound)
-        if (dioramaEntity as? DioramaEntity)?.terrain?.isPanPresentationDeferred == true {
+        if (dioramaEntity as? DioramaEntity)?.isPanPresentationDeferred == true {
             #if MAQUETTE_PROFILING
             profileGroundDeferrals += 1
             #endif
@@ -1786,7 +1796,7 @@ final class DioramaStore {
             groundScale: target
         )
         projection?.panOffset = offset
-        if let entity, entity.terrain?.isPanPresentationDeferred == true {
+        if let entity, entity.isPanPresentationDeferred == true {
             deferPanPresentation(on: entity)
         } else {
             if let entity { updatePresentedWater(on: entity) }

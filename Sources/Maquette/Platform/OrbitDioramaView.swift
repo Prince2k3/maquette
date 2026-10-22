@@ -234,7 +234,8 @@ struct OrbitDioramaView<Gestures: ViewModifier>: View {
             _ = (model.store.dioramaEntity as? DioramaEntity)?.overlayRenderer.geometryBuildCount
             installPicking(content)
             if let camera = content.entities.first(where: { $0.name == "OrbitCamera" }) {
-                camera.transform = model.cameraController.cameraTransform
+                let transform = model.cameraController.cameraTransform
+                if camera.transform != transform { camera.transform = transform }
             }
 
             #if os(iOS)

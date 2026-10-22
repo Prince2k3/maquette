@@ -42,12 +42,20 @@ Opt-in performance observations run separately from CI’s correctness gates:
 ```sh
 MAQUETTE_RUN_CONTENT_BENCHMARK=1 swift test -c release --filter MapContentBenchmark
 MAQUETTE_RUN_PAN_BENCHMARK=1 swift test -c release --filter PanBenchmark
+MAQUETTE_RUN_PHOTO_BENCHMARK=1 swift test -c release --filter PhotorealPanBenchmark
 ```
 
 Run on a machine with a working RealityKit graphics context and record build, machine, workload,
 CPU preparation, memory observations, and exclusions. Neither CPU elapsed time nor resident-set
 samples establish frame/GPU cost or long-run memory stability; those remain separate hardware
 capture tasks. There are no portable timing thresholds in CI.
+
+The photorealistic harness checks a 100,000-bound query index and a 10,240-cut wall fixture
+separately from rendered captures. [[map-photorealistic-pan-performance]] records the optimized
+pan measurements. `profile-diorama.py --time-profiler` adds CPU sampling for diagnosis; use a
+separate run without that flag for final FPS measurements. Capture JSON includes wall and mesh
+upload failure counts, binary hashes, and before/after power profiles. Distinct pan counters read
+the committed tile offset, so frames showing the previous solid do not count as new movement.
 
 The content harness reports mean, p95 and maximum completed pan/ground-zoom rebuild costs,
 including asynchronous geometry and resource updates. Main-actor submission and completion

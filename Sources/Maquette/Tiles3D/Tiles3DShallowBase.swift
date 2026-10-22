@@ -63,9 +63,84 @@ final class Tiles3DShallowUnderside {
 /// Both material bands live in one retained buffer, so a failed growth cannot publish half a rim.
 /// The lower tray band follows exactly the same cut segments as the earth and shared underside.
 enum Tiles3DShallowClosure {
-    struct Geometry {
+    struct Geometry: Sendable {
         var mesh = Tiles3DCutWall.Geometry()
         var parts: [LowLevelMesh.Part] = []
+    }
+
+    /// Coverage on different boundary edges is independent. Keep all cuts for one edge together
+    /// so overlapping earth/tray patches still resolve exactly once. Four bounded workers share
+    /// the original output/work quotas; an uneven arrangement can fall back to one serial attempt.
+    static func buildParallel(edges: [Tiles3DCutEdge], lowestY: Float, prism: BoundaryPrism,
+        earthDepth: Float, trayDepth: Float, includesWalls: Bool
+    ) async throws -> Geometry? {
+        guard edges.count <= 12_500 else { throw OverlayGeometryError.budgetExceeded }
+        guard edges.count >= 1_024 else {
+            return try build(edges: edges, lowestY: lowestY, prism: prism,
+                earthDepth: earthDepth, trayDepth: trayDepth, includesWalls: includesWalls)
+        }
+        var buckets = Array(repeating: [Tiles3DCutEdge](), count: 4)
+        for edge in edges where prism.boundary.vertices.indices.contains(edge.boundaryEdge) {
+            buckets[edge.boundaryEdge % 4].append(edge)
+        }
+        let jobs = buckets.filter { !$0.isEmpty }
+        guard jobs.count > 1 else {
+            return try build(edges: edges, lowestY: lowestY, prism: prism,
+                earthDepth: earthDepth, trayDepth: trayDepth, includesWalls: includesWalls)
+        }
+        do {
+            let sections = try await withThrowingTaskGroup(of: (Int, Geometry).self) { group in
+                for (index, cuts) in jobs.enumerated() {
+                    group.addTask {
+                        let limits = OverlayGeometryLimits(maxTriangles: max(1, 50_000 * cuts.count / edges.count),
+                            maxOperations: max(1, 20_000_000 * cuts.count / edges.count))
+                        return (index, try Tiles3DWallCoverage.resolve(edges: cuts, lowestY: lowestY, prism: prism,
+                            earthDepth: earthDepth, trayDepth: trayDepth, includesWalls: includesWalls, limits: limits))
+                    }
+                }
+                var result = Array<Geometry?>(repeating: nil, count: jobs.count)
+                for try await (index, section) in group { result[index] = section }
+                return result.compactMap { $0 }
+            }
+            try Task.checkCancellation()
+            var result = Geometry(), bases: [UInt32] = []
+            let vertexCount = sections.reduce(0) { $0 + $1.mesh.vertices.count }
+            let indexCount = sections.reduce(0) { $0 + $1.mesh.indices.count }
+            guard vertexCount < Int(UInt32.max), indexCount / 3 <= 50_000 else {
+                throw OverlayGeometryError.budgetExceeded
+            }
+            result.mesh.vertices.reserveCapacity(vertexCount); result.mesh.indices.reserveCapacity(indexCount)
+            for section in sections {
+                bases.append(UInt32(result.mesh.vertices.count))
+                result.mesh.vertices.append(contentsOf: section.mesh.vertices)
+            }
+            // Preserve two material parts rather than multiplying draw calls by worker count.
+            for material in 0..<2 {
+                let start = result.mesh.indices.count
+                var lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+                var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+                for (index, section) in sections.enumerated() {
+                    for part in section.parts where part.materialIndex == material {
+                        let first = part.indexOffset / MemoryLayout<UInt32>.stride
+                        result.mesh.indices.append(contentsOf: section.mesh.indices[first..<(first + part.indexCount)].map { $0 + bases[index] })
+                        lower = simd_min(lower, part.bounds.min); upper = simd_max(upper, part.bounds.max)
+                    }
+                }
+                guard result.mesh.indices.count > start else { continue }
+                result.parts.append(.init(indexOffset: start * MemoryLayout<UInt32>.stride,
+                    indexCount: result.mesh.indices.count - start, materialIndex: material,
+                    bounds: BoundingBox(min: lower, max: upper)))
+                result.mesh.lower = simd_min(result.mesh.lower, lower)
+                result.mesh.upper = simd_max(result.mesh.upper, upper)
+            }
+            return result.mesh.isEmpty ? nil : result
+        } catch OverlayGeometryError.budgetExceeded {
+            // Proportional quotas can reject an otherwise valid unbalanced edge. Retry once with
+            // the original aggregate quota; cancellation and invalid geometry are never retried.
+            try Task.checkCancellation()
+            return try build(edges: edges, lowestY: lowestY, prism: prism,
+                earthDepth: earthDepth, trayDepth: trayDepth, includesWalls: includesWalls)
+        }
     }
 
     static func build(edges: [Tiles3DCutEdge], lowestY: Float, prism: BoundaryPrism,
@@ -73,31 +148,8 @@ enum Tiles3DShallowClosure {
     ) throws -> Geometry? {
         // Bound staging too, before allocating four vertices per source cut and material band.
         guard edges.count <= 12_500 else { throw OverlayGeometryError.budgetExceeded }
-        var result = Geometry()
-        func append(_ band: Tiles3DCutWall.Geometry?, material: Int) {
-            guard let band else { return }
-            let offset = UInt32(result.mesh.vertices.count)
-            result.parts.append(.init(indexOffset: result.mesh.indices.count * MemoryLayout<UInt32>.stride,
-                indexCount: band.indices.count, materialIndex: material, bounds: band.bounds))
-            result.mesh.vertices.append(contentsOf: band.vertices)
-            result.mesh.indices.append(contentsOf: band.indices.map { $0 + offset })
-            result.mesh.lower = simd_min(result.mesh.lower, band.lower)
-            result.mesh.upper = simd_max(result.mesh.upper, band.upper)
-        }
-        if includesWalls {
-            append(Tiles3DCutWall.buildGeometry(edges: edges, floorY: lowestY - earthDepth,
-                prism: prism, maximumThickness: earthDepth), material: 0)
-        }
-        if trayDepth > 0 {
-            let lowerEdges = edges.map { edge in
-                var edge = edge
-                edge.a.y -= earthDepth; edge.b.y -= earthDepth
-                return edge
-            }
-            append(Tiles3DCutWall.buildGeometry(edges: lowerEdges,
-                floorY: lowestY - earthDepth - trayDepth, prism: prism,
-                maximumThickness: trayDepth), material: 1)
-        }
-        return result.mesh.isEmpty ? nil : try Tiles3DWallCoverage.resolve(result, prism: prism, earthDepth: earthDepth, trayDepth: trayDepth)
+        let result = try Tiles3DWallCoverage.resolve(edges: edges, lowestY: lowestY, prism: prism,
+            earthDepth: earthDepth, trayDepth: trayDepth, includesWalls: includesWalls)
+        return result.mesh.isEmpty ? nil : result
     }
 }

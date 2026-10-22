@@ -45,6 +45,7 @@ def main():
     parser.add_argument("--shape", choices=["circle", "hexagon", "square"])
     parser.add_argument("--simulator", help="Device UDID; omit for native macOS layer capture")
     parser.add_argument("--seconds", type=int, default=75)
+    parser.add_argument("--time-profiler", action="store_true", help="Add CPU sampling; use separate runs for final FPS acceptance")
     args = parser.parse_args()
     prefix = args.output.resolve()
     prefix.parent.mkdir(parents=True, exist_ok=True)
@@ -82,8 +83,10 @@ def main():
             time.sleep(args.seconds)
         else:
             with Path(str(prefix) + "-record.txt").open("w") as log:
-                run(["xcrun", "xctrace", "record", "--instrument", "Metal Performance Overview",
-                     "--instrument", "Points of Interest", "--attach", str(pid), "--time-limit",
+                instruments = ["--instrument", "Metal Performance Overview", "--instrument", "Points of Interest"]
+                if args.time_profiler:
+                    instruments += ["--instrument", "Time Profiler"]
+                run(["xcrun", "xctrace", "record", *instruments, "--attach", str(pid), "--time-limit",
                      str(args.seconds) + "s", "--output", str(prefix) + ".trace"],
                     stdout=log, stderr=subprocess.STDOUT)
         command = ["/usr/bin/log", "show", "--last", "5m", "--style", "compact", "--predicate",
@@ -93,17 +96,18 @@ def main():
         phase_log = run(command, capture_output=True).stdout
         Path(str(prefix) + "-phases.txt").write_text(phase_log)
         result = {"pid": pid, "preset": args.preset, "shape": args.shape, "workload": args.workload,
-                  "simulator": args.simulator, "phases": counters(phase_log), "powerBefore": before,
+                  "simulator": args.simulator, "cpuSampling": args.time_profiler, "phases": counters(phase_log), "powerBefore": before,
                   "powerAfter": run(["pmset", "-g", "custom"], capture_output=True).stdout,
                   "batteryBefore": battery, "batteryAfter": run(["pmset", "-g", "batt"], capture_output=True).stdout,
                   "agentChangedPowerSettings": False, "trace": None if args.simulator else str(prefix) + ".trace"}
         diagnostic_command = ["/usr/bin/log", "show", "--last", "5m", "--style", "compact", "--predicate",
-            f'processIdentifier == {pid} AND eventMessage CONTAINS "Cut wall coverage"']
+            f'processIdentifier == {pid} AND (eventMessage CONTAINS "Cut wall coverage" OR eventMessage CONTAINS "Pan tile upload failed" OR eventMessage CONTAINS "the cut wall")']
         if args.simulator:
             diagnostic_command = ["xcrun", "simctl", "spawn", args.simulator, "log"] + diagnostic_command[1:]
         diagnostics = run(diagnostic_command, capture_output=True).stdout
         Path(str(prefix) + "-wall-diagnostics.txt").write_text(diagnostics)
-        result["wallCoverageFailures"] = sum("hiding the complete rim" in line for line in diagnostics.splitlines())
+        result["wallCoverageFailures"] = sum("Cut wall coverage failed" in line for line in diagnostics.splitlines())
+        result["meshUploadFailures"] = sum("Pan tile upload failed" in line or "Could not" in line for line in diagnostics.splitlines())
         executable_path = app / ("MaquetteDemo" if args.simulator else "Contents/MacOS/MaquetteDemo")
         result["executableSHA256"] = hashlib.sha256(executable_path.read_bytes()).hexdigest()
         result["powerProfilesUnchanged"] = result["powerBefore"] == result["powerAfter"]

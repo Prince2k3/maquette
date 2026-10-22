@@ -1,4 +1,5 @@
 import Testing
+import RealityKit
 import simd
 @testable import Maquette
 
@@ -194,4 +195,21 @@ struct Tiles3DPanningTests {
         #expect(Tiles3DPanFrontier.clamp(SIMD2(120, 0), to: limits, current: stranded) == SIMD2(120, 0))
         #expect(Tiles3DPanFrontier.clamp(SIMD2(0, 0), to: limits, current: stranded) == SIMD2(0, 0))
     }
+    @Test @MainActor func exactSourceHullAvoidsFalseRimTiles() {
+        let before = BoundaryPrism(boundary: .make(shape: .circular, extent: SIMD2(repeating: 2)), scale: 1)
+        let shifted = DioramaBoundary(vertices: before.boundary.vertices.map { $0 + SIMD2(0.01, 0.01) })
+        let after = BoundaryPrism(boundary: shifted, scale: 1)
+        for points in [[SIMD2<Float>(-0.8, 0), .init(0, 0.8), .zero],
+                       [SIMD2<Float>(0.7, 0.9), .init(0.9, 0.7), .init(0.9, 0.9)]] {
+            var descriptor = MeshDescriptor()
+            descriptor.positions = MeshBuffers.Positions(points.map { SIMD3($0.x, 0, $0.y) })
+            descriptor.primitives = .triangles([0, 1, 2])
+            let source = Tiles3DSourceGeometry(descriptors: [descriptor], placement: matrix_identity_float4x4, material: SimpleMaterial())
+            #expect(Tiles3DSourceGeometry.needsRecut(lower: source.lowerBound, upper: source.upperBound, from: before, to: after))
+            #expect(!source.needsRecut(from: before, to: after))
+            let crossing = BoundaryPrism(boundary: .make(shape: .rectangular(width: 0.1, depth: 4), extent: SIMD2(0.1, 4)), scale: 1)
+            if points[0].x < 0 { #expect(source.needsRecut(from: before, to: crossing)) }
+        }
+    }
+
 }

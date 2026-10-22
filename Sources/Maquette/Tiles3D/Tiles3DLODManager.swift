@@ -35,17 +35,30 @@ final class Tiles3DLODManager {
         didSet { if surfaceRevision != oldValue { onSurfaceInvalidated?() } }
     }
     private var surfaceVisibleURIs: Set<String> = []
+    private var isPublishingPan = false
+    private var panChangedSurface = false
+
+    private func markSurfaceChanged() {
+        if isPublishingPan { panChangedSurface = true }
+        else { surfaceRevision &+= 1 }
+    }
 
     var visibleSurfaceGeometry: [TerrainSolidGenerator.Buffers] {
         surfaceVisibleURIs.sorted().compactMap { surfaceGeometry[$0] }
     }
 
-    private func refreshSurfaceVisibility() {
+    private func refreshSurfaceVisibility(force: Bool = false) {
+        guard !isPublishingPan || force else { return }
         let visible = Set(loadedEntities.compactMap { uri, entity in
             entity.isEnabled && entity.model != nil ? uri : nil
         })
-        if visible != surfaceVisibleURIs { surfaceVisibleURIs = visible; surfaceRevision &+= 1 }
+        if visible != surfaceVisibleURIs { surfaceVisibleURIs = visible; markSurfaceChanged() }
     }
+
+    typealias MeshUpload = @MainActor (Tiles3DMeshBuffer, UnsafeBufferPointer<Tiles3DVertex>,
+        UnsafeBufferPointer<UInt32>, BoundingBox, Tiles3DGPUClipper.Transfer?) throws -> Tiles3DMeshBuffer.Outcome
+    private let meshUpload: MeshUpload
+    private(set) var panUploadFailed = false
 
     private var tileMeshes: [String: Tiles3DMeshBuffer] = [:]
 
@@ -81,6 +94,8 @@ final class Tiles3DLODManager {
     /// enabled — an entity with no mesh draws nothing, and enabling it would only confuse the
     /// visible-tile scans the datum and the cut wall are built from.
     private var clippedAway: Set<String> = []
+    /// Hidden LOD ancestors keep their last drawable buffers. Recut before their next activation.
+    private var deferredRecuts: Set<String> = []
     /// The tiles the last traversal chose to draw, whether or not they currently hold geometry.
     ///
     /// Retained because a pan changes which of them survive the outline without running a traversal:
@@ -184,8 +199,12 @@ final class Tiles3DLODManager {
         radiusMeters: Double,
         clipPrism: BoundaryPrism? = nil,
         panRange: Float = 0,
-        shallowUnderside: Tiles3DShallowUnderside? = nil
+        shallowUnderside: Tiles3DShallowUnderside? = nil,
+        meshUpload: @escaping MeshUpload = { buffer, vertices, indices, bounds, transfer in
+            try buffer.write(vertices: vertices, indices: indices, bounds: bounds, transfer: transfer)
+        }
     ) {
+        self.meshUpload = meshUpload
         self.shallowUnderside = shallowUnderside
         self.provider = provider
         self.ecefConverter = ecefConverter
@@ -768,12 +787,126 @@ final class Tiles3DLODManager {
 
     // MARK: - Panning
 
+    /// Immutable next-frame geometry. Preparation never mutates the live clipping frame, mesh
+    /// resources, visibility, or query revision; the current closed solid remains renderable.
+    struct PreparedPan: Sendable {
+        struct Cut: Sendable {
+            var vertices: [Tiles3DVertex]
+            var indices: [UInt32]
+            var edges: [Tiles3DCutEdge]
+            var bounds: BoundingBox
+        }
+        let generation: Int
+        let revision: Int
+        let selected: Set<String>
+        let prism: BoundaryPrism
+        let cuts: [String: Cut]
+        let empty: Set<String>
+        let edges: [Tiles3DCutEdge]
+        let bounds: BoundingBox?
+    }
+
+    func preparePan(to prism: BoundaryPrism) -> PreparedPan {
+        let pending = sourceGeometry.compactMap { uri, source -> (uri: String, source: Tiles3DSourceGeometry)? in
+            guard selectedURIs.contains(uri), loadedEntities[uri] != nil,
+                  deferredRecuts.contains(uri) || source.needsRecut(from: clipPrism, to: prism) else { return nil }
+            return (uri, source)
+        }
+        var cuts: [String: PreparedPan.Cut] = [:], empty: Set<String> = []
+        func capture(_ index: Int, _ outcome: Tiles3DGPUClipper.Outcome) {
+            let job = pending[index]
+            switch outcome {
+            case .clipped(let vertices, let indices, let edges, let bounds, _):
+                cuts[job.uri] = .init(vertices: Array(vertices), indices: Array(indices), edges: edges, bounds: bounds)
+            case .empty: empty.insert(job.uri)
+            case .unresolved:
+                Tiles3DClipper.clip(descriptors: job.source.descriptors, placement: job.source.placement,
+                    to: prism, into: &clipResult)
+                if clipResult.isEmpty { empty.insert(job.uri) }
+                else { cuts[job.uri] = .init(vertices: clipResult.vertices, indices: clipResult.indices,
+                    edges: clipResult.cutEdges, bounds: clipResult.bounds) }
+            }
+        }
+        if let gpuClipper { gpuClipper.clip(pending, to: prism, handling: capture) }
+        else { for index in pending.indices { capture(index, .unresolved) } }
+        var edges: [Tiles3DCutEdge] = []
+        var lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        var found = false
+        for uri in selectedURIs.sorted() {
+            guard !empty.contains(uri), let entity = loadedEntities[uri] else { continue }
+            let bounds: BoundingBox
+            if let cut = cuts[uri] { bounds = cut.bounds; edges.append(contentsOf: cut.edges) }
+            else {
+                guard !clippedAway.contains(uri), entity.model != nil else { continue }
+                bounds = entity.visualBounds(recursive: false, relativeTo: entity.parent)
+                if let component = entity.components[Tiles3DCutEdgeComponent.self] { edges.append(contentsOf: component.edges) }
+            }
+            guard bounds.min.y.isFinite, bounds.min.y > -BoundingVolume.terrainElevationBound else { continue }
+            lower = simd_min(lower, bounds.min); upper = simd_max(upper, bounds.max); found = true
+        }
+        return PreparedPan(generation: clipGeneration, revision: surfaceRevision, selected: selectedURIs,
+            prism: prism, cuts: cuts, empty: empty, edges: edges,
+            bounds: found ? BoundingBox(min: lower, max: upper) : nil)
+    }
+
+    func isCurrent(_ candidate: PreparedPan) -> Bool {
+        candidate.generation == clipGeneration && candidate.revision == surfaceRevision && candidate.selected == selectedURIs
+    }
+
+    /// Commit all prepared tiles synchronously; an LOD mutation invalidates the entire candidate.
+    func commitPan(_ candidate: PreparedPan) -> Bool {
+        guard isCurrent(candidate) else { return false }
+        isPublishingPan = true; panChangedSurface = false; panUploadFailed = false
+        defer {
+            refreshSurfaceVisibility(force: true)
+            isPublishingPan = false
+            if panChangedSurface { surfaceRevision &+= 1 }
+            panChangedSurface = false
+        }
+        let previous = clipPrism
+        clipPrism = candidate.prism
+        cullCenterMeters = Self.cullCenter(of: candidate.prism)
+        tileLoader?.clipPrism = candidate.prism
+        clipGeneration &+= 1
+        for (uri, source) in sourceGeometry where !candidate.selected.contains(uri) {
+            if source.needsRecut(from: previous, to: candidate.prism) { deferredRecuts.insert(uri) }
+        }
+        for uri in candidate.empty {
+            deferredRecuts.remove(uri)
+            if let entity = loadedEntities[uri] { clear(entity, uri: uri) }
+        }
+        for (uri, cut) in candidate.cuts {
+            deferredRecuts.remove(uri)
+            guard let entity = loadedEntities[uri], let source = sourceGeometry[uri] else { continue }
+            cut.vertices.withUnsafeBufferPointer { vertices in
+                cut.indices.withUnsafeBufferPointer { indices in
+                    install(vertices: vertices, indices: indices, cutEdges: cut.edges, bounds: cut.bounds,
+                        to: entity, from: source, uri: uri, wasClipped: true)
+                }
+            }
+        }
+        applyVisibility(candidate.selected)
+        return true
+    }
+
     /// Moves the outline the tiles are cut to, re-cutting only what the move actually changes.
     ///
     /// Almost every tile is either still wholly inside the outline or still wholly outside it after
     /// a pan step, and neither needs touching — the container the tiles hang from carries them.
     /// Only the rim, where the outline's edge crosses a tile, has a different answer than before.
     func setClipPrism(_ prism: BoundaryPrism?) {
+        // The synchronous recut is one transaction. Rescanning every tile after each install is
+        // quadratic and exposes intermediate query geometry to observers. Publish once at the end.
+        isPublishingPan = true
+        panChangedSurface = false
+        panUploadFailed = false
+        defer {
+            refreshSurfaceVisibility(force: true)
+            isPublishingPan = false
+            if panChangedSurface { surfaceRevision &+= 1 }
+            panChangedSurface = false
+        }
         let previous = clipPrism
         clipPrism = prism
         cullCenterMeters = Self.cullCenter(of: prism)
@@ -783,18 +916,23 @@ final class Tiles3DLODManager {
         var pending: [(uri: String, source: Tiles3DSourceGeometry)] = []
         for (uri, source) in sourceGeometry {
             guard loadedEntities[uri] != nil else { continue }
-            guard source.needsRecut(from: previous, to: prism) else { continue }
+            let changed = source.needsRecut(from: previous, to: prism)
+            guard selectedURIs.contains(uri) else {
+                if changed { deferredRecuts.insert(uri) }
+                continue
+            }
+            guard deferredRecuts.remove(uri) != nil || changed else { continue }
             pending.append((uri, source))
         }
 
         let started = ContinuousClock.now
         var onGPU = 0
         if let prism, let gpuClipper, !pending.isEmpty {
-            gpuClipper.clip(pending, to: prism) { index, outcome in
+            gpuClipper.clip(pending, to: prism, transfersToGPU: true) { index, outcome in
                 let job = pending[index]
                 guard let entity = loadedEntities[job.uri] else { return }
                 switch outcome {
-                case .clipped(let vertices, let indices, let cutEdges, let bounds):
+                case .clipped(let vertices, let indices, let cutEdges, let bounds, let transfer):
                     onGPU += 1
                     install(
                         vertices: vertices,
@@ -804,7 +942,8 @@ final class Tiles3DLODManager {
                         to: entity,
                         from: job.source,
                         uri: job.uri,
-                        wasClipped: true
+                        wasClipped: true,
+                        transfer: transfer
                     )
                 case .empty:
                     onGPU += 1
@@ -885,7 +1024,8 @@ final class Tiles3DLODManager {
         to entity: ModelEntity,
         from source: Tiles3DSourceGeometry,
         uri: String,
-        wasClipped: Bool
+        wasClipped: Bool,
+        transfer: Tiles3DGPUClipper.Transfer? = nil
     ) {
         // Written into a buffer RealityKit already holds rather than compiled into a new asset. A
         // pan re-cuts a couple of hundred tiles at once, and `MeshResource.generate` measured about
@@ -897,17 +1037,17 @@ final class Tiles3DLODManager {
             buffer = created
             tileMeshes[uri] = created
         } else {
+            panUploadFailed = true
             clear(entity, uri: uri)
+            deferredRecuts.insert(uri)
             return
         }
 
-        let outcome = (try? buffer.write(
-            vertices: vertices,
-            indices: indices,
-            bounds: bounds
-        )) ?? .empty
+        let outcome = (try? meshUpload(buffer, vertices, indices, bounds, transfer)) ?? .empty
         guard outcome != .empty else {
+            panUploadFailed = true
             clear(entity, uri: uri)
+            deferredRecuts.insert(uri)
             return
         }
 
@@ -921,9 +1061,8 @@ final class Tiles3DLODManager {
         if outcome == .regrown || entity.model == nil {
             entity.model = ModelComponent(mesh: buffer.resource, materials: [source.material])
         }
-        entity.transform = Transform(
-            matrix: wasClipped ? matrix_identity_float4x4 : source.placement
-        )
+        let transform = Transform(matrix: wasClipped ? matrix_identity_float4x4 : source.placement)
+        if entity.transform != transform { entity.transform = transform }
         if cutEdges.isEmpty {
             entity.components.remove(Tiles3DCutEdgeComponent.self)
         } else {
@@ -931,11 +1070,19 @@ final class Tiles3DLODManager {
             entity.components.set(Tiles3DCutEdgeComponent(edges: cutEdges))
         }
         shallowUnderside?.install(on: entity)
-        surfaceGeometry[uri] = .init(positions: vertices.map { vertex in
-            let p = entity.transform.matrix * SIMD4<Float>(vertex.position, 1)
-            return SIMD3(p.x, p.y, p.z)
-        }, indices: Array(indices))
-        if entity.isEnabled { surfaceRevision &+= 1 }
+        // Clipped vertices already carry source placement. Whole tiles use one constant matrix,
+        // never a RealityKit transform getter (and matrix reconstruction) per copied vertex.
+        let positions: [SIMD3<Float>]
+        if wasClipped { positions = vertices.map(\.position) }
+        else {
+            let placement = entity.transform.matrix
+            positions = vertices.map { vertex in
+                let p = placement * SIMD4<Float>(vertex.position, 1)
+                return SIMD3(p.x, p.y, p.z)
+            }
+        }
+        surfaceGeometry[uri] = .init(positions: positions, indices: Array(indices))
+        if entity.isEnabled { markSurfaceChanged() }
         clippedAway.remove(uri)
         refreshSurfaceVisibility()
     }
@@ -959,6 +1106,14 @@ final class Tiles3DLODManager {
     /// Hidden tiles stay loaded, so switching back is free.
     private func applyVisibility(_ visibleURIs: Set<String>) {
         selectedURIs = visibleURIs
+        // A deferred tile must reach the current outline before enabling either its surface or
+        // its shared underside. This also updates clippedAway before the visibility decision.
+        for uri in visibleURIs where !isPublishingPan && deferredRecuts.contains(uri) {
+            deferredRecuts.remove(uri)
+            if let entity = loadedEntities[uri], let source = sourceGeometry[uri] {
+                apply(clipPrism, to: entity, from: source, uri: uri)
+            }
+        }
         for (uri, entity) in loadedEntities {
             let shouldShow = visibleURIs.contains(uri) && !clippedAway.contains(uri)
             if entity.isEnabled != shouldShow {
@@ -1046,6 +1201,7 @@ final class Tiles3DLODManager {
             sourceGeometry.removeValue(forKey: uri)
             tileMeshes.removeValue(forKey: uri)
             surfaceGeometry.removeValue(forKey: uri)
+            deferredRecuts.remove(uri)
             gpuClipper?.discard(uri)
             clippedAway.remove(uri)
             selectedURIs.remove(uri)

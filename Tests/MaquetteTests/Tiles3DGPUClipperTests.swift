@@ -1,4 +1,5 @@
 import Foundation
+import Metal
 import RealityKit
 import Testing
 import simd
@@ -25,6 +26,43 @@ import simd
 @Suite("3D Tiles GPU Clipper Tests")
 @MainActor
 struct Tiles3DGPUClipperTests {
+    @Test func directTransfersPreserveCurrentBatchAcrossScratchReuse() throws {
+        let gpu = try #require(Tiles3DGPUClipper())
+        let source = Self.lattice(extent: 2, step: 0.1)
+        var meshes: [(Tiles3DMeshBuffer, [SIMD3<Float>], [UInt32])] = []
+        var commands: [any MTLCommandBuffer] = []
+        for x in [Float(0), 0.2, -0.2] {
+            let boundary = DioramaBoundary.make(shape: .hexagonal, extent: SIMD2(repeating: 1))
+            let moved = DioramaBoundary(vertices: boundary.vertices.map { $0 + SIMD2(x, 0) })
+            gpu.clip([(uri: "transfer", source: source)], to: BoundaryPrism(boundary: moved, scale: 1),
+                     transfersToGPU: true) { _, outcome in
+                guard case .clipped(let vertices, let indices, _, let bounds, let transfer) = outcome else {
+                    Issue.record("Expected transferable clipped geometry"); return
+                }
+                do {
+                    let transfer = try #require(transfer)
+                    let mesh = try Tiles3DMeshBuffer(vertexCapacity: 1, indexCapacity: 1)
+                    _ = try mesh.write(vertices: vertices, indices: indices, bounds: bounds, transfer: transfer)
+                    meshes.append((mesh, vertices.map(\.position), Array(indices)))
+                    commands.append(transfer.command)
+                } catch { Issue.record(error) }
+            }
+        }
+        for command in commands { command.waitUntilCompleted(); #expect(command.error == nil) }
+        #expect(meshes.count == 3)
+        for (buffer, positions, indices) in meshes {
+            let mesh = try #require(buffer.resource.lowLevelMesh)
+            #expect(mesh.parts[0].indexCount == indices.count)
+            mesh.withUnsafeBytes(bufferIndex: 0) { bytes in
+                let actual = bytes.bindMemory(to: Tiles3DVertex.self).prefix(positions.count).map(\.position)
+                #expect(actual == positions)
+            }
+            mesh.withUnsafeIndices { bytes in
+                #expect(Array(bytes.bindMemory(to: UInt32.self).prefix(indices.count)) == indices)
+            }
+        }
+    }
+
     // MARK: - Agreement With the CPU Clip
 
     @Test("Panned circles, hexagons and squares agree with the fixed-footprint CPU clip")
@@ -41,7 +79,7 @@ struct Tiles3DGPUClipperTests {
                 var cuts: [Tiles3DCutEdge] = []
                 gpu.clip([(uri: "panned", source: source)], to: prism) { _, outcome in
                     gpuResult = Self.summarise(outcome)
-                    if case .clipped(let vertices, let outputIndices, let cutEdges, _) = outcome {
+                    if case .clipped(let vertices, let outputIndices, let cutEdges, _, _) = outcome {
                         positions = vertices.map { SIMD2($0.px, $0.pz) }
                         indices = Array(outputIndices)
                         cuts = cutEdges
@@ -312,7 +350,7 @@ struct Tiles3DGPUClipperTests {
 
     private static func summarise(_ outcome: Tiles3DGPUClipper.Outcome) -> Summary? {
         switch outcome {
-        case .clipped(let vertices, let indices, let cutEdges, let bounds):
+        case .clipped(let vertices, let indices, let cutEdges, let bounds, _):
             return Summary(
                 areas: areas(vertices: vertices, indices: indices),
                 cutEdgeCount: cutEdges.count,

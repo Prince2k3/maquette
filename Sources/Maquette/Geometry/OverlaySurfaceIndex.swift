@@ -7,7 +7,11 @@ struct OverlaySurfaceIndex: Sendable {
     private struct Item: Sendable {
         var id: Int
         var bounds: OverlayBounds
-        var center: SIMD2<Double> { (bounds.lo + bounds.hi) / 2 }
+        let center: SIMD2<Double>
+        init(id: Int, bounds: OverlayBounds) {
+            self.id = id; self.bounds = bounds
+            center = (bounds.lo + bounds.hi) / 2
+        }
     }
     private struct Node: Sendable {
         var bounds: OverlayBounds
@@ -29,15 +33,22 @@ struct OverlaySurfaceIndex: Sendable {
         raster = nil
         var items = bounds.enumerated().map { Item(id: $0.offset, bounds: $0.element) }
         var nodes: [Node] = []
-        if !items.isEmpty { _ = try Self.build(items: &items, range: items.indices, nodes: &nodes, work: &work) }
+        nodes.reserveCapacity(items.count / 4 + 1)
+        if !items.isEmpty {
+            try items.withUnsafeMutableBufferPointer { storage in
+                _ = try Self.build(items: storage, range: storage.indices, nodes: &nodes, work: &work)
+            }
+        }
         self.items = items; self.nodes = nodes
     }
 
-    private static func build(items: inout [Item], range: Range<Int>, nodes: inout [Node], work: inout OverlayWork) throws -> Int {
+    private static func build(items: UnsafeMutableBufferPointer<Item>, range: Range<Int>, nodes: inout [Node], work: inout OverlayWork, depth: Int = 0) throws -> Int {
         var bounds = items[range.lowerBound].bounds
-        var centers = OverlayBounds([items[range.lowerBound].center])
-        for item in items[range] {
-            try work.spend()
+        var centers = OverlayBounds(point: items[range.lowerBound].center)
+        try work.spend(range.count)
+        for index in range {
+            if index.isMultiple(of: 1024) { try Task.checkCancellation() }
+            let item = items[index]
             bounds.lo = simd_min(bounds.lo, item.bounds.lo); bounds.hi = simd_max(bounds.hi, item.bounds.hi)
             centers.lo = simd_min(centers.lo, item.center); centers.hi = simd_max(centers.hi, item.center)
         }
@@ -47,12 +58,64 @@ struct OverlaySurfaceIndex: Sendable {
         let extent = centers.hi - centers.lo
         let axis = extent.x >= extent.y ? 0 : 1
         guard extent[axis] > 0 else { return node }
-        items.replaceSubrange(range, with: items[range].sorted { $0.center[axis] < $1.center[axis] })
-        let middle = range.lowerBound + range.count / 2
-        let left = try build(items: &items, range: range.lowerBound..<middle, nodes: &nodes, work: &work)
-        let right = try build(items: &items, range: middle..<range.upperBound, nodes: &nodes, work: &work)
+        // Spatial splitting needs only one pass. Bound its depth and use median selection for
+        // extreme clusters/adjacent floating-point centers, preserving a bounded-depth tree.
+        var middle = range.lowerBound
+        if depth < 32 {
+            let cut = centers.lo[axis] / 2 + centers.hi[axis] / 2
+            let storage = items.baseAddress!
+            try work.spend(range.count * 3)
+            var left = range.lowerBound, right = range.upperBound - 1
+            var steps = 0
+            while left <= right {
+                if steps.isMultiple(of: 1024) { try Task.checkCancellation() }
+                steps += 1
+                if storage[left].center[axis] < cut { left += 1 }
+                else {
+                    let value = storage[left]; storage[left] = storage[right]; storage[right] = value
+                    right -= 1
+                }
+            }
+            middle = left
+        }
+        if middle == range.lowerBound || middle == range.upperBound {
+            middle = range.lowerBound + range.count / 2
+            try partition(items: items, range: range, middle: middle, axis: axis, work: &work)
+        }
+        let left = try build(items: items, range: range.lowerBound..<middle, nodes: &nodes, work: &work, depth: depth + 1)
+        let right = try build(items: items, range: middle..<range.upperBound, nodes: &nodes, work: &work, depth: depth + 1)
         nodes[node].count = 0; nodes[node].left = left; nodes[node].right = right
         return node
+    }
+
+    /// Select a median in place. Child bounds are recomputed below, so neither child needs a
+    /// full sort. IDs break centroid ties deterministically, including stacked roof triangles.
+    private static func partition(items: UnsafeMutableBufferPointer<Item>, range: Range<Int>, middle: Int, axis: Int,
+        work: inout OverlayWork
+    ) throws {
+        let storage = items.baseAddress!
+        var low = range.lowerBound, high = range.upperBound - 1
+        while low < high {
+            let pivot = storage[low + (high - low) / 2]
+            var left = low, right = high
+            while left <= right {
+                try work.spend(2)
+                while left <= high && less(storage[left], pivot, axis: axis) { try work.spend(); left += 1 }
+                while right >= low && less(pivot, storage[right], axis: axis) { try work.spend(); right -= 1 }
+                if left <= right {
+                    let value = storage[left]; storage[left] = storage[right]; storage[right] = value
+                    left += 1; right -= 1
+                }
+            }
+            if middle <= right { high = right }
+            else if middle >= left { low = left }
+            else { return }
+        }
+    }
+
+    @inline(__always)
+    private static func less(_ a: Item, _ b: Item, axis: Int) -> Bool {
+        a.center[axis] == b.center[axis] ? a.id < b.id : a.center[axis] < b.center[axis]
     }
 
     func candidates(for bounds: OverlayBounds, work: inout OverlayWork) throws -> [Int] {

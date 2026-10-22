@@ -5,6 +5,67 @@ import simd
 
 @Suite("Photorealistic shallow base and fixed footprint")
 struct PhotorealShallowBaseTests {
+    @Test func unevenParallelQuotasRecoverTheValidAggregateWall() async throws {
+        let prism = BoundaryPrism(boundary: .make(shape: .rectangular(width: 1, depth: 1),
+            extent: SIMD2(repeating: 1)), scale: 1)
+        let (a, b) = prism.boundary.edge(0), (c, d) = prism.boundary.edge(1)
+        let crossing = [
+            Tiles3DCutEdge(a: SIMD3(a.x, 2, a.y), b: SIMD3(b.x, 2.08, b.y), boundaryEdge: 0),
+            Tiles3DCutEdge(a: SIMD3(a.x, 2.08, a.y), b: SIMD3(b.x, 2, b.y), boundaryEdge: 0)
+        ]
+        // Non-emitting cuts consume input quota without consuming output. The meaningful edge
+        // needs more than its proportional eight triangles, but fits the aggregate budget.
+        let empty = Tiles3DCutEdge(a: SIMD3(c.x, -10, c.y), b: SIMD3(d.x, -10, d.y), boundaryEdge: 1)
+        let edges = crossing + Array(repeating: empty, count: 12_498)
+        let serial = try #require(try Tiles3DShallowClosure.build(edges: edges, lowestY: 0, prism: prism,
+            earthDepth: 0.06, trayDepth: 0.04, includesWalls: true))
+        #expect(serial.mesh.indices.count / 3 > 8)
+        let parallel = try #require(try await Tiles3DShallowClosure.buildParallel(edges: edges, lowestY: 0, prism: prism,
+            earthDepth: 0.06, trayDepth: 0.04, includesWalls: true))
+        #expect(parallel.mesh.indices == serial.mesh.indices)
+        #expect(parallel.mesh.vertices.map(\.position) == serial.mesh.vertices.map(\.position))
+        #expect(parallel.mesh.vertices.map(\.uv) == serial.mesh.vertices.map(\.uv))
+        #expect(parallel.parts.map(\.materialIndex) == serial.parts.map(\.materialIndex))
+    }
+
+    @Test func parallelCoveragePreservesEveryTriangleMaterialNormalAndUV() async throws {
+        let prism = BoundaryPrism(boundary: .make(shape: .circular, extent: SIMD2(repeating: 1)), scale: 1)
+        var edges: [Tiles3DCutEdge] = []
+        for edge in prism.boundary.vertices.indices {
+            let (a, b) = prism.boundary.edge(edge)
+            for segment in 0..<8 {
+                let left = a + (b - a) * (Float(segment) / 8)
+                let right = a + (b - a) * (Float(segment + 1) / 8)
+                for layer in 0..<2 {
+                    let y = Float(0.3) + Float(layer) * 0.003
+                    edges.append(.init(a: SIMD3(left.x, y, left.y), b: SIMD3(right.x, y + 0.001, right.y), boundaryEdge: edge))
+                }
+            }
+        }
+        let serial = try #require(try Tiles3DShallowClosure.build(edges: edges, lowestY: 0, prism: prism,
+            earthDepth: 0.06, trayDepth: 0.04, includesWalls: true))
+        let parallel = try #require(try await Tiles3DShallowClosure.buildParallel(edges: edges, lowestY: 0, prism: prism,
+            earthDepth: 0.06, trayDepth: 0.04, includesWalls: true))
+        func triangles(_ geometry: Tiles3DShallowClosure.Geometry) -> [String] {
+            geometry.parts.flatMap { part in
+                let first = part.indexOffset / MemoryLayout<UInt32>.stride
+                return stride(from: first, to: first + part.indexCount, by: 3).map { index in
+                    let vertices = (0..<3).map { j -> String in
+                        let v = geometry.mesh.vertices[Int(geometry.mesh.indices[index + j])]
+                        return "\(v.position)|\(v.nx),\(v.ny),\(v.nz)|\(v.uv)"
+                    }
+                    // Cyclic rotations preserve winding; a reversed triangle cannot match.
+                    let rotations = (0..<3).map { j in (0..<3).map { vertices[(j + $0) % 3] }.joined(separator: ";") }
+                    return "\(part.materialIndex):\(rotations.min()!)"
+                }
+            }.sorted()
+        }
+        #expect(triangles(serial) == triangles(parallel))
+        #expect(serial.mesh.bounds == parallel.mesh.bounds)
+        #expect(serial.parts.map(\.bounds) == parallel.parts.map(\.bounds))
+        #expect(serial.parts.map(\.materialIndex) == parallel.parts.map(\.materialIndex))
+    }
+
     @Test("A cut edge on high ground cannot produce a tall earth wall")
     func highGroundHasShallowWalls() throws {
         let prism = BoundaryPrism(boundary: .make(shape: .rectangular(width: 1, depth: 1), extent: SIMD2(repeating: 1)), scale: 1)
@@ -195,6 +256,35 @@ struct PhotorealShallowBaseTests {
         #expect(throws: OverlayGeometryError.budgetExceeded) {
             try Tiles3DShallowClosure.build(edges: edges, lowestY: 0, prism: prism,
                 earthDepth: 0.06, trayDepth: 0.04, includesWalls: true)
+        }
+    }
+
+    @Test func disjointBandsMatchTheGeneralUnionPath() throws {
+        let prism = BoundaryPrism(boundary: .make(shape: .rectangular(width: 1, depth: 1),
+            extent: SIMD2(repeating: 1)), scale: 1)
+        let (a, b) = prism.boundary.edge(0)
+        for walls in [true, false] {
+            for height in [Float(-0.04), 0, 2] {
+                let edge = Tiles3DCutEdge(a: SIMD3(a.x, height, a.y), b: SIMD3(b.x, height + 0.02, b.y), boundaryEdge: 0)
+                let fast = try #require(try Tiles3DShallowClosure.build(edges: [edge], lowestY: 0, prism: prism,
+                    earthDepth: 0.06, trayDepth: 0.04, includesWalls: walls))
+                let general = try #require(try Tiles3DShallowClosure.build(edges: [edge, edge], lowestY: 0, prism: prism,
+                    earthDepth: 0.06, trayDepth: 0.04, includesWalls: walls))
+                func areas(_ geometry: Tiles3DShallowClosure.Geometry) -> [Float] {
+                    geometry.parts.map { part in
+                        let start = part.indexOffset / MemoryLayout<UInt32>.stride
+                        return stride(from: start, to: start + part.indexCount, by: 3).reduce(Float(0)) { total, index in
+                            let a = geometry.mesh.vertices[Int(geometry.mesh.indices[index])].position
+                            let b = geometry.mesh.vertices[Int(geometry.mesh.indices[index + 1])].position
+                            let c = geometry.mesh.vertices[Int(geometry.mesh.indices[index + 2])].position
+                            return total + simd_length(simd_cross(b - a, c - a)) / 2
+                        }
+                    }
+                }
+                #expect(fast.parts.map(\.materialIndex) == general.parts.map(\.materialIndex))
+                #expect(zip(areas(fast), areas(general)).allSatisfy { abs($0 - $1) < 1e-6 })
+                #expect(fast.mesh.bounds == general.mesh.bounds)
+            }
         }
     }
 

@@ -70,3 +70,9 @@ Demo/MaquetteDemo/Secrets.swift
 
 # Internal development notes — not part of the public repository
 CLAUDE.md
+
+# Local project planning, implementation, and profiling notes
+/AGENTS.md
+/map-*.md
+/mapkit-*.md
+/release-notes-map-content-camera.md

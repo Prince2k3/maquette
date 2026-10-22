@@ -56,6 +56,7 @@ import SwiftUI
     private var imageMeshes: [(key: Key, resource: OverlayMeshResource)] = []
     @ObservationIgnored private(set) var reconciliationDuration = Duration.zero
     @ObservationIgnored private(set) var materialUpdateCount = 0
+    @ObservationIgnored private(set) var selectionComponentUpdateCount = 0
     private var textures: [DioramaImageResource.Key: TextureResource] = [:]
     private var context: Context?
     private var surfaceTask: Task<OverlaySurfaceMesh?, Error>?
@@ -323,7 +324,9 @@ import SwiftUI
                     imageMeshes.append((key, part.resource))
                 }
             } else {
-                try part.resource.update(layer.mesh)
+                // Filled areas grow quadratically during ground zoom. Reserve modest headroom
+                // at allocation so the first pinch does not rebuild many resources together.
+                try part.resource.update(layer.mesh, reserveForGrowth: layer.kind == .fill)
                 meshUploadCount += 1
             }
             part.mesh = layer.mesh
@@ -388,8 +391,17 @@ import SwiftUI
         // Completion changes one record; refreshing every sibling made N completions O(N²).
         let identity = DioramaMarkerIdentity(annotationID: record.input.annotation.selectionAnnotationID ?? record.input.annotation.id,
             tag: record.input.annotation.selectionTag, allowsLegacyID: false)
-        record.entity.components.set(identity)
-        record.entity.components.set(DioramaOverlaySelectionState(isSelected: root?.selection?.isSelected(identity) ?? false))
+        // Entity component setters dirty RealityKit state even when their values are unchanged.
+        // Ground movement changes mesh buffers, not selection identity or selected appearance.
+        if record.entity.components[DioramaMarkerIdentity.self] != identity {
+            record.entity.components.set(identity)
+            selectionComponentUpdateCount += 1
+        }
+        let selected = root?.selection?.isSelected(identity) ?? false
+        if record.entity.components[DioramaOverlaySelectionState.self]?.isSelected != selected {
+            record.entity.components.set(DioramaOverlaySelectionState(isSelected: selected))
+            selectionComponentUpdateCount += 1
+        }
         configureSpatialTarget(record, identity: identity)
     }
     func waitUntilIdle() async {

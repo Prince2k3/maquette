@@ -70,11 +70,18 @@ struct DioramaOverlaySelectionTests {
         await root.overlayRenderer.waitUntilIdle()
         let record = try #require(root.overlayRenderer.records["park"])
         let identity = try #require(hit(root, .init(0.2, 0)))
+        let writes = root.overlayRenderer.selectionComponentUpdateCount
         root.selection?.toggle(identity)
         root.overlayRenderer.updateSelection()
+        #expect(root.overlayRenderer.selectionComponentUpdateCount == writes + 1)
+        root.overlayRenderer.updateSelection()
+        #expect(root.overlayRenderer.selectionComponentUpdateCount == writes + 1)
         #expect(selected == id)
         #expect(record.entity.components[DioramaOverlaySelectionState.self]?.isSelected == true)
         root.selection?.toggle(identity)
+        root.overlayRenderer.updateSelection()
+        #expect(root.overlayRenderer.selectionComponentUpdateCount == writes + 2)
+        #expect(record.entity.components[DioramaOverlaySelectionState.self]?.isSelected == false)
         #expect(selected == nil)
         #expect(root.overlayRenderer.records["park"] === record)
     }

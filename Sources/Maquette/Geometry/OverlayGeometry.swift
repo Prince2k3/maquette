@@ -27,6 +27,8 @@ struct OverlayWork: Sendable {
         self.limits = limits
         remaining = limits.maxOperations
     }
+    // Keep constant charges cheap in resident-face and fragment-fan loops.
+    @inline(__always)
     mutating func spend(_ count: Int = 1) throws {
         if remaining & 1023 == 0 { try Task.checkCancellation() }
         guard count >= 0, count <= remaining else { throw OverlayGeometryError.budgetExceeded }

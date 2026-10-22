@@ -56,7 +56,7 @@ struct DioramaSelection {
 }
 
 /// Selection identity survives multipart expansion without parsing entity names.
-struct DioramaMarkerIdentity: Component {
+struct DioramaMarkerIdentity: Component, Equatable {
     let annotationID: String
     let tag: DioramaSelectionTag?
     var allowsLegacyID = true

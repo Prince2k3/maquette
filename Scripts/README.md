@@ -131,3 +131,13 @@ clipping and indexed boundary fans. `Fixtures/overlay-profile-simulator-polygons
 retains intermediate controls, native layer FPS, simulator counters, power-context changes and
 validation. Native and simulator acceptance are reported separately; the user disabled Low Power
 Mode during the session, and later captures must not be compared as a code-only improvement.
+
+
+[[map-simulator-polygon-capacity-follow-up]] records independent buffer high-water marks and
+fill-only growth reserve. `Fixtures/overlay-profile-polygon-capacity-2026-10-21.json` retains the
+102-to-zero in-phase resize comparison, two quiet simulator steady-window repeats, adverse
+captures and final native rendered FPS. `OverlayMeshResize` profiling intervals isolate resource
+allocation from ordinary buffer writes. Quiet controls avoid tool output and other task work during
+measured phases, while retaining every result. First-second startup shortfalls remain reported.
+If simulator Time Profiler PID attachment stalls, use `--device UDID --all-processes` and filter
+accepted CPU/signpost tables by the launched app PID; this does not provide simulator GPU proof.

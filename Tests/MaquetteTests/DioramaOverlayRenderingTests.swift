@@ -383,6 +383,7 @@ struct DioramaOverlayRenderingTests {
         let resource = try #require(part.model.model?.mesh)
         let firstY = try #require(part.mesh.positions.first?.y)
         let materials = root.overlayRenderer.materialUpdateCount
+        let selectionWrites = root.overlayRenderer.selectionComponentUpdateCount
         let projection = try #require(proxy.projection as? TerrainProjection)
         let tile = TileMath.tileXY(for: Coordinate(proxy.configuration.center), zoom: projection.anchor.zoom)
         let field = TerrainHeightField(grids: [.init(width: 2, height: 2, values: [200, 200, 200, 200])],
@@ -396,6 +397,7 @@ struct DioramaOverlayRenderingTests {
         #expect(part.model.model?.mesh === resource)
         #expect(part.mesh.positions.first?.y != firstY)
         #expect(root.overlayRenderer.materialUpdateCount == materials)
+        #expect(root.overlayRenderer.selectionComponentUpdateCount == selectionWrites)
         let builds = root.overlayRenderer.geometryBuildCount
         root.applyContent(content(.red), using: moved, physicalSize: 1)
         await root.overlayRenderer.waitUntilIdle()

@@ -324,6 +324,18 @@ struct ContentView: View {
         $0.id == ProcessInfo.processInfo.environment["MAQUETTE_PRESET"]
     } ?? 0
 
+    private var displayedShape: DioramaShape {
+        #if MAQUETTE_PROFILING
+        switch ProcessInfo.processInfo.environment["MAQUETTE_PROFILE_SHAPE"] {
+        case "circle": return .circular
+        case "hexagon": return .hexagonal
+        case "square": return .rectangular(width: 0.8, depth: 0.8)
+        default: break
+        }
+        #endif
+        return preset.shape
+    }
+
     private static var initialPreset: DemoPreset {
         DemoPresets.all.first {
             $0.id == ProcessInfo.processInfo.environment["MAQUETTE_PRESET"]
@@ -416,7 +428,7 @@ struct ContentView: View {
     private var terrainDiorama: some View {
         DioramaView(
             groundPosition: $groundPosition,
-            shape: preset.shape,
+            shape: displayedShape,
             physicalSize: preset.physicalSize,
             cameraPosition: $position,
             selection: $selectedAnnotation

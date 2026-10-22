@@ -116,6 +116,7 @@ final class Tiles3DLODManager {
     private var failedTiles: [String: Int] = [:]
     /// Content fetches currently in flight, so a tile is not requested twice.
     private var inFlight: Set<String> = []
+    private let shallowUnderside: Tiles3DShallowUnderside?
 
     /// Set when a fetch is rejected because the provider's session has expired.
     private var needsSessionRenewal = false
@@ -182,8 +183,10 @@ final class Tiles3DLODManager {
         center: CLLocationCoordinate2D,
         radiusMeters: Double,
         clipPrism: BoundaryPrism? = nil,
-        panRange: Float = 0
+        panRange: Float = 0,
+        shallowUnderside: Tiles3DShallowUnderside? = nil
     ) {
+        self.shallowUnderside = shallowUnderside
         self.provider = provider
         self.ecefConverter = ecefConverter
         self.center = center
@@ -744,6 +747,7 @@ final class Tiles3DLODManager {
         parentEntity.addChild(entity)
         loadedEntities[request.uri] = entity
         surfaceGeometry[request.uri] = loaded.surface
+        shallowUnderside?.install(on: entity)
         framesSinceVisible[request.uri] = 0
         if let copyright = loaded.copyright {
             tileCopyrights[request.uri] = copyright
@@ -926,6 +930,7 @@ final class Tiles3DLODManager {
             _ = Tiles3DCutEdgeRegistration.perform
             entity.components.set(Tiles3DCutEdgeComponent(edges: cutEdges))
         }
+        shallowUnderside?.install(on: entity)
         surfaceGeometry[uri] = .init(positions: vertices.map { vertex in
             let p = entity.transform.matrix * SIMD4<Float>(vertex.position, 1)
             return SIMD3(p.x, p.y, p.z)
@@ -938,6 +943,7 @@ final class Tiles3DLODManager {
     /// Leaves a tile loaded but drawing nothing, for when the outline has taken all of it.
     private func clear(_ entity: ModelEntity, uri: String) {
         entity.model = nil
+        shallowUnderside?.remove(from: entity)
         entity.isEnabled = false
         entity.components.remove(Tiles3DCutEdgeComponent.self)
         surfaceGeometry[uri] = nil

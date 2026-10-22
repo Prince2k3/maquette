@@ -2,7 +2,7 @@
 title: Release validation scripts
 tags: [maquette, validation, ci]
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 status: active
 type: reference
 ---
@@ -147,3 +147,30 @@ accepted CPU/signpost tables by the launched app PID; this does not provide simu
 surface/wall/underside buffer publication. `Fixtures/overlay-profile-shallow-chunk-2026-10-21.json`
 retains its native and simulator polygon regression captures. The underside now moves and has its
 own retained buffer; the old raw pan benchmark does not measure that additional upload.
+
+
+`profile-diorama.py` captures one foreground Release demo, records power profiles without changing
+settings, and saves completed tour counters. Native captures also record a RealityKit Metal layer
+trace and phase signposts. `analyze-diorama-profile.py PREFIX` resolves xctrace XML references and
+reports full approximately one-second layer samples inside each completed phase. Keep the demo
+visible, and stop builds and other captures during measured phases. Simulator counters remain
+CPU/scene diagnostics and cannot establish physical-device FPS.
+
+```sh
+python3 Scripts/profile-diorama.py --app /tmp/maquette-photo-profile-mac/Build/Products/Release/MaquetteDemo.app \
+  --output /tmp/maquette-photo-results/mac-circle --preset photoreal-pan \
+  --shape circle --workload photorealistic --seconds 75
+python3 Scripts/analyze-diorama-profile.py /tmp/maquette-photo-results/mac-circle
+```
+
+Use `--simulator UDID` with the simulator app for diagnostics. `--shape` accepts circle, hexagon,
+or square and only affects profiling builds. Photorealistic tours wait for resident streaming work,
+then exercise supported pan and camera zoom; they explicitly omit unsupported ground zoom.
+[[map-photorealistic-shallow-base]] records the shared thickness budget, fixed footprint tests,
+wall overlap regression and follow-up measurements for [[map-content-camera-api-plan]].
+
+The final 2026-10-22 fixture is `Fixtures/overlay-profile-photorealistic-shallow-2026-10-22.json`.
+It retains failed/adverse captures, the final raster flat-floor revision, native Metal-layer samples,
+simulator startup bins and photo pan limits. The XML analyzer inherits schema-less auxiliary table
+schemas, which xctrace may use for all signpost rows. Simulator log reads use the runtime-resolved
+`log` command, since a host-style absolute `/usr/bin/log` path may not exist in the runtime.

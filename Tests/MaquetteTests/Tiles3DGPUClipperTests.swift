@@ -27,6 +27,63 @@ import simd
 struct Tiles3DGPUClipperTests {
     // MARK: - Agreement With the CPU Clip
 
+    @Test("Panned circles, hexagons and squares agree with the fixed-footprint CPU clip")
+    func builtInFootprintsStayExactThroughPanRecuts() throws {
+        let gpu = try #require(Tiles3DGPUClipper())
+        for shape in [DioramaShape.circular, .hexagonal, .rectangular(width: 1, depth: 1)] {
+            let fixed = DioramaBoundary.make(shape: shape, extent: SIMD2(repeating: 1))
+            for offset in [SIMD2<Float>(0.2, -0.15), SIMD2(-0.12, 0.18), .zero] {
+                let moved = DioramaBoundary(vertices: fixed.vertices.map { $0 + offset })
+                let prism = BoundaryPrism(boundary: moved, scale: 1)
+                let source = Self.lattice(extent: 2, step: 0.1)
+                var gpuResult: Summary?
+                var positions: [SIMD2<Float>] = [], indices: [UInt32] = []
+                var cuts: [Tiles3DCutEdge] = []
+                gpu.clip([(uri: "panned", source: source)], to: prism) { _, outcome in
+                    gpuResult = Self.summarise(outcome)
+                    if case .clipped(let vertices, let outputIndices, let cutEdges, _) = outcome {
+                        positions = vertices.map { SIMD2($0.px, $0.pz) }
+                        indices = Array(outputIndices)
+                        cuts = cutEdges
+                    }
+                }
+                let output = try #require(gpuResult)
+                let cpu = Self.onCPU(source, to: prism)
+                // Translation can split near-zero fragments differently (~3e-9 m² observed).
+                // Compare rendered geometry and coverage, not an identical triangulation count.
+                #expect(abs(output.area - cpu.area) < cpu.area * 1e-4)
+                #expect(output.cutEdgeCount == cpu.cutEdgeCount)
+                #expect(simd_distance(output.bounds.min, cpu.bounds.min) < 1e-3)
+                #expect(simd_distance(output.bounds.max, cpu.bounds.max) < 1e-3)
+                for cut in cuts {
+                    for endpoint in [cut.a, cut.b] {
+                        #expect(fixed.distance(from: SIMD2(endpoint.x, endpoint.z) - offset,
+                            toEdge: cut.boundaryEdge) < 1e-5)
+                    }
+                }
+                for row in 0..<21 {
+                    for column in 0..<21 {
+                        let point = SIMD2<Float>(Float(column) * 0.055 - 0.547,
+                            Float(row) * 0.055 - 0.543)
+                        if (0..<fixed.edgeCount).contains(where: { fixed.distance(from: point, toEdge: $0) < 1e-4 }) { continue }
+                        let movedPoint = point + offset
+                        let covered = stride(from: 0, to: indices.count, by: 3).contains { i in
+                            let a = positions[Int(indices[i])], b = positions[Int(indices[i + 1])], c = positions[Int(indices[i + 2])]
+                            func cross(_ u: SIMD2<Float>, _ v: SIMD2<Float>) -> Float { u.x * v.y - u.y * v.x }
+                            let area = cross(b - a, c - a)
+                            guard abs(area) > 1e-10 else { return false }
+                            let sides = [cross(b - a, movedPoint - a) / area,
+                                cross(c - b, movedPoint - b) / area, cross(a - c, movedPoint - c) / area]
+                            return sides.allSatisfy { $0 >= -1e-5 }
+                        }
+                        #expect(covered == fixed.contains(point),
+                            "Footprint at \(point), pan \(offset), boundary vertices \(fixed.vertices.count)")
+                    }
+                }
+            }
+        }
+    }
+
     @Test("The kernel compiles and cuts a circular outline the way the CPU clip does")
     func matchesCPUOnACircle() throws {
         guard let gpu = Tiles3DGPUClipper() else { return }

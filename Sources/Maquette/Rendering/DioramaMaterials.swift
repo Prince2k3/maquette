@@ -123,7 +123,13 @@ enum DioramaMaterials {
                 return litMaterial(color: fallback, roughness: 0.9)
             }
             var material = PhysicallyBasedMaterial()
-            material.baseColor = .init(texture: .init(texture))
+            let sampler = MTLSamplerDescriptor()
+            sampler.minFilter = .linear
+            sampler.magFilter = .linear
+            sampler.mipFilter = .linear
+            sampler.sAddressMode = .repeat
+            sampler.tAddressMode = .repeat
+            material.baseColor = .init(texture: .init(texture, sampler: .init(sampler)))
             material.roughness = .init(floatLiteral: 0.95)
             material.metallic = .init(floatLiteral: 0.0)
             return material

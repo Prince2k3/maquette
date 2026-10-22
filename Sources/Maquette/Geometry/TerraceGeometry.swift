@@ -229,24 +229,33 @@ enum TerraceGeometry {
         bands: TerraceBands,
         baseDepth: Float,
         wallHeight: Float,
+        floorY: Float? = nil,
+        minimumY: Float? = nil,
         into mesh: inout IndexedMesh
     ) {
         mesh.removeAll()
         guard !walls.positions.isEmpty, !walls.indices.isEmpty else { return }
         mesh.reserve(vertices: walls.positions.count, indices: walls.indices.count)
 
+        let minimumY = minimumY ?? -baseDepth
+        let originalFloor = stride(from: 1, to: walls.positions.count, by: 2).reduce(Float.infinity) {
+            min($0, walls.positions[$1].y)
+        }
+        let lowestRim = stride(from: 0, to: walls.positions.count, by: 2).reduce(Float.infinity) {
+            min($0, max(bands.level(ofRung: bands.rung(of: walls.positions[$1].y)), minimumY))
+        }
+        let bottomY = floorY ?? min(originalFloor, lowestRim)
         for index in walls.positions.indices {
             var position = walls.positions[index]
             var uv = walls.uvs[index]
             if index % 2 == 0 {
-                position.y = max(bands.level(ofRung: bands.rung(of: position.y)), -baseDepth)
-                uv.y = wallHeight > 0
-                    ? min(max((position.y + baseDepth) / wallHeight, 0), 1)
-                    : 0
+                position.y = max(bands.level(ofRung: bands.rung(of: position.y)), minimumY)
             } else {
-                let topY = max(bands.level(ofRung: bands.rung(of: walls.positions[index - 1].y)), -baseDepth)
-                position.y = min(position.y, topY)
+                position.y = bottomY
             }
+            // Both endpoints may have moved. Preserve the same frozen elevation reference
+            // as the smooth wall, including repeated strata above/below the first palette span.
+            uv.y = wallHeight > 0 ? (position.y + baseDepth) / wallHeight : 0
             mesh.append(position: position, normal: walls.normals[index], uv: uv)
         }
         mesh.appendIndices(walls.indices)
@@ -259,13 +268,23 @@ enum TerraceGeometry {
         mesh.removeAll()
         guard surfaceIndices.count == bottom.positions.count else { return }
         mesh.reserve(vertices: bottom.positions.count, indices: bottom.indices.count)
+        let floor = flatFloor(bottom: bottom, surface: surface, bands: bands, minimumY: minimumY)
         for index in bottom.positions.indices {
             var point = bottom.positions[index]
-            let top = surface.positions[surfaceIndices[index]]
-            point.y = min(point.y, max(minimumY, bands.level(ofRung: bands.rung(of: top.y))))
+            point.y = floor
             mesh.append(position: point, normal: bottom.normals[index], uv: bottom.uvs[index])
         }
         mesh.appendIndices(bottom.indices)
+    }
+
+    static func flatFloor(bottom: TerrainSolidGenerator.Buffers, surface: TerrainSolidGenerator.Buffers,
+        bands: TerraceBands, minimumY: Float
+    ) -> Float {
+        let original = bottom.positions.reduce(Float.infinity) { min($0, $1.y) }
+        let stepped = surface.positions.reduce(Float.infinity) {
+            min($0, max(minimumY, bands.level(ofRung: bands.rung(of: $1.y))))
+        }
+        return min(original, stepped)
     }
 
 }

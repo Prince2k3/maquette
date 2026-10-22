@@ -36,6 +36,8 @@ final class TerraceEffectPass: DioramaEffectPass {
     private var surface: EffectLayer?
     private var walls: EffectLayer?
     private var bottom: EffectLayer?
+    private weak var adjustedBase: Entity?
+    private var baseOffsetY: Float = 0
 
     /// Reused between refreshes so a pan step does not reallocate the whole chunk.
     private var surfaceMesh = IndexedMesh()
@@ -151,15 +153,29 @@ final class TerraceEffectPass: DioramaEffectPass {
         guard let bands, let surface, let walls, let terrain = root.terrain else { return }
         guard let buffers = terrain.surfaceBuffers else { return }
 
-        TerraceGeometry.buildSurface(from: buffers, bands: bands, minimumY: -baseDepth, into: &surfaceMesh)
+        let minimumY = terrain.effectMinimumY
+        TerraceGeometry.buildSurface(from: buffers, bands: bands, minimumY: minimumY, into: &surfaceMesh)
         surface.update(with: surfaceMesh)
 
+        let floorY = terrain.bottomBuffers.map {
+            TerraceGeometry.flatFloor(bottom: $0, surface: buffers, bands: bands, minimumY: minimumY)
+        }
+        if adjustedBase !== root.base {
+            adjustedBase?.position.y -= baseOffsetY
+            adjustedBase = root.base
+            baseOffsetY = 0
+        }
+        let desiredBaseOffset = floorY.map { $0 + terrain.baseDepth } ?? 0
+        adjustedBase?.position.y += desiredBaseOffset - baseOffsetY
+        baseOffsetY = desiredBaseOffset
         if let wallBuffers = terrain.wallBuffers {
             TerraceGeometry.buildWalls(
                 from: wallBuffers,
                 bands: bands,
                 baseDepth: baseDepth,
                 wallHeight: wallHeight,
+                floorY: floorY,
+                minimumY: minimumY,
                 into: &wallMesh
             )
             walls.update(with: wallMesh)
@@ -167,7 +183,7 @@ final class TerraceEffectPass: DioramaEffectPass {
         if let bottom, let buffers = terrain.bottomBuffers, let surface = terrain.surfaceBuffers {
             TerraceGeometry.buildBottom(from: buffers, surface: surface,
                 surfaceIndices: terrain.bottomSurfaceIndices, bands: bands,
-                minimumY: -baseDepth, into: &bottomMesh)
+                minimumY: minimumY, into: &bottomMesh)
             bottom.update(with: bottomMesh)
         }
     }
@@ -186,6 +202,9 @@ final class TerraceEffectPass: DioramaEffectPass {
     }
 
     func revert(from root: DioramaEntity) {
+        adjustedBase?.position.y -= baseOffsetY
+        adjustedBase = nil
+        baseOffsetY = 0
         container?.removeFromParent()
         container = nil
         surface = nil

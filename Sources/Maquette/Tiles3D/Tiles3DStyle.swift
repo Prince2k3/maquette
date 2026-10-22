@@ -4,8 +4,9 @@ import SwiftUI
 /// What a photorealistic model rests on.
 ///
 /// Photogrammetry is a skin with nothing behind it, so the base is structural rather than
-/// decorative: it closes the underside, and its top is the level the cut wall stops at, which is
-/// what lets the two meet instead of leaving a gap.
+/// decorative: a surface-following underside and tray band close the cut rim. Earth plus tray
+/// share the same ten-percent-of-width thickness limit as raster chunks; arbitrary holes in
+/// source photogrammetry are not repaired.
 public enum Tiles3DBase: Sendable, Equatable {
     /// No base. The model's hollow underside is visible from below, and the cut wall has no floor
     /// to stop at other than the model's own lowest ground.
@@ -14,9 +15,10 @@ public enum Tiles3DBase: Sendable, Equatable {
     ///
     /// - Parameters:
     ///   - color: Slab color.
-    ///   - thickness: Slab thickness in diorama meters.
-    ///   - inset: How far the slab is inset from the outline, in diorama meters. Negative values
-    ///     make it overhang, which reads as a tray holding the model.
+    ///   - thickness: Requested slab thickness in diorama meters, capped at half the shared
+    ///     shallow-base budget so earth and tray together stay within ten percent of chunk width.
+    ///   - inset: Inset in diorama meters for an unbounded model's flat tray. Clipped shallow
+    ///     bases share the selected cut outline exactly, so this value does not offset them.
     case tray(color: Color, thickness: Float, inset: Float)
 }
 

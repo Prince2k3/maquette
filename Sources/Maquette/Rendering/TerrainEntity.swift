@@ -127,6 +127,9 @@ class TerrainEntity: Entity {
     var bottomBuffers: TerrainSolidGenerator.Buffers? { geometry?.bottom }
     var bottomSurfaceIndices: [Int] { geometry?.bottomSurfaceIndices ?? [] }
     var surfaceFloorY: Float { -(geometry?.resampling.baseDepth ?? 0) }
+    /// Shipping raster floors follow their lowest ground, so effects must not clamp real terrain
+    /// back to the original requested depth. Legacy test geometry retains that historical clamp.
+    var effectMinimumY: Float { geometry?.resampling.maximumBasePadding == nil ? surfaceFloorY : -.infinity }
 
     /// The vertical span the wall texture's coordinates are normalized against.
     var wallHeight: Float { geometry?.resampling.wallHeight ?? 0 }

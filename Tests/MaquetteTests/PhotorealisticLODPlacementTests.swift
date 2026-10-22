@@ -152,4 +152,30 @@ struct PhotorealisticLODPlacementTests {
         #expect(root.markerEntities["live"]?.isEnabled == true)
     }
 
+    @Test func shallowUndersideNeverBecomesItsOwnGroundDatum() async throws {
+        let entity = try await Tiles3DEntity(provider: SurfaceFixtureProvider(), center: center, radiusMeters: 100,
+            physicalSize: 400, boundary: boundary, style: .standard, panRange: 1)
+        _ = await entity.updateLOD(cameraPosition: .init(0, 100, 100), screenHeight: 1000, fov: 1)
+        let datum = try #require(entity.groundDatumElevation)
+        let container = try #require(entity.children.first { $0.name == "Tiles3DTiles" })
+        for offset in [SIMD2<Float>(0.01, 0), SIMD2(-0.01, 0), .zero] {
+            entity.setPanOffset(offset)
+            #expect(abs((entity.groundDatumElevation ?? -1000) - datum) < 1e-4)
+            let visible = container.children.compactMap { $0 as? ModelEntity }.filter {
+                $0.isEnabled && $0.name != "Tiles3DCutWall"
+            }
+            #expect(!visible.isEmpty)
+            for tile in visible {
+                let bottom = try #require(tile.children.first { $0.name == Tiles3DShallowUnderside.name } as? ModelEntity)
+                #expect(bottom.model?.mesh === tile.model?.mesh)
+                let delta = bottom.convert(position: .zero, to: container) - tile.convert(position: .zero, to: container)
+                #expect(abs(delta.x) < 1e-4 && abs(delta.z) < 1e-4)
+                #expect(abs(delta.y * 2 + 4) < 1e-4)
+            }
+            let base = try #require(entity.base)
+            let bounds = base.visualBounds(relativeTo: entity)
+            #expect(abs(bounds.min.y * 2 - Float(datum) * 2 + 4) < 1e-4)
+        }
+    }
+
 }

@@ -20,10 +20,24 @@ extension OrbitDioramaModel {
                 guard clock.now < deadline else { logger.error("PROFILE terrain load timed out"); return }
                 try await Task.sleep(for: .milliseconds(100))
             }
-            if let root = store.dioramaEntity as? DioramaEntity { await root.overlayRenderer.waitUntilIdle() }
+            if let root = store.dioramaEntity as? DioramaEntity {
+                await root.overlayRenderer.waitUntilIdle()
+                if let tiles = root.tiles3D {
+                    while tiles.streamingProgress.tilesLoaded == 0 || tiles.streamingProgress.isStreaming {
+                        guard clock.now < deadline else { logger.error("PROFILE photorealistic streaming did not settle; capture unavailable"); return }
+                        try await Task.sleep(for: .milliseconds(100))
+                    }
+                }
+            }
             try await Task.sleep(for: .seconds(8))
             logger.notice("PROFILE ready trajectory=\(linearTrajectory ? "linear" : "sine", privacy: .public) workload=\(workload, privacy: .public) viewport=\(self.viewSize.width)x\(self.viewSize.height)")
-            for (name, phase) in [("Pan" as StaticString, 0), ("GroundZoom" as StaticString, 1), ("CameraZoom" as StaticString, 2)] {
+            let photorealistic = (store.dioramaEntity as? DioramaEntity)?.tiles3D
+            var phases: [(StaticString, Int)] = [("Pan", 0), ("GroundZoom", 1), ("CameraZoom", 2)]
+            if let photorealistic {
+                phases = photorealistic.canPan ? [("Pan", 0), ("CameraZoom", 2)] : [("CameraZoom", 2)]
+                logger.notice("PROFILE presentation=photorealistic groundZoom=unavailable pan=\(photorealistic.canPan)")
+            }
+            for (name, phase) in phases {
                 try Task.checkCancellation()
                 let state = signposter.beginInterval(name, id: signposter.makeSignpostID(), "\(workload, privacy: .public)")
                 logger.notice("PROFILE phaseBegin=\(String(describing: name), privacy: .public) workload=\(workload, privacy: .public)")
@@ -48,6 +62,12 @@ extension OrbitDioramaModel {
                         }
                         lastRevision = terrain.presentedSurfaceRevision
                         lastPan = terrain.presentedPanOffset
+                    } else if let photorealistic {
+                        if phase == 0, let lastPan, lastPan != photorealistic.panOffset {
+                            distinctSceneFrames += 1
+                            distinctSceneBins[min(9, Int(seconds))] += 1
+                        }
+                        lastPan = photorealistic.panOffset
                     }
                 }
                 var frames = frameClock.frames.makeAsyncIterator()
@@ -135,6 +155,9 @@ extension OrbitDioramaModel {
                 let frameTimes = Array((renderer?.profileFrameDurations ?? []).dropFirst(frameDurationStart)).sorted()
                 if !frameTimes.isEmpty {
                     logger.notice("PROFILE prepareP50Ms=\(frameTimes[frameTimes.count / 2]) prepareP95Ms=\(frameTimes[Int(Double(frameTimes.count - 1) * 0.95)]) prepareMaxMs=\(frameTimes.last ?? 0) phase=\(String(describing: name), privacy: .public)")
+                }
+                if let photorealistic {
+                    logger.notice("PROFILE boundaryFrameError=\(photorealistic.profileBoundaryFrameError) loadedTiles=\(photorealistic.streamingProgress.tilesLoaded) pendingTiles=\(photorealistic.streamingProgress.tilesPending) phase=\(String(describing: name), privacy: .public)")
                 }
                 let sortedInput = inputExecutionMs.sorted()
                 let inputP95 = sortedInput.isEmpty ? 0 : sortedInput[min(sortedInput.count - 1, Int(Double(sortedInput.count - 1) * 0.95))]

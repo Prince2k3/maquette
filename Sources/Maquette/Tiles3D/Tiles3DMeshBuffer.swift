@@ -146,10 +146,11 @@ final class Tiles3DMeshBuffer {
     /// a time, and the bounds came out of the clip too rather than from a second pass over the
     /// positions.
     @discardableResult
-    func write(vertices: [Tiles3DVertex], indices: [UInt32], bounds: BoundingBox) throws -> Outcome {
+    func write(vertices: [Tiles3DVertex], indices: [UInt32], bounds: BoundingBox,
+        parts: [LowLevelMesh.Part]? = nil) throws -> Outcome {
         try vertices.withUnsafeBufferPointer { vertices in
             try indices.withUnsafeBufferPointer { indices in
-                try write(vertices: vertices, indices: indices, bounds: bounds)
+                try write(vertices: vertices, indices: indices, bounds: bounds, parts: parts)
             }
         }
     }
@@ -163,7 +164,8 @@ final class Tiles3DMeshBuffer {
     func write(
         vertices: UnsafeBufferPointer<Tiles3DVertex>,
         indices: UnsafeBufferPointer<UInt32>,
-        bounds: BoundingBox
+        bounds: BoundingBox,
+        parts: [LowLevelMesh.Part]? = nil
     ) throws -> Outcome {
         guard !vertices.isEmpty, !indices.isEmpty else { return .empty }
 
@@ -185,7 +187,7 @@ final class Tiles3DMeshBuffer {
             _ = raw.bindMemory(to: UInt32.self).update(fromContentsOf: indices)
         }
 
-        mesh.parts.replaceAll([
+        mesh.parts.replaceAll(parts ?? [
             LowLevelMesh.Part(
                 indexCount: indices.count,
                 topology: .triangle,

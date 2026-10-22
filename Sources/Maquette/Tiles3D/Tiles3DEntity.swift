@@ -105,6 +105,7 @@ class Tiles3DEntity: Entity {
     /// The outline the model is cut to, and what it rests on.
     private let style: Tiles3DStyle
     private let boundary: DioramaBoundary
+    private let shallowBase: Tiles3DShallowBaseLayout
     /// The outline raised into the prism tiles were cut against, in the geometry's own space.
     ///
     /// Kept because the cut wall is built from the segments that clip produced, which are in that
@@ -128,23 +129,37 @@ class Tiles3DEntity: Entity {
     /// How far the model is currently slid, in diorama meters.
     public private(set) var panOffset: SIMD2<Float> = .zero
 
+    #if MAQUETTE_PROFILING
+    /// Checks the clip/container frame arithmetic, separately from streamed coverage and layer FPS.
+    var profileBoundaryFrameError: Float {
+        guard let clipPrism else { return 0 }
+        return zip(boundary.vertices, clipPrism.boundary.vertices).reduce(Float(0)) { error, pair in
+            max(error, simd_distance(pair.0, pair.1 * geographicScale - panOffset))
+        }
+    }
+    #endif
+
     /// Whether this diorama can be panned at all.
     ///
     /// Panning slides the outline across ground that was streamed but left outside it, so it needs
     /// both an outline to slide and a margin of tiles to slide onto.
     public var canPan: Bool { panRange > 0 && style.clipsToBoundary }
-    /// The tray beneath the model, if the style asks for one.
+    /// The shallow rim closure carrying the tray band, or an unbounded model's flat tray.
     public private(set) var base: Entity?
     /// The wall closing the model's cut silhouette, if the style asks for one.
     public private(set) var cutWall: Entity?
     /// What the wall currently standing was built from, so it is not rebuilt for nothing.
-    private var placedWall: (edgeCount: Int, floorY: Float)?
+    private var placedWall: (revision: Int, floorY: Float)?
     /// The wall's vertex buffer, kept so a rebuild rewrites it rather than compiling a new mesh.
     private var cutWallMesh: Tiles3DMeshBuffer?
     /// Built once and kept. The style cannot change, and a strata material means generating the
     /// procedural cross-section texture — measured at 8–18 ms, which was the largest single cost in
     /// a wall rebuild and was being paid again on every pan step for an identical result.
     private lazy var cutWallMaterial: RealityKit.Material? = DioramaMaterials.wallMaterial(for: style.wall)
+    private lazy var shallowTrayMaterial: UnlitMaterial = {
+        if case .tray(let color, _, _) = style.base { return DioramaMaterials.unlitMaterial(color: color) }
+        return DioramaMaterials.unlitMaterial(color: .gray)
+    }()
     /// Lowest point seen across loaded tiles, in this entity's local space.
     ///
     /// Photogrammetry has no known floor until geometry arrives, and level-of-detail refinement
@@ -180,13 +195,21 @@ class Tiles3DEntity: Entity {
             ? BoundaryPrism(boundary: boundary, scale: geographicScale)
             : nil
 
+        let shallowBase = Tiles3DShallowBaseLayout(boundary: boundary, base: style.base)
+        self.shallowBase = shallowBase
+        let underside: Tiles3DShallowUnderside?
+        if style.clipsToBoundary, case .tray(let color, _, _) = style.base {
+            underside = Tiles3DShallowUnderside(depth: shallowBase.maximumThickness / geographicScale, color: color)
+        } else { underside = nil }
+
         self.lodManager = Tiles3DLODManager(
             provider: provider,
             ecefConverter: ecefConverter,
             center: center,
             radiusMeters: radiusMeters,
             clipPrism: prism,
-            panRange: style.clipsToBoundary ? panRange : 0
+            panRange: style.clipsToBoundary ? panRange : 0,
+            shallowUnderside: underside
         )
         self.lodManager.screenSpaceErrorThreshold = style.detailThreshold
         self.geographicScale = geographicScale
@@ -262,7 +285,7 @@ class Tiles3DEntity: Entity {
         var high = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         var found = false
         for child in tileContainer.children where child.isEnabled && child.name != Self.cutWallName {
-            let bounds = child.visualBounds(relativeTo: tileContainer)
+            let bounds = child.visualBounds(recursive: false, relativeTo: tileContainer)
             guard bounds.min.y.isFinite,
                   bounds.min.y > -BoundingVolume.terrainElevationBound else { continue }
             low = simd_min(low, bounds.min)
@@ -329,18 +352,22 @@ class Tiles3DEntity: Entity {
     /// gap between them is exactly what this is all for.
     private var datumRebuildThreshold: Float {
         let thickness: Float
-        if case .tray(_, let value, _) = style.base {
-            thickness = value
+        if case .tray = style.base {
+            thickness = shallowBase.trayThickness
         } else {
             thickness = 0.02
         }
         return max(thickness, .ulpOfOne) / max(geographicScale, .ulpOfOne) * 0.25
     }
 
-    /// Repositions the tray to sit just beneath the model that is actually on screen.
+    /// Only unbounded models retain a separate flat tray. Clipped bases use the joined rim band.
     private func updateBase() {
-        guard case .tray(let color, let thickness, let inset) = style.base else { return }
-        guard let candidate = lowestVisibleY() else { return }
+        // Clipped bases are part of the surface-following rim, not a detached horizontal plate.
+        guard !style.clipsToBoundary, case .tray(let color, _, let inset) = style.base else { return }
+        guard let lowest = lowestVisibleY() else { return }
+        let thickness = shallowBase.trayThickness
+        guard thickness > 0 else { return }
+        let candidate = lowest - (style.clipsToBoundary ? shallowBase.earthDepth / geographicScale : 0)
 
         // Tracked in both directions, since refinement can raise the underside as well as lower
         // it, but only rebuilt on a meaningful move so the tray does not jitter every update.
@@ -378,29 +405,58 @@ class Tiles3DEntity: Entity {
     /// stretch of outline, at different heights, and walling both would leave the coarse one's
     /// standing proud of the model it no longer represents.
     ///
-    /// It stops at the same level the tray's top sits at, so the two meet rather than leaving the
-    /// gap this exists to close.
+    /// Each earth edge meets the tray band's upper edge, and the band's lower edge meets the
+    /// shared surface-following underside. All three preserve the selected horizontal cutout.
     private func updateCutWall() {
-        guard style.clipsToBoundary, style.wall != .none, let prism = clipPrism else { return }
-        guard let floorY = lowestVisibleY() else { return }
+        guard style.clipsToBoundary, let prism = clipPrism else { return }
+        guard let lowest = lowestVisibleY() else {
+            cutWall?.isEnabled = false
+            placedWall = nil
+            return
+        }
+        let depth = shallowBase.earthDepth / geographicScale
+        let trayDepth = shallowBase.trayThickness / geographicScale
+        let floorY = lowest - depth - trayDepth
 
         var edges: [Tiles3DCutEdge] = []
         for child in tileContainer.children where child.isEnabled && child.name != Self.cutWallName {
             guard let component = child.components[Tiles3DCutEdgeComponent.self] else { continue }
             edges.append(contentsOf: component.edges)
         }
-        guard !edges.isEmpty else { return }
+        guard !edges.isEmpty else {
+            cutWall?.isEnabled = false
+            placedWall = nil
+            return
+        }
 
-        // Rebuilding is a full mesh compile, and refinement asks several times a second, so the
-        // cheap signature is what keeps this off the hot path once streaming settles. The edge
-        // count stands in for the visible set: any tile appearing or being superseded moves it.
+        // Buffer writes still cost work. Track the actual visible-geometry revision: equal edge
+        // counts do not imply equal cut positions/heights after refinement or a new pan.
         if let placed = placedWall,
-           placed.edgeCount == edges.count,
+           placed.revision == lodManager.surfaceRevision,
            abs(placed.floorY - floorY) < datumRebuildThreshold {
             return
         }
 
-        guard let material = cutWallMaterial else { return }
+        let earthMaterial = cutWallMaterial
+        let trayMaterial = shallowTrayMaterial
+        let geometry: Tiles3DShallowClosure.Geometry
+        do {
+            guard let built = try Tiles3DShallowClosure.build(edges: edges, lowestY: lowest, prism: prism,
+                earthDepth: depth, trayDepth: trayDepth, includesWalls: earthMaterial != nil) else {
+                cutWall?.isEnabled = false
+                placedWall = nil
+                return
+            }
+            geometry = built
+        } catch {
+            // Never publish a partial earth/tray rim or keep an old cutout after a pan. A pathological
+            // source must not monopolize the main actor; later geometry revisions can retry.
+            cutWall?.isEnabled = false
+            placedWall = (lodManager.surfaceRevision, floorY)
+            logger.error("Cut wall coverage failed for \(edges.count) cuts: \(String(describing: error), privacy: .public); hiding the complete rim")
+            return
+        }
+        let materials: [any RealityKit.Material] = [earthMaterial ?? trayMaterial, trayMaterial]
 
         let buffer: Tiles3DMeshBuffer
         if let existing = cutWallMesh {
@@ -418,32 +474,34 @@ class Tiles3DEntity: Entity {
         // leaves the previous wall standing and the signature unmoved, so the next pan tries again.
         let outcome: Tiles3DMeshBuffer.Outcome
         do {
-            outcome = try Tiles3DCutWall.write(
-                edges: edges,
-                floorY: floorY,
-                prism: prism,
-                into: buffer
-            )
+            outcome = try buffer.write(vertices: geometry.mesh.vertices, indices: geometry.mesh.indices,
+                bounds: geometry.mesh.bounds, parts: geometry.parts)
         } catch {
             logger.error("Could not rebuild the cut wall; keeping the one already placed")
             return
         }
-        guard outcome != .empty else { return }
+        guard outcome != .empty else {
+            cutWall?.isEnabled = false
+            placedWall = nil
+            return
+        }
 
-        placedWall = (edges.count, floorY)
+        placedWall = (lodManager.surfaceRevision, floorY)
+        cutWall?.isEnabled = true
         // Only a buffer that had to grow hands back a new `MeshResource`; otherwise the entity
         // already points at the mesh that was just rewritten.
         if let cutWall = cutWall as? ModelEntity, outcome == .regrown {
-            cutWall.model = ModelComponent(mesh: buffer.resource, materials: [material])
+            cutWall.model = ModelComponent(mesh: buffer.resource, materials: materials)
         } else if cutWall == nil {
-            let wall = ModelEntity(mesh: buffer.resource, materials: [material])
+            let wall = ModelEntity(mesh: buffer.resource, materials: materials)
             wall.name = Self.cutWallName
             // In the container rather than on this entity, because its geometry comes from the
-            // prism the tiles were cut against — which pans with them. The tray does not: it is
-            // built in diorama space from the outline, which is exactly what stays still.
+            // prism the tiles were cut against. Its inverse container translation keeps both
+            // rim material bands fixed on the selected diorama-space outline.
             tileContainer.addChild(wall)
             cutWall = wall
         }
+        if case .tray = style.base { base = cutWall }
     }
 
     /// Name used to keep the tray out of its own measurement.
@@ -535,9 +593,8 @@ class Tiles3DEntity: Entity {
         clipPrism = prism
         lodManager.setClipPrism(prism)
 
-        // The wall's signature is an edge count and a floor, neither of which need change when the
-        // outline moves across ground of similar shape — so it is retired explicitly rather than
-        // left to notice.
+        // A pan changes the clip frame even before a streamed visibility revision arrives.
+        // Invalidate the cached closure explicitly so it cannot retain the previous cutout.
         placedWall = nil
         measureVisibleGeometry()
         updateCutWall()

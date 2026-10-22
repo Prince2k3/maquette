@@ -64,3 +64,26 @@ visionOS attachments retain native depth testing and their physical annotation s
 The demo's City, Trail, and Pan 3D presets include a pin, label, line, filled polygon, circle, and
 north-up image grid. Inspect them as tiles refine and while panning. These are live provider examples;
 their coverage and detail depend on the configured provider and network.
+
+
+## Keep the chunk shallow while ground moves
+
+Clipped photorealistic bases limit local vertical thickness to ten percent of
+the largest horizontal outline extent. The underside follows the source surface; the earth rim and
+tray band meet it without a detached flat plate. Requested tray thickness uses at most half this
+budget. Clipped bases use the selected outline exactly, so tray inset applies only to unbounded
+flat trays. Explicitly unbounded styles retain their flat-tray behavior.
+
+Panning moves the terrain under a fixed circle, hexagon, square, or custom boundary. Terrain heights
+and detail can change along the rim, but those changes do not reshape its horizontal footprint.
+Generated undersides share tile mesh resources and LOD visibility and are excluded from ground
+queries and datum measurement. This adds a draw per visible tile; it does not allocate another mesh
+buffer per tile. Source holes and nonmanifold geometry are not repaired.
+
+Coplanar cut skirts are resolved to nonoverlapping coverage before the earth and tray are published
+in one mesh. Geometry work and output are bounded; a pathological source that exceeds those limits
+hides the complete generated rim with a diagnostic until a later revision can rebuild it.
+
+Raster chunks use a different floor rule: their underside is completely flat and retains real
+terrain relief. Only the extra padding below the lowest visible ground is capped at ten percent
+of the outline width, so higher terrain can have taller cut walls.

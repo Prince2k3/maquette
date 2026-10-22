@@ -324,11 +324,7 @@ struct TerraceTests {
         )
 
         for vertex in mesh.vertices {
-            #expect(vertex.uv.y >= 0 && vertex.uv.y <= 1)
-        }
-        for index in stride(from: 0, to: mesh.vertices.count, by: 2) {
-            let vertex = mesh.vertices[index]
-            let expected = min(max((vertex.position.y + baseDepth) / height, 0), 1)
+            let expected = (vertex.position.y + baseDepth) / height
             #expect(abs(vertex.uv.y - expected) < 1e-4)
         }
     }

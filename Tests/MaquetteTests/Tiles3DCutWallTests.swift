@@ -102,17 +102,17 @@ struct Tiles3DCutWallTests {
 
     // MARK: - The wall itself
 
-    @Test("The wall reaches from the terrain down to the floor with nothing left open")
-    func wallSpansTerrainToFloor() {
-        // The whole point of the wall: the gap between the model's cut rim and the tray's top is
-        // what made a chunk of Half Dome read as a hollow shell floating over its own base.
+    @Test("The wall meets its shallow underside without extending to a distant floor")
+    func wallMeetsShallowUnderside() {
         let prism = Self.square()
         let floorY: Float = -20
         let geometry = Self.wall(of: prism, floorY: floorY)
-
-        let bottoms = geometry.vertices.filter { abs($0.py - floorY) < 1e-4 }
-        #expect(bottoms.count == geometry.vertices.count / 2)
-        #expect(geometry.vertices.allSatisfy { $0.py >= floorY - 1e-4 })
+        for index in stride(from: 0, to: geometry.vertices.count, by: 2) {
+            let top = geometry.vertices[index], bottom = geometry.vertices[index + 1]
+            #expect(abs(top.py - bottom.py - 0.2) < 1e-4)
+            #expect(top.px == bottom.px && top.pz == bottom.pz)
+            #expect(bottom.py >= floorY)
+        }
     }
 
     @Test("Wall normals are horizontal and face away from the model")
@@ -134,20 +134,12 @@ struct Tiles3DCutWallTests {
         }
     }
 
-    @Test("The strata run from the floor at V = 0 upward, within the texture")
+    @Test("Strata use a fixed geometry-space elevation reference")
     func strataAreAnchoredToTheFloor() {
-        // The texture's V axis runs from the deepest layer at 0 to the surface at 1. A wall whose
-        // V escapes that range samples past the palette; one that does not start at 0 at the floor
-        // shows the bands sliding as the datum settles during streaming.
         let prism = Self.square()
-        let floorY: Float = -20
-        let geometry = Self.wall(of: prism, floorY: floorY)
-
+        let geometry = Self.wall(of: prism, floorY: -20)
         for vertex in geometry.vertices {
-            #expect(vertex.v >= 0 && vertex.v <= 1)
-            if abs(vertex.py - floorY) < 1e-4 {
-                #expect(vertex.v == 0)
-            }
+            #expect(abs(vertex.v - vertex.py / 0.2) < 1e-4)
         }
     }
 

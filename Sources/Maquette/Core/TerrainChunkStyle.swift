@@ -4,8 +4,8 @@ import SwiftUI
 /// How much earth sits beneath the terrain surface.
 ///
 /// Requests a flat floor this far below diorama Y = 0. Rendered raster chunks always limit earth
-/// thickness to 10% of their largest horizontal extent. Where that floor would create a taller
-/// wall, the underside follows the terrain instead; the geographic surface is unchanged.
+/// padding below their lowest visible terrain to 10% of their largest horizontal extent.
+/// The underside stays flat, and real terrain relief can create taller cut walls.
 public enum ChunkBaseDepth: Sendable, Equatable {
     /// Depth as a fraction of the chunk's largest horizontal extent.
     ///

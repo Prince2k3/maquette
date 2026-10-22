@@ -40,16 +40,10 @@ enum Tiles3DCutEdgeRegistration {
 
 /// Builds the cut wall closing a photorealistic model's sliced edge.
 ///
-/// The clipper leaves cut faces open, on the reasoning that the tray beneath hides them. That holds
-/// only while the model's relief is small next to the tray: on Half Dome the outline crosses
-/// roughly 1,480 m of terrain against a tray around 87 m thick in the same space, so the tray hides
-/// nothing and the model reads as a hollow shell — which contradicts the whole library's first
-/// premise, that a chunk is a solid.
-///
-/// So the silhouette is extruded down to the same level the tray's top sits at, and textured with
-/// the same procedural strata the raster chunk's walls use. The two pipelines stay separate, but
-/// the cut edge is the one place where the vocabularies genuinely coincide: both are a slice
-/// through ground, and both should look like one.
+/// A bounded skirt closes each cut segment against the surface-following underside. Both use
+/// the same vertical displacement, preserving the source terrain instead of flattening it to fit
+/// a tray. Photogrammetry remains arbitrary triangle soup: this does not repair holes or infer
+/// manifold solids from open input geometry.
 enum Tiles3DCutWall {
     /// Raw buffers, separated from mesh creation so the geometry can be exercised without a
     /// RealityKit device context.
@@ -71,13 +65,16 @@ enum Tiles3DCutWall {
     ///
     /// - Parameters:
     ///   - edges: Silhouette segments gathered from every tile currently on screen.
-    ///   - floorY: Where the wall stops, in the geometry's space. The tray's top, so the two meet.
+    ///   - floorY: Lowest permitted underside height in the geometry's space.
+    ///   - maximumThickness: Additional ceiling on skirt thickness, in geometry-space metres.
+    ///     The outline's own ten-percent limit always applies.
     ///   - prism: The outline the model was cut to, for perimeter texturing and outward normals.
     /// - Returns: The wall's buffers, or `nil` when there is nothing to build.
     static func buildGeometry(
         edges: [Tiles3DCutEdge],
         floorY: Float,
-        prism: BoundaryPrism
+        prism: BoundaryPrism,
+        maximumThickness: Float? = nil
     ) -> Geometry? {
         guard !edges.isEmpty else { return nil }
 
@@ -85,7 +82,9 @@ enum Tiles3DCutWall {
         let standing = edges.filter { max($0.a.y, $0.b.y) > floorY }
         guard !standing.isEmpty else { return nil }
 
-        let wallHeight = referenceHeight(of: standing, above: floorY)
+        let limit = min(maximumThickness ?? .infinity, ChunkThicknessLimit.maximum(for: prism.boundary))
+        guard limit.isFinite, limit > 0 else { return nil }
+        let wallHeight = min(referenceHeight(of: standing, above: floorY), limit)
         guard wallHeight > 0 else { return nil }
 
         let perimeter = prism.perimeter
@@ -119,15 +118,16 @@ enum Tiles3DCutWall {
             uA *= uRepeat
             uB *= uRepeat
 
-            func v(_ y: Float) -> Float {
-                ((y - floorY) / wallHeight).clampedToUnitRange
-            }
+            func bottom(_ y: Float) -> Float { max(floorY, y - limit) }
+            // Geometry-space elevation is stable across pans and LOD changes. A per-cut
+            // 0...1 mapping gives overlapping/adjacent source layers different strata phases.
+            func v(_ y: Float) -> Float { y / limit }
 
             let base = UInt32(geometry.vertices.count)
             append(&geometry, SIMD3(a.x, max(a.y, floorY), a.z), normal, SIMD2(uA, v(a.y)))
-            append(&geometry, SIMD3(a.x, floorY, a.z), normal, SIMD2(uA, 0))
+            append(&geometry, SIMD3(a.x, bottom(a.y), a.z), normal, SIMD2(uA, v(bottom(a.y))))
             append(&geometry, SIMD3(b.x, max(b.y, floorY), b.z), normal, SIMD2(uB, v(b.y)))
-            append(&geometry, SIMD3(b.x, floorY, b.z), normal, SIMD2(uB, 0))
+            append(&geometry, SIMD3(b.x, bottom(b.y), b.z), normal, SIMD2(uB, v(bottom(b.y))))
 
             geometry.indices.append(base)
             geometry.indices.append(base + 1)
@@ -151,9 +151,10 @@ enum Tiles3DCutWall {
         edges: [Tiles3DCutEdge],
         floorY: Float,
         prism: BoundaryPrism,
+        maximumThickness: Float? = nil,
         into buffer: Tiles3DMeshBuffer
     ) throws -> Tiles3DMeshBuffer.Outcome {
-        guard let geometry = buildGeometry(edges: edges, floorY: floorY, prism: prism) else {
+        guard let geometry = buildGeometry(edges: edges, floorY: floorY, prism: prism, maximumThickness: maximumThickness) else {
             return .empty
         }
         return try buffer.write(

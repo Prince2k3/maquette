@@ -141,3 +141,9 @@ allocation from ordinary buffer writes. Quiet controls avoid tool output and oth
 measured phases, while retaining every result. First-second startup shortfalls remain reported.
 If simulator Time Profiler PID attachment stalls, use `--device UDID --all-processes` and filter
 accepted CPU/signpost tables by the launched app PID; this does not provide simulator GPU proof.
+
+
+[[map-shallow-chunk-thickness]] records the mandatory raster earth-thickness cap and coherent
+surface/wall/underside buffer publication. `Fixtures/overlay-profile-shallow-chunk-2026-10-21.json`
+retains its native and simulator polygon regression captures. The underside now moves and has its
+own retained buffer; the old raw pan benchmark does not measure that additional upload.

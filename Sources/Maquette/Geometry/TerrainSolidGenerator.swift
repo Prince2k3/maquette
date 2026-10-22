@@ -12,9 +12,9 @@ struct TerrainSolidParts {
     /// The cut walls running from the terrain surface down to the base depth, or `nil` if
     /// walls were not requested.
     public let walls: MeshResource?
-    /// The closing face at the base depth, or `nil` if a bottom was not requested.
+    /// The closing underside, flat where possible and terrain-following where thickness is capped.
     public let bottom: MeshResource?
-    /// Depth of the chunk below diorama Y = 0, in diorama meters.
+    /// Signed depth of the lowest underside point below Y = 0, in diorama meters.
     public let baseDepth: Float
     /// Highest point of the terrain surface in diorama-space Y.
     public let maxSurfaceY: Float
@@ -28,12 +28,10 @@ struct TerrainSolidParts {
 
 /// Values that must stay fixed across pan updates for the chunk to remain visually stable.
 struct ResamplingParameters {
-    /// Chunk depth below Y = 0.
-    ///
-    /// Fixed across a pan — the chunk must not change thickness as the ground slides beneath it —
-    /// but *not* across a ground zoom, where the earth mass takes over whatever share of the
-    /// chunk's thickness the flattening terrain gives back. See ``TerrainEntity/baseDepth``.
+    /// Requested flat floor depth below Y = 0, frozen across ground movement.
     var baseDepth: Float
+    /// Maximum earth thickness. A high surface raises its underside instead of growing a wall.
+    var maximumThickness: Float? = nil
     /// Vertical span the wall texture is normalized against.
     ///
     /// Frozen at generation. If it tracked the terrain currently under the boundary, the strata
@@ -54,7 +52,8 @@ enum TerrainSolidGenerator {
     /// - Parameters:
     ///   - heightField: The terrain surface to sample.
     ///   - boundary: The outline to cut the chunk to.
-    ///   - baseDepth: How far the chunk extends below diorama Y = 0, in diorama meters.
+    ///   - baseDepth: Requested flat floor depth below Y = 0. Maximum rendered earth thickness
+    ///     is 10% of the boundary's largest horizontal extent, including during ground movement.
     ///   - includesWalls: Whether to generate the cut walls.
     ///   - includesBottom: Whether to close the chunk with a bottom face.
     ///   - resolution: Sampling cells along the chunk's longest horizontal axis.
@@ -78,7 +77,8 @@ enum TerrainSolidGenerator {
             includesWalls: includesWalls,
             includesBottom: includesBottom,
             resolution: resolution,
-            panOffset: panOffset
+            panOffset: panOffset,
+            maximumThickness: max(boundary.extent.x, boundary.extent.y) * 0.1
         )
 
         guard !geometry.top.indices.isEmpty else {
@@ -91,8 +91,8 @@ enum TerrainSolidGenerator {
             top: try buildMesh(from: geometry.top, name: "terrainTop"),
             walls: geometry.walls.indices.isEmpty ? nil : try buildMesh(from: geometry.walls, name: "terrainWalls"),
             bottom: geometry.bottom.indices.isEmpty ? nil : try buildMesh(from: geometry.bottom, name: "terrainBottom"),
-            baseDepth: baseDepth,
-            maxSurfaceY: heightField.maxSurfaceY,
+            baseDepth: -geometry.lowestUndersideY,
+            maxSurfaceY: geometry.top.positions.reduce(-Float.infinity) { max($0, $1.y) },
             geometry: geometry,
             resampling: geometry.resampling
         )
@@ -133,10 +133,8 @@ enum TerrainSolidGenerator {
             geometry.top.uvs[index] = sample.textureCoordinate
         }
 
-        // Walls: `appendWallQuad` emits its four vertices as top, bottom, top, bottom, so the
-        // even-indexed ones ride the surface and the odd-indexed ones sit on the base. The base does
-        // not move — neither a pan nor a ground zoom changes the earth mass — so only the rim is
-        // written, and the wall's own height is whatever the terrain above it happens to be.
+        // Wall vertices alternate top/bottom. Sample the rim first, then bring the lower vertices
+        // and matching underside up together wherever the fixed floor would make a wall too tall.
         for index in stride(from: 0, to: geometry.walls.positions.count, by: 2) {
             let position = geometry.walls.positions[index]
             let sample = SIMD2(position.x, position.z) + panOffset
@@ -147,7 +145,27 @@ enum TerrainSolidGenerator {
                 : 0
         }
 
-        // The bottom face is flat and untextured, so panning leaves it untouched.
+        enforceThicknessLimit(&geometry)
+    }
+
+    /// The top, underside and walls share X/Z topology. Move only lower vertices, preserving the
+    /// geographic surface and keeping every wall at most one tenth of the chunk's width tall.
+    private static func enforceThicknessLimit(_ geometry: inout Geometry) {
+        guard let limit = geometry.resampling.maximumThickness else { return }
+        let floor = -geometry.resampling.baseDepth
+        for index in geometry.bottom.positions.indices {
+            let topIndex = geometry.bottomSurfaceIndices[index]
+            let top = geometry.top.positions[topIndex]
+            let y = max(floor, top.y - limit)
+            geometry.bottom.positions[index].y = min(top.y, y)
+            geometry.bottom.normals[index] = y > floor ? -geometry.top.normals[topIndex] : SIMD3(0, -1, 0)
+        }
+        for index in stride(from: 0, to: geometry.walls.positions.count, by: 2) {
+            let topY = geometry.walls.positions[index].y
+            geometry.walls.positions[index + 1].y = min(topY, max(floor, topY - limit))
+            // Texture the actual shallow wall rather than stretching the old deep-block palette.
+            geometry.walls.uvs[index].y = 1
+        }
     }
 
     // MARK: - Geometry Accumulation
@@ -175,7 +193,19 @@ enum TerrainSolidGenerator {
         var top = Buffers()
         var walls = Buffers()
         var bottom = Buffers()
+        /// Explicit correspondence; bottom triangles reverse the matching surface triangles.
+        var bottomSurfaceIndices: [Int] = []
         var resampling = ResamplingParameters(baseDepth: 0, wallHeight: 0)
+        var lowestUndersideY: Float {
+            if !bottom.positions.isEmpty {
+                return bottom.positions.reduce(Float.infinity) { min($0, $1.y) }
+            }
+            var lowest = Float.infinity
+            for index in stride(from: 1, to: walls.positions.count, by: 2) {
+                lowest = min(lowest, walls.positions[index].y)
+            }
+            return lowest.isFinite ? lowest : -resampling.baseDepth
+        }
     }
 
     /// Builds all chunk geometry. Exposed for testing without a RealityKit device context.
@@ -186,7 +216,8 @@ enum TerrainSolidGenerator {
         includesWalls: Bool,
         includesBottom: Bool,
         resolution: Int,
-        panOffset: SIMD2<Float> = .zero
+        panOffset: SIMD2<Float> = .zero,
+        maximumThickness: Float? = nil
     ) -> Geometry {
         var geometry = Geometry()
 
@@ -229,8 +260,10 @@ enum TerrainSolidGenerator {
                 )
             }
         }
-        let wallHeight = maxBoundarySurfaceY + baseDepth
-        geometry.resampling = ResamplingParameters(baseDepth: baseDepth, wallHeight: wallHeight)
+        let requestedWallHeight = maxBoundarySurfaceY + baseDepth
+        let wallHeight = min(requestedWallHeight, maximumThickness ?? requestedWallHeight)
+        geometry.resampling = ResamplingParameters(baseDepth: baseDepth,
+            maximumThickness: maximumThickness, wallHeight: wallHeight)
         let cumulativeEdgeLengths = cumulativeLengths(of: boundary)
         let perimeter = boundary.perimeter
         // Repeat the wall texture around the perimeter so its texels stay roughly square.
@@ -274,6 +307,7 @@ enum TerrainSolidGenerator {
                 normal: SIMD3(0, -1, 0),
                 uv: textureCoordinate(for: point, heightField: heightField)
             )
+            geometry.bottomSurfaceIndices.append(Int(sharedTopIndex(ix, iz)))
             bottomGridSlots[slot] = Int32(index)
             return index
         }
@@ -366,6 +400,7 @@ enum TerrainSolidGenerator {
                             normal: SIMD3(0, -1, 0),
                             uv: textureCoordinate(for: point, heightField: heightField)
                         ))
+                        geometry.bottomSurfaceIndices.append(Int(topIndices.last!))
                     }
                 }
 
@@ -420,6 +455,7 @@ enum TerrainSolidGenerator {
             }
         }
 
+        enforceThicknessLimit(&geometry)
         return geometry
     }
 

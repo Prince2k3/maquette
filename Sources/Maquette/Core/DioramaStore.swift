@@ -748,7 +748,7 @@ final class DioramaStore {
             terrainMaterial = TerrainEntity.fallbackMaterial()
         }
 
-        let terrainEntity = TerrainEntity(
+        let terrainEntity = try TerrainEntity(
             parts: solid,
             surfaceMaterial: terrainMaterial,
             wallMaterial: wallMaterial,
@@ -779,7 +779,7 @@ final class DioramaStore {
         if let baseEntity = try? DioramaBase.generate(
             style: chunkStyle.base,
             boundary: boundary,
-            chunkBottomY: -baseDepth
+            chunkBottomY: -solid.baseDepth
         ) {
             rootEntity.setBase(baseEntity)
         }
@@ -1729,23 +1729,11 @@ final class DioramaStore {
     ///   scale, so the ring the roller keeps beyond the outline has to be measured in the new tiles
     ///   or the chunk pans off its own margin immediately.
     ///
-    /// And one thing deliberately does *not* move: ``TerrainEntity/baseDepth``. The earth mass is
-    /// what the strata wall is made of, so scaling it would answer a gesture about the *map* by
-    /// resizing the object — the wall growing as the ground widens and shrinking on the way back in.
-    ///
-    /// The *fourth* thing that moves is what keeps the wall a fixed height rather than merely a
-    /// fixed depth: the elevation baseline. What the eye reads off the silhouette is the strata band
-    /// — `baseDepth + rimY` — and with the base pinned, `rimY` compressing with everything else on
-    /// the map would take the band down with it. So the terrain is compressed about the rim rather
-    /// than about its own floor, by handing the height field a datum derived from the scale. The
-    /// rule and everything it trades away are in ``GroundDatum``; the
-    /// short version is that Y = 0 is the lowest ground at the scale the chunk was generated at and
-    /// the rim datum at every other.
-    ///
-    /// It is still not *measured* — same discipline as a roll, and for the same reason. A datum read
-    /// off the tiles in hand moves when they change, and a datum that moves makes the chunk bob;
-    /// this one is a pure function of the ground scale over values frozen at generation, so a pan
-    /// cannot touch it and neither can a roll.
+    /// The generated datum pins the mean rim as relief compresses. It is derived only from the
+    /// scale and values frozen at load, so pans and tile arrivals cannot make the terrain bob.
+    /// The requested floor is fixed too, but a shallow underside follows high ground where needed
+    /// to keep walls within 10% of the chunk's width. It is published with the matching terrain and
+    /// overlays, using the same retained topology and GPU buffers.
     ///
     /// - Parameter scale: The target scale, clamped to ``groundScaleLimits``.
     public func setGroundScale(_ scale: Float) {

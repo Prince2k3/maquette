@@ -3,8 +3,9 @@ import SwiftUI
 
 /// How much earth sits beneath the terrain surface.
 ///
-/// The chunk's walls extend from the terrain surface down to this depth below diorama Y = 0
-/// (the lowest terrain point in the region).
+/// Requests a flat floor this far below diorama Y = 0. Rendered raster chunks always limit earth
+/// thickness to 10% of their largest horizontal extent. Where that floor would create a taller
+/// wall, the underside follows the terrain instead; the geographic surface is unchanged.
 public enum ChunkBaseDepth: Sendable, Equatable {
     /// Depth as a fraction of the chunk's largest horizontal extent.
     ///
@@ -156,7 +157,7 @@ public struct TerrainChunkStyle: Sendable, Equatable {
     /// A solid earth chunk with layered walls. The default.
     public static let standard = TerrainChunkStyle()
 
-    /// A deep block with dramatic canyon strata.
+    /// A shallow terrain slice with dramatic canyon strata.
     public static let canyon = TerrainChunkStyle(
         baseDepth: .proportional(0.25),
         wall: .strata(.canyon)

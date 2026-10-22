@@ -35,10 +35,12 @@ final class TerraceEffectPass: DioramaEffectPass {
     private var container: Entity?
     private var surface: EffectLayer?
     private var walls: EffectLayer?
+    private var bottom: EffectLayer?
 
     /// Reused between refreshes so a pan step does not reallocate the whole chunk.
     private var surfaceMesh = IndexedMesh()
     private var wallMesh = IndexedMesh()
+    private var bottomMesh = IndexedMesh()
 
     /// The ladder, measured at `apply` and then held.
     ///
@@ -92,7 +94,7 @@ final class TerraceEffectPass: DioramaEffectPass {
             return
         }
         self.bands = bands
-        baseDepth = terrain.baseDepth
+        baseDepth = -terrain.surfaceFloorY
         wallHeight = terrain.wallHeight
 
         let surfaceMaterial: any RealityKit.Material
@@ -136,6 +138,11 @@ final class TerraceEffectPass: DioramaEffectPass {
         container.addChild(walls.entity)
         self.surface = surface
         self.walls = walls
+        if let material = terrain.bottom?.model?.materials.first {
+            let bottom = EffectLayer(name: "TerraceBottom", material: material)
+            container.addChild(bottom.entity)
+            self.bottom = bottom
+        }
 
         refresh(on: root, context: context)
     }
@@ -144,7 +151,7 @@ final class TerraceEffectPass: DioramaEffectPass {
         guard let bands, let surface, let walls, let terrain = root.terrain else { return }
         guard let buffers = terrain.surfaceBuffers else { return }
 
-        TerraceGeometry.buildSurface(from: buffers, bands: bands, into: &surfaceMesh)
+        TerraceGeometry.buildSurface(from: buffers, bands: bands, minimumY: -baseDepth, into: &surfaceMesh)
         surface.update(with: surfaceMesh)
 
         if let wallBuffers = terrain.wallBuffers {
@@ -156,6 +163,12 @@ final class TerraceEffectPass: DioramaEffectPass {
                 into: &wallMesh
             )
             walls.update(with: wallMesh)
+        }
+        if let bottom, let buffers = terrain.bottomBuffers, let surface = terrain.surfaceBuffers {
+            TerraceGeometry.buildBottom(from: buffers, surface: surface,
+                surfaceIndices: terrain.bottomSurfaceIndices, bands: bands,
+                minimumY: -baseDepth, into: &bottomMesh)
+            bottom.update(with: bottomMesh)
         }
     }
 
@@ -177,9 +190,11 @@ final class TerraceEffectPass: DioramaEffectPass {
         container = nil
         surface = nil
         walls = nil
+        bottom = nil
         bands = nil
         surfaceMesh.removeAll()
         wallMesh.removeAll()
+        bottomMesh.removeAll()
         body.restore()
     }
 
@@ -191,6 +206,7 @@ final class TerraceEffectPass: DioramaEffectPass {
         // drawn would put it in a depth fight with the steps built from it.
         body.hide(root.terrain?.surface)
         body.hide(root.terrain?.walls)
+        body.hide(root.terrain?.bottom)
 
         if let blockColor = style.blockColor {
             let material = DioramaMaterials.litMaterial(

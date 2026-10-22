@@ -7,42 +7,15 @@ import simd
 /// the lowest terrain in the region — and nothing here does anything. It exists for the ground zoom,
 /// which has one free variable left and has to spend it here.
 ///
-/// ## Why the datum has to move
+/// The datum compresses terrain about its generated mean rim, rather than about the fetched
+/// region's lowest point. With generated baseline B₀, generated elevation scale E₀ and ground
+/// scale s, pinning the mean rim requires B(s) = rim − s·(rim − B₀).
 ///
-/// What the eye reads off a chunk's silhouette is the strata band: the ochre stripe between the
-/// terrain and the underside, whose height is `baseDepth + rimY`. Both of its terms are otherwise
-/// spoken for.
-///
-/// - `baseDepth` is fixed at generation. The earth mass is what the wall is *made of*, so a depth
-///   that rode the zoom would answer a gesture about the map by resizing the object — the wall
-///   growing as the ground widens and shrinking on the way back in, which is the one thing anybody
-///   looking at the chunk actually notices.
-/// - `rimY` is `(rim − baseline) · elevationScale`, and the elevation scale divides by the ground
-///   scale. It must: twice the ground across the same physical width makes a metre of relief worth
-///   half as many diorama metres, and held fixed a 6,000 m peak would be most of the chunk's height
-///   by the time the map reached the globe.
-///
-/// So the baseline is what is left, and pinning `rimY` says exactly what it has to be:
-///
-///     (rim − B(s))·E₀/s = (rim − B₀)·E₀   ⟹   B(s) = rim − s·(rim − B₀)
-///
-/// which is the terrain compressed about the rim rather than about its own floor. Zoomed out the
-/// whole terrain floats above Y = 0 by `rimY₀·(s − 1)/s`; zoomed in it sinks below.
-///
-/// ## Three things to have in hand before changing this
-///
-/// - **The rim is a mean, so what is pinned is the mean.** The band's waviness — the rim riding up a
-///   ridge and down a valley around the loop — compresses by `1/s` with everything else, so the ring
-///   evens out as the map widens rather than holding its profile. Pinning every point would need an
-///   underside that copied the rim, and that is the underside moving again.
-/// - **Y = 0 stops meaning "the lowest ground".** Every consumer follows, because they all read the
-///   datum from ``TerrainHeightField`` rather than restating it — but a zoom *in* puts low ground
-///   below the base, where `TerrainSolidGenerator.resample` clamps it flat. That clamp is not new:
-///   panning far enough has always found ground below a frozen baseline. A zoom-in is just a much
-///   quicker way to reach it.
-/// - **It is a pure function of the scale.** Nothing is measured from what is on screen, so neither
-///   a pan nor a roll can move it — the same discipline that keeps the chunk from bobbing as tiles
-///   arrive, arriving here for free rather than by freezing a measurement each step.
+/// The rim is weighted by edge length and measured once at generation; panning and tile arrivals
+/// never remeasure it, so they cannot make the terrain bob. Y = 0 stops meaning the lowest ground
+/// after a zoom. `TerrainSolidGenerator` independently limits the earth beneath each surface point
+/// to a shallow slice, raising its underside where necessary; pinning this datum no longer means
+/// preserving the height of an arbitrarily deep block.
 struct GroundDatum: Sendable, Equatable {
     /// The raw elevation at Y = 0 when the chunk was generated: the lowest ground in the region.
     let generated: Float

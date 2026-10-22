@@ -18,11 +18,8 @@ class TerrainEntity: Entity {
     public private(set) var walls: ModelEntity?
     /// The bottom face model, if the chunk is closed.
     public private(set) var bottom: ModelEntity?
-    /// How far the chunk extends below diorama Y = 0, in diorama meters.
-    ///
-    /// Fixed at generation, and it stays fixed through a pan and through a ground zoom alike: the
-    /// earth mass is what the strata wall is made of, and a wall that changed height in answer to a
-    /// pinch would make the chunk a different object at every zoom.
+    /// Signed depth of the lowest underside point below Y = 0. May be negative on a plateau.
+    /// Recomputed with the presented shallow underside, never from the fetched region's floor.
     public private(set) var baseDepth: Float = 0
     /// Highest point of the terrain surface in diorama-space Y.
     public private(set) var maxSurfaceY: Float = 0
@@ -42,6 +39,7 @@ class TerrainEntity: Entity {
     /// Directly-writable meshes, used in place of regenerating resources on every pan.
     private var surfaceMesh: ChunkSurfaceMesh?
     private var wallMesh: ChunkSurfaceMesh?
+    private var bottomMesh: ChunkSurfaceMesh?
 
     /// Creates a terrain chunk entity from generated mesh parts.
     ///
@@ -57,8 +55,11 @@ class TerrainEntity: Entity {
         surfaceMaterial: RealityKit.Material,
         wallMaterial: RealityKit.Material?,
         bottomMaterial: RealityKit.Material?,
-        pannableTerrain: TerrainHeightField? = nil
-    ) {
+        pannableTerrain: TerrainHeightField? = nil,
+        makeMesh: @MainActor (TerrainSolidGenerator.Buffers, String) throws -> ChunkSurfaceMesh = {
+            try ChunkSurfaceMesh(buffers: $0, name: $1)
+        }
+    ) throws {
         super.init()
         self.name = "TerrainChunk"
         self.baseDepth = parts.baseDepth
@@ -72,10 +73,14 @@ class TerrainEntity: Entity {
         // write rather than a fresh resource build.
         if let pannableTerrain {
             self.heightField = pannableTerrain
-            self.surfaceMesh = try? ChunkSurfaceMesh(buffers: parts.geometry.top, name: "terrainTop")
+            self.surfaceMesh = try makeMesh(parts.geometry.top, "terrainTop")
             if !parts.geometry.walls.indices.isEmpty {
-                self.wallMesh = try? ChunkSurfaceMesh(buffers: parts.geometry.walls, name: "terrainWalls")
+                self.wallMesh = try makeMesh(parts.geometry.walls, "terrainWalls")
             }
+        }
+
+        if pannableTerrain != nil, !parts.geometry.bottom.indices.isEmpty {
+            self.bottomMesh = try makeMesh(parts.geometry.bottom, "terrainBottom")
         }
 
         let surfaceModel = ModelEntity(
@@ -93,8 +98,8 @@ class TerrainEntity: Entity {
             self.walls = wallModel
         }
 
-        if let bottomMesh = parts.bottom, let bottomMaterial {
-            let bottomModel = ModelEntity(mesh: bottomMesh, materials: [bottomMaterial])
+        if let bottomResource = bottomMesh?.resource ?? parts.bottom, let bottomMaterial {
+            let bottomModel = ModelEntity(mesh: bottomResource, materials: [bottomMaterial])
             bottomModel.name = "TerrainBottom"
             addChild(bottomModel)
             self.bottom = bottomModel
@@ -120,6 +125,8 @@ class TerrainEntity: Entity {
     /// to move these with it or the wall stands proud of the surface it is supposed to meet.
     var wallBuffers: TerrainSolidGenerator.Buffers? { geometry?.walls }
     var bottomBuffers: TerrainSolidGenerator.Buffers? { geometry?.bottom }
+    var bottomSurfaceIndices: [Int] { geometry?.bottomSurfaceIndices ?? [] }
+    var surfaceFloorY: Float { -(geometry?.resampling.baseDepth ?? 0) }
 
     /// The vertical span the wall texture's coordinates are normalized against.
     var wallHeight: Float { geometry?.resampling.wallHeight ?? 0 }
@@ -144,6 +151,7 @@ class TerrainEntity: Entity {
         if !isPanPresentationDeferred {
             surfaceMesh?.update(from: geometry.top)
             wallMesh?.update(from: geometry.walls)
+            publishUnderside(geometry)
             presentedPanOffset = offset
         }
 
@@ -160,9 +168,19 @@ class TerrainEntity: Entity {
         pendingSurfaceMaterial = nil
         surfaceMesh?.update(from: geometry.top)
         wallMesh?.update(from: geometry.walls)
+        publishUnderside(geometry)
         presentedPanOffset = panOffset
         presentedSurfaceRevision = surfaceRevision
         isPanPresentationDeferred = false
+    }
+
+    private func publishUnderside(_ geometry: TerrainSolidGenerator.Geometry) {
+        bottomMesh?.update(from: geometry.bottom)
+        let previousBottomY = -baseDepth
+        baseDepth = -geometry.lowestUndersideY
+        maxSurfaceY = geometry.top.positions.reduce(-Float.infinity) { max($0, $1.y) }
+        // A decorative plinth remains attached to the lowest point of the presented underside.
+        (parent as? DioramaEntity)?.base?.position.y += -baseDepth - previousBottomY
     }
 
     /// Swaps in freshly-rolled ground beneath the chunk.
@@ -182,9 +200,8 @@ class TerrainEntity: Entity {
     ///     it here rather than calling ``setPanOffset(_:)`` afterwards is what keeps a zoom step to
     ///     one resample instead of two — and the first of those two would be against the old surface.
     ///   - groundScale: The ground zoom the new surface is read at, or `nil` to keep the current
-    ///     one. A roll keeps it; a ground zoom sets it. Nothing about the chunk's own shape follows
-    ///     from it — the earth mass stays where it was generated — so this is recorded rather than
-    ///     acted on, and it is the terrain read through the new surface that changes.
+    ///     one. A roll keeps it; a ground zoom sets it. The mapping determines the new surface;
+    ///     the matching underside is raised wherever necessary to keep the earth shallow.
     public func setTerrain(
         _ heightField: TerrainHeightField,
         surfaceMaterial: RealityKit.Material?,
@@ -216,6 +233,7 @@ class TerrainEntity: Entity {
         if !isPanPresentationDeferred {
             surfaceMesh?.update(from: geometry.top)
             wallMesh?.update(from: geometry.walls)
+            publishUnderside(geometry)
             presentedPanOffset = panOffset
         }
         self.geometry = geometry

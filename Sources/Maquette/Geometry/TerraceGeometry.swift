@@ -128,8 +128,10 @@ enum TerraceGeometry {
     static func buildSurface(
         from surface: TerrainSolidGenerator.Buffers,
         bands: TerraceBands,
+        minimumY: Float = -.infinity,
         into mesh: inout IndexedMesh
     ) {
+        func height(_ rung: Int) -> Float { max(minimumY, bands.level(ofRung: rung)) }
         mesh.removeAll()
         let positions = surface.positions
         guard !positions.isEmpty, surface.indices.count >= 3 else { return }
@@ -144,7 +146,7 @@ enum TerraceGeometry {
             rungs[index] = rung
             let u = paletteU(bands.paletteIndex(ofRung: rung), count: bands.count)
             mesh.append(
-                position: SIMD3(positions[index].x, bands.level(ofRung: rung), positions[index].z),
+                position: SIMD3(positions[index].x, height(rung), positions[index].z),
                 normal: SIMD3(0, 1, 0),
                 uv: SIMD2(u, plateauRow)
             )
@@ -187,9 +189,9 @@ enum TerraceGeometry {
             let ic = Int(risers[index + 2])
             index += 3
 
-            let pa = SIMD3(positions[ia].x, bands.level(ofRung: rungs[ia]), positions[ia].z)
-            let pb = SIMD3(positions[ib].x, bands.level(ofRung: rungs[ib]), positions[ib].z)
-            let pc = SIMD3(positions[ic].x, bands.level(ofRung: rungs[ic]), positions[ic].z)
+            let pa = SIMD3(positions[ia].x, height(rungs[ia]), positions[ia].z)
+            let pb = SIMD3(positions[ib].x, height(rungs[ib]), positions[ib].z)
+            let pc = SIMD3(positions[ic].x, height(rungs[ic]), positions[ic].z)
 
             let cross = simd_cross(pb - pa, pc - pa)
             let length = simd_length(cross)
@@ -241,9 +243,29 @@ enum TerraceGeometry {
                 uv.y = wallHeight > 0
                     ? min(max((position.y + baseDepth) / wallHeight, 0), 1)
                     : 0
+            } else {
+                let topY = max(bands.level(ofRung: bands.rung(of: walls.positions[index - 1].y)), -baseDepth)
+                position.y = min(position.y, topY)
             }
             mesh.append(position: position, normal: walls.normals[index], uv: uv)
         }
         mesh.appendIndices(walls.indices)
     }
+    /// Close a terraced shallow slice without its smooth underside protruding through a low step.
+    static func buildBottom(from bottom: TerrainSolidGenerator.Buffers,
+        surface: TerrainSolidGenerator.Buffers, surfaceIndices: [Int],
+        bands: TerraceBands, minimumY: Float, into mesh: inout IndexedMesh
+    ) {
+        mesh.removeAll()
+        guard surfaceIndices.count == bottom.positions.count else { return }
+        mesh.reserve(vertices: bottom.positions.count, indices: bottom.indices.count)
+        for index in bottom.positions.indices {
+            var point = bottom.positions[index]
+            let top = surface.positions[surfaceIndices[index]]
+            point.y = min(point.y, max(minimumY, bands.level(ofRung: bands.rung(of: top.y))))
+            mesh.append(position: point, normal: bottom.normals[index], uv: bottom.uvs[index])
+        }
+        mesh.appendIndices(bottom.indices)
+    }
+
 }

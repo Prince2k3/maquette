@@ -18,7 +18,7 @@ enum OverlayRenderFixture {
             shape: .rectangular(width: 1, depth: 1), physicalSize: 1)
         let parts = try TerrainSolidGenerator.generate(heightField: field, boundary: configuration.boundary, baseDepth: 0.1, resolution: resolution)
         let root = DioramaEntity()
-        root.setTerrain(TerrainEntity(parts: parts, surfaceMaterial: DioramaMaterials.unlitMaterial(color: .white),
+        root.setTerrain(try TerrainEntity(parts: parts, surfaceMaterial: DioramaMaterials.unlitMaterial(color: .white),
                                      wallMaterial: nil, bottomMaterial: nil, pannableTerrain: field))
         return (root, DioramaProxy(configuration: configuration, projection: TerrainProjection(heightField: field)))
     }

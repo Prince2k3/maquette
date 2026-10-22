@@ -46,8 +46,9 @@ final class InkEffectPass: DioramaEffectPass {
     private var cornerVertices: [Int] = []
     private var cornerPoints: [SIMD2<Float>] = []
 
-    /// How far below Y = 0 the block's lower rim is drawn, measured at `apply`.
-    private var baseDepth: Float = 0
+    /// The underside's topology, retained while its heights follow the bounded terrain slice.
+    private var bottomEdges: MeshEdges?
+    private var cornerBottomVertices: [Int] = []
 
     /// The tonal range the imagery is banded against, measured from the first mosaic and then held.
     ///
@@ -79,7 +80,6 @@ final class InkEffectPass: DioramaEffectPass {
             return
         }
 
-        baseDepth = terrain.baseDepth
         restyleBody(of: root, context: context)
 
         let extent = max(context.boundary.extent.x, context.boundary.extent.y)
@@ -95,6 +95,11 @@ final class InkEffectPass: DioramaEffectPass {
         )
         cornerPoints = corners.map { context.boundary.vertices[$0] }
         cornerVertices = InkGeometry.nearestVertices(to: cornerPoints, in: surface.positions)
+        if let bottom = terrain.bottomBuffers, !bottom.positions.isEmpty {
+            bottomEdges = MeshEdges(positions: bottom.positions, indices: bottom.indices,
+                tolerance: extent * Self.weldTolerance)
+            cornerBottomVertices = InkGeometry.nearestVertices(to: cornerPoints, in: bottom.positions)
+        }
 
         let container = Entity()
         container.name = "InkEffect"
@@ -137,17 +142,12 @@ final class InkEffectPass: DioramaEffectPass {
         ) ?? []
         InkGeometry.addTubes(creaseSegments, radius: radius, into: &lineMesh)
 
-        // The block's own edges: a vertical line down each corner of the outline, and a loop around
-        // the bottom face. The lower rim is flat and fixed, so unlike everything above it a pan does
-        // not move it — but it costs one loop of the outline to rebuild and keeping it in a second
-        // layer to avoid that would cost a second draw.
-        InkGeometry.addTubes(cornerSegments(in: surface.positions), radius: radius, into: &lineMesh)
-        if baseDepth > 0 {
-            InkGeometry.addTubes(
-                HologramGeometry.loop(context.boundary.vertices, y: -baseDepth),
-                radius: radius,
-                into: &lineMesh
-            )
+        // Read the actual shallow underside; a fixed-Y loop would redraw the removed deep block.
+        if let bottom = root.terrain?.bottomBuffers {
+            InkGeometry.addTubes(cornerSegments(in: surface.positions, bottom: bottom.positions),
+                radius: radius, into: &lineMesh)
+            InkGeometry.addTubes(bottomEdges?.borders(in: bottom.positions) ?? [],
+                radius: radius, into: &lineMesh)
         }
 
         lines.update(with: lineMesh)
@@ -170,6 +170,8 @@ final class InkEffectPass: DioramaEffectPass {
         edges = nil
         cornerVertices.removeAll()
         cornerPoints.removeAll()
+        cornerBottomVertices.removeAll()
+        bottomEdges = nil
         tones = nil
         body.restore()
     }
@@ -177,14 +179,10 @@ final class InkEffectPass: DioramaEffectPass {
     // MARK: - Lines
 
     /// A vertical line down each corner of the outline, from the terrain to the block's bottom.
-    private func cornerSegments(in positions: [SIMD3<Float>]) -> [ContourExtractor.Segment] {
-        guard baseDepth > 0 else { return [] }
-        return zip(cornerPoints, cornerVertices).compactMap { point, vertex in
-            guard positions.indices.contains(vertex) else { return nil }
-            return ContourExtractor.Segment(
-                a: SIMD3(point.x, positions[vertex].y, point.y),
-                b: SIMD3(point.x, -baseDepth, point.y)
-            )
+    private func cornerSegments(in positions: [SIMD3<Float>], bottom: [SIMD3<Float>]) -> [ContourExtractor.Segment] {
+        zip(cornerVertices, cornerBottomVertices).compactMap { topIndex, bottomIndex in
+            guard positions.indices.contains(topIndex), bottom.indices.contains(bottomIndex) else { return nil }
+            return ContourExtractor.Segment(a: positions[topIndex], b: bottom[bottomIndex])
         }
     }
 
